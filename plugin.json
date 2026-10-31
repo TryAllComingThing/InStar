@@ -1,0 +1,6 @@
+{
+  "kind": "instar-engineering-index",
+  "manifest": "./.codex-plugin/plugin.json",
+  "commands": "./commands/",
+  "policy": "./assets/policy.json"
+}

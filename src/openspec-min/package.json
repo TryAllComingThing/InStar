@@ -1,0 +1,34 @@
+{
+  "name": "openspec-min",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/entry.d.ts",
+      "import": "./dist/entry.js"
+    }
+  },
+  "files": [
+    "dist",
+    "artifact-templates",
+    "src/skills",
+    "LICENSE",
+    "SKILL-PORT.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-skill-assets.mjs",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "@types/node": "^20.19.43"
+  }
+}

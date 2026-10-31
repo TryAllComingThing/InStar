@@ -1,0 +1,22 @@
+{
+  "name": "instar-plugin",
+  "version": "2.4.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "src/openspec-min"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "npm run build --workspace openspec-min && node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "npm run build && npm run check && node --test test/*.test.mjs src/openspec-min/test/*.test.mjs",
+    "release": "npm test && node scripts/release.mjs && npm run test:release",
+    "test:release": "node scripts/smoke-release.mjs"
+  },
+  "dependencies": {
+    "smol-toml": "^1.9.0"
+  }
+}

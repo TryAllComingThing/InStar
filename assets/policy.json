@@ -1,0 +1,21 @@
+{
+  "sandbox": "workspace-write",
+  "denyWrite": [
+    "~/.ssh/**",
+    "~/.aws/**",
+    "**/.env.production",
+    "SSO configuration",
+    "production credentials"
+  ],
+  "network": {
+    "localHooks": false,
+    "install": [
+      "registry.npmjs.org"
+    ],
+    "ci": "explicit project ci.allowedHosts; existing gh authentication only"
+  },
+  "defaultBranchPush": false,
+  "forcePush": false,
+  "productionDeploy": false,
+  "enforcement": "Host sandbox and server branch protection; this file is declarative."
+}

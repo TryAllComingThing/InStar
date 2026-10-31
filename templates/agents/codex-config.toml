@@ -1,0 +1,23 @@
+[agents.architect]
+description = "Analyze project architecture and propose boundaries and technical designs."
+config_file = "agents/architect.toml"
+
+[agents.developer]
+description = "Implement explicitly authorized tasks from reviewed specifications and designs."
+config_file = "agents/developer.toml"
+
+[agents.ui-reviewer]
+description = "Review rendered and implemented UI against project design constraints and evidence."
+config_file = "agents/ui-reviewer.toml"
+
+[agents.code-reviewer]
+description = "Perform an independent read-only code review with file and line evidence."
+config_file = "agents/code-reviewer.toml"
+
+[agents.spec-reviewer]
+description = "Review proposal and delta specs against the PRD, baseline and project guidance."
+config_file = "agents/spec-reviewer.toml"
+
+[agents.frontend-reviewer]
+description = "Review implementation against approved specifications, design and verification evidence."
+config_file = "agents/frontend-reviewer.toml"
