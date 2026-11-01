@@ -6,7 +6,6 @@ This directory contains plugin-side reference material for Skills. It is not cop
 
 - `architecture/`: architecture and module-boundary guidance, including [`design-principles.md`](architecture/design-principles.md).
 - `coding/`: language-agnostic coding, naming, import, and error-handling guidance.
-- `css/`: styling and theming guidance.
 - `testing/`: test design by level.
 - `languages/`: language-specific rules, selected only when the repository uses that language.
 - `api/`: HTTP API, interface contract, and security guidance; start with [`INTERFACE-DESIGN.md`](api/INTERFACE-DESIGN.md) for cross-boundary contracts.
@@ -21,4 +20,4 @@ The user's request and the target project's applicable `AGENTS.md`, configured o
 
 Skills should identify technologies from manifests, source files, API contracts, migrations, and existing project documentation before selecting a pack. If the stack is unclear, follow repository patterns and state the uncertainty rather than guessing.
 
-For UI-specific design guidance, use [`design-system/DESIGN.md`](../design-system/DESIGN.md).
+For UI-specific guidance, read the target project's own design document, framework configuration, component library, and token sources.

@@ -8,17 +8,13 @@ Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约
 
 ### 需求与 Spec
 
-需求与实现 Skill：`initialize-project`、`requirements-workflow`、`write-a-prd`、`spec-explore`、`spec-discover`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks`、`engineering-implement`、`engineering-verify`、`frontend-implement`、`frontend-verify`。设计、质量与辅助 Skill：`design-check`、`extract-design-md`、`quality-gate`、`quality-evaluation`、`ci`、`context-optimizer`、`engineering-research`、`systematic-debugging`。共 21 个 Skill 入口。
+需求与实现 Skill：`requirements-workflow`、`write-a-prd`、`spec-explore`、`spec-discover`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks`、`engineering-implement`、`engineering-verify`、`frontend-implement`、`frontend-verify`。设计、质量与辅助 Skill：`design-check`、`extract-design-md`、`quality-gate`、`quality-evaluation`、`ci`、`context-optimizer`、`engineering-research`、`systematic-debugging`。共 20 个 Skill 入口。
 
 `extract-design-md` 从现有前端代码整理完整的视觉设计说明，涵盖色彩、字体、间距、组件、布局和响应式行为，并按请求写入项目根目录 `DESIGN.md`。它保留源码中的原始值和项目命名，区分观察事实与设计解释，不修改应用样式。
 
 需求流程必须经过 PRD 人工确认，再进入 Spec；Spec 变更会重新验证并等待确认；生成技术设计和任务后，用户需明确批准完整实施计划才能开始实现，最终验收也需单独确认。
 
 工作流控制器会将成功的状态变更写入目标项目 `.workflow/traces.jsonl`；requirements-workflow 按指引登记 specialist Skill 的开始/结束。`quality-evaluation` 为 PRD、Spec、技术设计和任务输出带原文证据及指纹的语义评测报告。评测和 Skill 轨迹是本地可编辑的辅助证据，不替代人工审批或证明模型实际执行。
-
-### 工作流初始化
-
-`initialize-project` 只准备 InStar 需求与 Spec 工作流所需的目录、指令和项目级 Agent 配置，不生成应用代码、质量配置或工程模板。前端工程的创建与依赖配置由团队自己的模板或工程工具负责；接入质量控制时，由项目维护 `.instar-quality.json` 并配置已有 npm 脚本。
 
 ### 从现有源码生成 Spec
 
@@ -66,7 +62,7 @@ node <plugin>/bin/instar.mjs spec-discover --input /tmp/discovery-request.json
 
 ### Hook
 
-`hooks/hooks.json` 使用 `PreToolUse` 和 `SessionEnd`：提交/PR 前校验本地证据，会话结束时写入 `logs/` 审计摘要；仅在 `.instar-quality.json` 显式配置时才更新项目状态或经验文件，且不自动推断空白内容。Hook 是 Codex 工具调用的辅助门禁，最终约束由 CI 和分支保护执行。
+`hooks/hooks.json` 使用 `PreToolUse` 和 `SessionEnd`：PreToolUse 先过滤命令，只对独立的提交/PR 命令校验本地证据；SessionEnd 只有在显式调用 `session-summary` 留下待处理摘要时才写入 `logs/`，普通会话结束不会创建空日志。Hook 是 Codex 工具调用的辅助门禁，最终约束由 CI 和分支保护执行。
 
 ## 安装
 
@@ -84,8 +80,7 @@ codex plugin marketplace add /absolute/path/to/InStar/release
 codex plugin add instar@instar-local
 ```
 
-插件运行时不需要使用者安装 npm 依赖；目标项目需要自行安装其工程依赖和外部质量工具。
-运行时依赖及许可证见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
 
 ## 快速开始
 
@@ -110,7 +105,7 @@ node <plugin>/bin/instar.mjs ci status --project .
 node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order filtering" --confirm
 ```
 
-先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和 17 项检查证据，格式见[质量协议](docs/QUALITY.md)。`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。插件内的 `design-system/DESIGN.md` 和规则文件由 Skills 按需引用，不复制到项目。
+先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和 17 项检查证据，格式见[质量协议](docs/QUALITY.md)。`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。UI 设计约束由目标项目自己的设计文档、框架配置、组件库和 Token 来源提供。
 
 ## JSON CLI
 

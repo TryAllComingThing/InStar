@@ -1,10 +1,8 @@
 import {fs,safe,identifier,now,requireText,projectRoot,exists,read,json,atomic,putJson,lock,transaction,restore,hash,appendJsonl,pluginRoot,sourceSnapshot} from './files.mjs';
-import {initialize} from './initialize.mjs';
 import {changeDir,prd,approvalHash,assertApprovals,generationContext,taskItems,report} from './documents.mjs';
 import * as engine from '../openspec-min/entry.js';
 import {evaluate} from './evaluation.mjs';
 import {redactData,boundedText} from '../shared/redaction.mjs';
-export {initialize};
 const statePath=id=>`planning/workflows/${identifier(id)}.json`;
 const requireStage=(s,...stages)=>{if(!stages.includes(s.stage)||s.status==='completed'||s.pendingApproval)throw Error(`Action unavailable in ${s.stage}/${s.status}`);};
 async function pending(root,s,kind){s.status='awaiting-approval';s.pendingApproval=kind;s.pendingReview={kind,hash:await approvalHash(root,s,kind)};}
@@ -13,7 +11,6 @@ function packageInput(input){requireText(input.proposal,'proposal');if(!input.sp
 async function completed(root,s){const items=taskItems(await read(changeDir(root,s.changeId),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');}
 async function gate(ref){const result=await engine.runSpecVerifyGate(ref);if(!result.valid)throw Error(result.issues.join('\n'));return result;}
 export async function run(input){
- if(input.action==='initialize')return initialize(input.project,{preview:input.preview===true});
  const root=await projectRoot(input.project);const id=identifier(input.changeId);const file=statePath(id);const ref={root:safe(root,'planning'),changeId:id};
  if(input.action==='trace-skill')return lock(root,async()=>{
   const known=new Set();async function scan(dir){for(const item of await fs.readdir(dir,{withFileTypes:true})){const p=safe(dir,item.name);if(item.isDirectory())await scan(p);else if(item.name==='SKILL.md')known.add(p.slice(safe(pluginRoot).length+1).split('/').slice(1,-1).join('/'));}}

@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {run,initialize} from '../runtime/workflow-controller/index.mjs';
+import {run} from '../runtime/workflow-controller/index.mjs';
 import {reviewItemsFor} from '../runtime/quality-controller/index.mjs';
 const proposal='## Why\nSearch required.\n## What Changes\nAdd search.\n## Capabilities\nsearch\n## Impact\nAPI.';
 const spec='## Purpose\nSearch.\n## ADDED Requirements\n### Requirement: Search\nThe system SHALL search.\n#### Scenario: Matching\n- **WHEN** a query is submitted\n- **THEN** matching items are returned.\n';
 const report={summary:'Review complete',source:'integration test',issues:[],unverified:[]};
-async function fixture(t){const project=await mkdtemp(path.join(os.tmpdir(),'instar-p0-flow-'));t.after(()=>rm(project,{recursive:true,force:true}));await initialize(project);let state;const call=async(action,extra={})=>{const result=await run({project,changeId:'search',action,expectedVersion:state?.version,...extra});if(result.version!==undefined)state=result;return result;};return {project,call,get state(){return state;},approve:()=>call('approve',{reviewHash:state.pendingReview.hash,confirmation:{text:'Approved',source:'human fixture'}})};}
+async function fixture(t){const project=await mkdtemp(path.join(os.tmpdir(),'instar-p0-flow-'));t.after(()=>rm(project,{recursive:true,force:true}));let state;const call=async(action,extra={})=>{const result=await run({project,changeId:'search',action,expectedVersion:state?.version,...extra});if(result.version!==undefined)state=result;return result;};return {project,call,get state(){return state;},approve:()=>call('approve',{reviewHash:state.pendingReview.hash,confirmation:{text:'Approved',source:'human fixture'}})};}
 test('cross stack review excludes Vue for Python Java Go, retains Vue for Vue and universal for unknown',()=>{
  const vue=reviewItemsFor({review:{language:'typescript',framework:'vue'}});
  assert.ok(vue.includes('v-for-key'));assert.ok(!vue.includes('transactions'));

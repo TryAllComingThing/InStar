@@ -93,7 +93,7 @@ async function prepare(input,context) {
 export async function run(input) {
   if (!input || !['context','capture','recover'].includes(input.action)) throw Error('Discovery action must be context, capture or recover');
   if (input.action === 'recover') {
-    const root = await projectRoot(input.project,{initialized:false});
+    const root = await projectRoot(input.project);
     requireText(input.reason,'reason');
     return lock(root,async()=>{
       const record = await json(root,'.workflow/pending.json');

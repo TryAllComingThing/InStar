@@ -8,7 +8,7 @@
 
 完整通过必须同时满足：
 
-1. 插件 installed/enabled；目标项目正确初始化且重复初始化无覆盖。
+1. 插件 installed/enabled；目标项目是独立的现有项目目录。
 2. PRD、Spec、实施授权、验收四处分别停下等待本轮真实批准。
 3. 需求、场景、任务、实现和测试可逐项对应。
 4. 产品测试/构建实际运行；浏览器真正打开页面并操作。
@@ -75,7 +75,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 ### 2.4 浏览器前置条件
 
-在当前测试配置中提供能访问 localhost 的真实浏览器工具。不同环境可能使用浏览器 MCP、客户端内置浏览器或已连接浏览器插件；以当前会话实际可用工具为准。初始化模板本身不提供浏览器。
+在当前测试配置中提供能访问 localhost 的真实浏览器工具。不同环境可能使用浏览器 MCP、客户端内置浏览器或已连接浏览器插件；以当前会话实际可用工具为准。
 
 若 CLI 测试配置无法提供浏览器，可以改在已有浏览器能力的 Codex 客户端中完成整轮测试，但要在该客户端实际使用的配置里安装本地 marketplace，并重新核对插件与项目路径。不要假定 CLI 的临时配置自动同步到 GUI。
 
@@ -91,19 +91,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 本次进行 InStar 真实模型验收。请确认当前项目的绝对路径、已发现的 InStar 技能、Node 环境以及可用的浏览器工具。先检查能力，不创建业务实现、不创建或批准工作流。实际不可用的能力请明确说明，不要模拟工具调用。
 ```
 
-预期：模型核对项目路径和技能来源。当前 21 个 Skill 应包含 initialize-project、requirements-workflow、write-a-prd、spec-explore、spec-discover、spec-propose、spec-verify、spec-design、spec-tasks、engineering-implement、engineering-verify、frontend-implement、frontend-verify、design-check、extract-design-md、quality-gate、quality-evaluation、ci、context-optimizer、engineering-research、systematic-debugging。不要仅凭模型口头说“已安装”判定成功，同时检查 plugins.json 和后续实际调用。
-
-### A1：初始化与幂等性
-
-发送：
-
-```text
-使用 initialize-project 初始化当前项目，先检查 preview，再应用初始化，最后重复初始化验证幂等性。只初始化插件项目规则，不创建业务应用。
-```
-
-预期：真实调用已安装插件的控制器；生成工作流所需的 `AGENTS.md`、`.instar.json`、项目工程说明、`.codex/config.toml` 中六个角色注册，以及 `.codex/agents/` 下角色配置和 Markdown 契约，并创建 planning、docs/prd、.workflow 目录。重复初始化 created 为空，已有文件不被覆盖。此流程不创建前端工程、复制工程模板或合并应用工程指令。
-
-若当前会话尚未发现新建 reviewer，重新打开此项目会话，再继续后续步骤。记录是子 reviewer 审阅还是主模型降级审阅。
+预期：模型核对项目路径和技能来源。当前 20 个 Skill 应包含 requirements-workflow、write-a-prd、spec-explore、spec-discover、spec-propose、spec-verify、spec-design、spec-tasks、engineering-implement、engineering-verify、frontend-implement、frontend-verify、design-check、extract-design-md、quality-gate、quality-evaluation、ci、context-optimizer、engineering-research、systematic-debugging。不要仅凭模型口头说“已安装”判定成功，同时检查 plugins.json 和后续实际调用。
 
 ### A2：提出固定需求，等待 PRD 审阅
 
@@ -120,7 +108,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 预期：docs/prd/order-status-filter.md 存在；工作流 stage=prd、status=awaiting-approval、pendingApproval=prd。PRD 要包含固定数据、边界和可验证的验收标准；模型显示当前文档、待确认项和 review hash。此时不得已有业务实现或 Spec 包。
 
-### A3：测试拒绝/修改分支
+### A2：测试拒绝/修改分支
 
 发送：
 
@@ -134,7 +122,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 最后发送“解释一下重复点击的验收标准，先不修改”，预期只解释，状态和 review hash 不变。
 
-### A4：批准 PRD，生成并审阅 Spec
+### A2：批准 PRD，生成并审阅 Spec
 
 先阅读当前 PRD，确认修改已纳入，再发送：
 
@@ -144,7 +132,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 预期：approvals.prd 有本次真实回复；planning/changes/order-status-filter 下存在 proposal.md、specs/<capability>/spec.md；校验实际运行；场景涵盖筛选、空结果、重置、顺序稳定、重复点击、键盘与响应式要求。proposal 的 Impact 中应记录探索读取的项目规范路径、受影响模块、适用依赖约束及未决冲突/未知项；若无项目架构规则，应如实说明。pendingApproval=spec。尚未生成 design/tasks 或实施。
 
-### A4b：多轮 Spec 审阅与修订
+### A3b：多轮 Spec 审阅与修订
 
 逐轮发送以下消息，每轮检查产物后再发下一条：
 
@@ -156,7 +144,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 在独立测试变更中，再提出超出 PRD 的业务要求（例如增加搜索）：预期 reopen prd，重新使用 write-a-prd，先完成 PRD 多轮审阅与确认，再重新生成和评审 Spec，不能直接塞入 design。
 
-### A5：批准 Spec，生成设计和任务
+### A2：批准 Spec，生成设计和任务
 
 审阅实际 Spec 后发送：
 
@@ -166,7 +154,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 预期：technical-design.md、tasks.md 存在；技术方案遵循适用的 AGENTS.md 目录规则，并记录项目约束和文件变更计划；任务编号唯一且未勾选；方案与 PRD/Spec 一致；pendingApproval=implementation。仅生成文档不构成批准；用户明确批准这份包含技术设计和任务的实施计划，才授权开始实现。
 
-### A6：授权实施
+### A2：授权实施
 
 阅读任务后发送：
 
@@ -176,7 +164,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 预期：安装必要依赖、开发真实应用、运行 Vitest 与构建；任务完成有具体证据。若测试失败，修复后重跑并保留失败记录。插件自己的 npm test 不能替代目标前端应用测试。
 
-### A7：实际浏览器验证
+### A2：实际浏览器验证
 
 若上一轮尚未完成验证，发送：
 
@@ -186,7 +174,7 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex --no-daemon -C "$INSTAR_PROJECT" -m "$INSTA
 
 预期：证据对应真实页面和当前代码；适用检查全部通过后 pendingApproval=acceptance，尚未归档。若无浏览器，记录阻塞；配置好能力后重试，不通过修改状态 JSON 绕过。
 
-### A8：人工验收与归档
+### A2：人工验收与归档
 
 测试人员自行打开模型报告的实际 URL，至少复查筛选、空态、重置、键盘操作。确实通过后发送：
 
@@ -217,7 +205,7 @@ cp "$INSTAR_PROJECT/planning/workflows/order-status-filter.json" "$INSTAR_EVIDEN
 
 ## 5. 用例 B：自然语言触发
 
-新建独立项目并初始化，保留同一插件版本和模型。仅发送：
+新建独立项目，保留同一插件版本和模型。仅发送：
 
 ```text
 撰写需求：为订单列表增加状态筛选、结果数量和空结果提示。请先整理需求给我审阅。
@@ -225,7 +213,7 @@ cp "$INSTAR_PROJECT/planning/workflows/order-status-filter.json" "$INSTAR_EVIDEN
 
 预期自然选中 requirements-workflow 或 write-a-prd，并真实使用控制器持久化 PRD，停在 PRD 审阅。只在聊天里输出 PRD、没有状态文件，判定失败。
 
-另建一次新项目，测试从未初始化项目直接发送同样的需求，预期先初始化后进入 PRD。每个场景建议重复 3 次新会话，分别记录结果，不用挑选的一次成功替代稳定性结论。
+另建一次新项目直接发送同样的需求，预期进入 PRD 工作流。每个场景建议重复 3 次新会话，分别记录结果，不用挑选的一次成功替代稳定性结论。
 
 ## 6. 用例 C：恢复、失效与故障分支
 
@@ -239,8 +227,7 @@ cp "$INSTAR_PROJECT/planning/workflows/order-status-filter.json" "$INSTAR_EVIDEN
 | 文档变更 | PRD 待审批时，在模型空闲期间人为修改 PRD，再让模型检查当前审批是否仍有效 | 识别旧 hash 失效，重新展示并提交，重新等待批准 |
 | 验证后改代码 | acceptance 待批准时要求修改按钮文案，但暂不验收 | reopen implementation，失效旧验证并重新验证，再等待验收 |
 | 归档后新需求 | completed 后提出新增排序功能 | 新建变更，不改写已归档流程 |
-| 初始化冲突 | 修改 docs/engineering/testing.md 的测试副本，再要求初始化 | 保留修改、报告 conflicts，不静默覆盖 |
-
+| 
 文档变更用例不要把“批准旧版本”用于推进当前版本；测试人员先核对模型是否展示了实际新文档。恢复与中断的底层事务覆盖已由自动测试执行，这里无需杀死真实写入进程。
 
 ## 7. 测试报告模板
@@ -271,15 +258,14 @@ Node / npm / Codex 版本：
 reviewer：子 reviewer / 主模型降级；实际调用证据：
 
 A0 能力：通过 / 失败 / 阻塞
-A1 初始化：
-A2 PRD：
-A3 PRD 多轮修改（每轮 write-a-prd 证据）：
-A4 Spec：
-A4b Spec 多轮修改（每轮 spec-propose/spec-verify 证据）：
-A5 设计与任务：
-A6 实施：
-A7 测试和浏览器：
-A8 验收归档：
+A1 PRD：
+A2 PRD 多轮修改（每轮 write-a-prd 证据）：
+A3 Spec：
+A3b Spec 多轮修改（每轮 spec-propose/spec-verify 证据）：
+A4 设计与任务：
+A5 实施：
+A6 测试和浏览器：
+A7 验收归档：
 B 自然语言触发：通过次数 / 总次数
 C 异常用例：逐项结果
 

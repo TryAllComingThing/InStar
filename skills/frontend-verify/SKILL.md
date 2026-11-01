@@ -3,7 +3,7 @@ name: frontend-verify
 description: Verify a frontend implementation against its specs, task acceptance criteria and UI requirements using actual code, tests and browser evidence. Separate this from document-only Spec verification.
 ---
 
-Read the current change artifacts and [testing guidance](../../templates/engineering/testing.md). Identify the implementation under review and the real available commands before testing. Plugin tooling tests do not validate the target product.
+Read the current change artifacts and applicable project testing guidance, including `standards/common/testing.md` and the relevant `standards/testing/` level guide. Identify the implementation under review and the real available commands before testing. Plugin tooling tests do not validate the target product.
 
 Map applicable requirements and scenarios to implementation evidence and tests. For removed behavior, check that it is gone; for renamed requirements, do not demand renaming code symbols. Check task acceptance criteria against actual evidence rather than trusting checkboxes.
 
@@ -25,7 +25,7 @@ Use submit-verification with the structured report and actual test and browser c
 
 ## 输出与失败策略
 
-reports/frontend-verify-<profile>.json 与历史报告记录命令、耗时、退出码、HEAD/base、工作树/暂存区指纹。任一缺失、失败、超时或检查期间文件变化即 BLOCK，停止后续执行。插件测试不能替代目标项目测试。修改代码或提交后须重新验证。
+reports/frontend-verify-<profile>.json 与历史报告记录命令摘要、耗时、退出码、结果分类、HEAD/base、工作树/暂存区指纹。命令正常执行但返回非零时报告为 FAIL；命令缺失、启动失败、超时、信号终止或检查期间文件变化时报告为 BLOCK，停止后续执行。插件测试不能替代目标项目测试。修改代码或提交后须重新验证。
 
 ## 边界与审计
 

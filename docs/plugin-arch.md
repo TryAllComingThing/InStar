@@ -48,9 +48,6 @@ InStar/
 ├── commands/                       # /doctor、/design-check
 ├── hooks/                          # hooks.json 和质量 Hook
 ├── assets/                         # 插件策略元数据
-├── agents/                         # Subagent 角色契约（Markdown）
-├── templates/agents/               # 项目级 Codex Subagent TOML 注册配置
-├── design-system/                  # Skills 使用的设计规则与主题参考
 ├── src/                            # 源码
 ├── runtime/                        # 构建运行时
 ├── docs/                           # 使用、测试和架构文档
@@ -64,7 +61,6 @@ InStar/
 
 ### 1. 需求与上下文
 
-- `initialize-project`：初始化项目工作流目录和审查角色；不强制创建重复的架构、设计、状态或经验文件。
 - `requirements-workflow`：整理需求目标、范围、约束、依赖、风险和反馈。
 - `write-a-prd`：生成目标、场景、范围、验收标准、边界和风险组成的 PRD。
 
@@ -92,13 +88,13 @@ InStar/
 
 本次变更的技术方案存放在 `planning/changes/<changeId>/technical-design.md`；项目长期设计规范由项目选择自己的规范路径。Spec 和技术方案上下文会读取适用的 `AGENTS.md`、配置或发现的架构/设计文档、项目 `standards/` 文档和目录概览，并将这些输入纳入上下文指纹。可在 `.instar-quality.json` 的 `context.architecture`、`context.design` 中指定路径；未配置时按 `docs/engineering/`、`docs/architecture/`、`docs/design/`、旧 `.context/` 顺序发现。缺少这些文档不会阻断工作；项目自行维护架构规则，InStar 不强制采用特定架构模式。
 
-`design-check` 面向单次变更，结合项目设计文档、已有 Token、PRD/Spec 和人工确认的高保真参考，输出 `technical-design.md` 的 Style Constraints。`extract-design-md` 面向整个已有前端项目，归纳色彩、字体、间距、组件、布局和响应式行为，按请求更新项目根目录 `DESIGN.md`，保留人工内容并标注源码证据与解释。插件内 `design-system/`（含企业、批发、深色主题说明）是可选建议材料，不会复制成目标项目设计系统或引入主题引擎。`initialize-project` 可将四个角色契约安装为项目 `.codex/agents/*.md`，并在保留现有 TOML 内容的前提下追加缺失的 `.codex/config.toml` 注册项；损坏配置或角色名冲突会报告，不静默覆盖。Codex 只在受信任项目加载该配置。Doctor 会检查 TOML 解析、注册项和角色文件，但不能判断宿主信任状态。Token 来源解析由质量检查与 Spec 上下文共用，缺失、链接或非普通文件均会一致报错。
+`design-check` 面向单次变更，结合项目自己的设计文档、框架配置、组件库、Token、PRD/Spec 和人工确认的高保真参考，输出 `technical-design.md` 的 Style Constraints。`extract-design-md` 面向整个已有前端项目，归纳色彩、字体、间距、组件、布局和响应式行为，按请求更新项目根目录 `DESIGN.md`，保留人工内容并标注源码证据与解释。Token 来源解析由质量检查与 Spec 上下文共用，缺失、链接或非普通文件均会一致报错。
 
 插件只调用外部质量工具，不实现这些工具本身。
 
 ## 五、项目边界
 
-InStar 不生成 Vue/后端工程、脚手架、工程模板或质量配置，也不向目标仓库复制 `assets/`、`standards/` 或 `design-system/` 内容。团队通过自己的项目模板与工程工具创建仓库；项目需自行维护 `.instar-quality.json`，schema 3 可映射任意本地可执行验证命令。`initialize-project` 仅初始化需求与 Spec 工作流目录、规则和 Agent 配置。
+InStar 不生成 Vue/后端工程、脚手架、工程模板或质量配置，也不向目标仓库复制 `assets/` 或 `standards/` 内容。团队通过自己的项目模板与工程工具创建仓库；项目需自行维护 `.instar-quality.json`，schema 3 可映射任意本地可执行验证命令。
 
 ## 六、人类友好 CLI
 
@@ -124,7 +120,7 @@ node <plugin>/bin/instar.mjs ci status
 Hook 配置固定在 `hooks/hooks.json`：
 
 - `pre-commit-check`：提交前验证和 Review，失败默认阻止提交。
-- `session-close`：生成 `logs/` 会话审计日志；只有显式配置并提供真实摘要时才更新项目状态或经验文件。
+- `session-close`：在存在显式 `session-summary` 待处理摘要时生成 `logs/` 会话审计日志；没有待处理摘要时不创建空日志，只有显式配置并提供真实摘要时才更新项目状态或经验文件。
 - `pre-pr-check`：创建 PR 前检查完整验证、最新 Review 和 AI 溯源。
 
 Hook 不主动调用网络或 AI。
@@ -162,7 +158,7 @@ npm run release
 npm run test:release
 ```
 
-验证覆盖 Skill、资源链接、清单、Hook、CLI、运行时、发布包、工作流初始化、失败路径和安全边界。
+验证覆盖 Skill、资源链接、清单、Hook、CLI、运行时、发布包、工作流、失败路径和安全边界。
 
 完整交付闭环为：
 

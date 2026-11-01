@@ -25,7 +25,7 @@ If a source is missing, state that explicitly and continue only from available e
 1. Read the applicable project `AGENTS.md`, design contract, relevant architecture constraints, and the high-fidelity description. Resolve conflicts by following user requirements first, then project-owned approved rules; report unresolved conflicts.
 2. Inspect relevant token definitions and nearby component usage. Confirm each proposed token name exists and matches the intended semantic role. If no token fits, mark the value unresolved; do not add or edit tokens.
 3. Compare the reference with the current product patterns. Extract only constraints that matter to this change: layout, hierarchy, typography, spacing, color roles, component states, responsive behavior, accessibility, and interaction feedback.
-4. Select only applicable guidance from [InStar design guidance](../../design-system/DESIGN.md), [token review guidance](../../design-system/rules/tokens.md), the [theme references](../../design-system/themes/), and other linked rules. These references are advisory and cannot override the project.
+4. Use only the target project's own design contract, framework theme configuration, component library, token definitions, existing UI patterns, and approved reference. Do not introduce a plugin-provided design system, theme, token naming scheme, or CSS architecture.
 5. Return a change-specific `Style Constraints` section for insertion into `planning/changes/<changeId>/technical-design.md`. Keep project-wide `DESIGN.md` and token definitions unchanged; when the user asks for a complete project-level visual design specification, hand off to [extract-design-md](../extract-design-md/SKILL.md).
 
 ## Output contract
@@ -53,4 +53,4 @@ Read project instructions, source, styles, token definitions, planning artifacts
 
 ## Audit
 
-Record source paths, token paths and names actually verified, unresolved items, and visual evidence used. Distinguish project requirements from InStar advisory guidance.
+Record source paths, token paths and names actually verified, unresolved items, and visual evidence used. Distinguish project requirements from observed implementation evidence and unresolved design decisions.

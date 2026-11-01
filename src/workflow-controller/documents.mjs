@@ -29,12 +29,14 @@ export async function generationContext(root,state){
  let context;
  if(state.stage==='spec'){
   context={instruction:instructions.propose,prd:await prd(root,state),baseline:await specs(safe(root,'planning/specs')),projectArchitecture:await projectArchitecture(root,state.changeId)};
-  context.instarReferences=await instarReferences(relevantReferences(context.projectArchitecture.projectTree,JSON.stringify(context),false));
+  const referenceContext={...context};delete referenceContext.instruction;delete referenceContext.technicalDesign;
+  context.instarReferences=await instarReferences(relevantReferences(context.projectArchitecture.projectTree,JSON.stringify(referenceContext),false));
   try{const bundle=await specBundle(root,state);context.current={proposal:bundle.proposal,specs:bundle.specs};}catch(e){if(e.code!=='ENOENT')throw e;}
  }else if(state.stage==='design'||state.stage==='tasks'){
   context={...await specBundle(root,state),instruction:instructions[state.stage]};
   context.projectArchitecture=await projectArchitecture(root,state.changeId);
-  context.instarReferences=await instarReferences(relevantReferences(context.projectArchitecture.projectTree,JSON.stringify(context),true));
+  const referenceContext={...context};delete referenceContext.instruction;delete referenceContext.technicalDesign;
+  context.instarReferences=await instarReferences(relevantReferences(context.projectArchitecture.projectTree,JSON.stringify(referenceContext),true));
   const constraintsHash=hash(context.projectArchitecture.guidance),standardsHash=hash(context.projectArchitecture.standards);
   if(state.stage==='tasks'&&(!state.designConstraintsHash||!state.designStandardsHash||!state.designInStarReferencesHash))throw Error('Technical design context fingerprints are missing; reopen design and review it again');
   if(state.stage==='tasks'&&state.designConstraintsHash!==constraintsHash)throw Error('Project architecture guidance changed after technical design; reopen design and review it again');
@@ -51,7 +53,7 @@ async function instarReferences(files){
 }
 function relevantReferences(projectTree,taskContext,includeDesign){
  const files=['standards/README.md','standards/architecture/overview.md'];
- if(includeDesign)files.push('standards/architecture/module-boundaries.md','standards/architecture/dependency-direction.md','design-system/DESIGN.md','design-system/rules/visual-language.md','design-system/rules/components-and-interaction.md','design-system/rules/layout-and-responsive.md','design-system/rules/accessibility.md','design-system/rules/theming.md','design-system/rules/tokens.md','design-system/rules/review-checklist.md','design-system/themes/enterprise.md','design-system/themes/wholesale.md','design-system/themes/dark.md');
+ if(includeDesign)files.push('standards/architecture/module-boundaries.md','standards/architecture/dependency-direction.md');
  const tree=projectTree.toLowerCase(),text=taskContext.toLowerCase();
  const stack=tree+'\n'+text;
  const add=(condition,...references)=>{if(condition)files.push(...references)};
@@ -61,7 +63,7 @@ function relevantReferences(projectTree,taskContext,includeDesign){
  add(/\.go\b|go\.mod|golang/.test(stack),'standards/languages/go.md');
  add(/\.java\b|pom\.xml|build\.gradle|java\b/.test(stack),'standards/languages/java.md');
  add(/\.rs\b|cargo\.toml|rust/.test(stack),'standards/languages/rust.md');
- add(/\.vue\b|vue\s*3/.test(stack),'standards/vue/vue3.md');
+ add(/\.vue\b|vue\s*3/.test(stack),'standards/languages/vue3.md');
  add(/api|endpoint|http|openapi|webhook|接口|服务端/.test(stack),'standards/api/DESIGN.md','standards/api/SECURITY.md');
  add(/database|postgres|mysql|sqlite|sql\b|migration|schema|query|数据库|数据表|迁移|持久化/.test(stack),'standards/database/DESIGN.md','standards/database/MIGRATIONS.md');
  add(/postgres/.test(stack),'standards/database/postgresql.md');

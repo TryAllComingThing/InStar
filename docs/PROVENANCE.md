@@ -8,16 +8,14 @@
 - spec-explore 保留完整探索方法和原文快照 references/upstream.md，位于引擎外。原文快照仅作来源记录，不执行其中旧 CLI 指令。
 - spec-discover 将 OpenSpec `getExploreSkillTemplate` / `PLANNING_GUIDANCE` 改造成源码现状建档指令，并复用已移植的 MarkdownParser、SpecSchema 和主规格结构检查。源码清单、证据核验、独立捕获控制器是 InStar 新增适配，不声称上游已有全量逆向建档功能。原文快照、许可证、内容哈希和修改说明见 [移植记录](../skills/spec-discover/references/ported-method.md)。
 - write-a-prd、frontend-implement、frontend-verify 从既有 frontend-project 技能迁入并适配。
-- initialize-project、requirements-workflow、控制器和审查角色模板为本插件新开发内容。没有把新代码标为上游移植。
+- requirements-workflow 和控制器为本插件新开发内容。没有把新代码标为上游移植。
 
 ## 纠偏记录
 
-1. 初始化不并入 requirements-workflow：按用户要求恢复独立 initialize-project。该历史节点包含十个正式技能；当前插件包含 21 个 Skill 入口。
+1. 需求工作流保持独立入口；当前插件包含 20 个 Skill 入口。
 2. 所有项目写入要求显式绝对路径，避免把规划文档写入插件缓存。
-3. `templates/` 仅属于插件初始化层；纯净引擎仍无根 templates 或 CLI。引擎 `artifact-templates/` 保留 proposal、spec、technical design 和 task Markdown 工件模板。
-4. 自定义审查智能体通过初始化写入项目 `.codex/agents/`；不声称插件任意 agents 目录会自动加载。
-5. 控制器是引擎外的非交互 JSON 适配层，不能绕过人工确认。审批记录绑定文档内容，但不提供用户身份认证。
-6. 不依赖隐式安装 Superpowers；开发技能保留 TDD、审查和浏览器验证职责。若用户环境具有相关技能可协作调用，否则明确说明实际执行者，不能声称 Superpowers 已执行。
+3. 控制器是引擎外的非交互 JSON 适配层，不能绕过人工确认。审批记录绑定文档内容，但不提供用户身份认证。
+4. 不依赖隐式安装 Superpowers；开发技能保留 TDD、审查和浏览器验证职责。若用户环境具有相关技能可协作调用，否则明确说明实际执行者，不能声称 Superpowers 已执行。
 
 ## 验证范围与限制
 

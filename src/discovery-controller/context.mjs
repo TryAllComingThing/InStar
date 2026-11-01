@@ -19,7 +19,7 @@ export function sourcePath(value) {
 }
 
 export async function discoveryContext(input) {
-  const root = await projectRoot(input.project,{initialized:false});
+  const root = await projectRoot(input.project);
   if (await exists(safe(root,'.workflow/pending.json'))) throw Error('Recovery required before discovery; use discovery action recover');
   const rawScopes = input.scopes ?? ['.'];
   if (!Array.isArray(rawScopes) || !rawScopes.length) throw Error('scopes must be a non-empty array');

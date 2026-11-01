@@ -8,7 +8,7 @@ node /absolute/plugin/runtime/workflow-controller/cli.mjs /absolute/request.json
 
 The wrapper reads one JSON request and prints JSON. `-` reads stdin. It has no terminal questions. Use structured file writes for JSON; do not interpolate user prose into shell code. Consumers need Node >=20.19; the release already contains compiled JavaScript and dependencies. Source checkout maintainers run npm install and npm run build first.
 
-Every request has `action`, `project` (existing absolute target project path). Except initialize, include kebab-case `changeId`. Every mutation except start, initialize and recover requires `expectedVersion` from the latest state. All paths in state are project-relative except returned engine paths. Planning root is `<project>/planning`.
+Every request has `action`, `project` (existing absolute target project path), and, except for `recover`, a kebab-case `changeId`. Every mutation except start and recover requires `expectedVersion` from the latest state. All paths in state are project-relative except returned engine paths. Planning root is `<project>/planning`.
 
 For `evaluate-quality`, `criteria` must contain every ID in [the stage rubrics](../../../docs/EVALUATION.md), with `{id,status,reason,evidence}`. Status is `PASS`, `WARN`, `BLOCK`, or `NA`; evidence is an array of exact excerpts from the current artifact (NA needs a reason). The controller verifies complete rubric coverage and literal excerpt presence, computes a score and SHA-256 artifact fingerprint. Re-run after edits. Reports are quality signals, not controller gates. For `trace-skill`, use a Skill path present under the plugin's `skills/`, a stable invocation ID for its lifecycle, and short summaries without secrets.
 
@@ -18,7 +18,6 @@ For `evaluate-quality`, `criteria` must contain every ID in [the stage rubrics](
 |---|---|---|
 | trace-skill | skill, event (`started`/`completed`/`failed`), invocationId, stage, summary | Appends one agent-reported Skill event to `.workflow/traces.jsonl`; does not change workflow version |
 | evaluate-quality | expectedVersion, stage (`prd`/`spec`/`design`/`tasks`), evaluator, criteria | Writes a fingerprint-bound report under `reports/semantic-quality/<changeId>/`; does not change workflow version or approve a stage |
-| initialize | preview (optional boolean) | Creates missing project guidance, rules, reviewers and directories; preserves conflicts |
 | start | document | Starts PRD; unique change ID |
 | state | none | Current stage, version, approvals and history |
 | save-prd | document | Replaces draft PRD before review |

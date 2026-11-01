@@ -16,12 +16,11 @@ async function ensureSafeParent(root,relative){const parts=relative.split('/').s
 export async function atomic(root,relative,text){const dest=safe(root,relative);await ensureSafeParent(root,relative);const tmp=safe(root,`${relative}.${randomUUID()}.tmp`);try{await fs.writeFile(tmp,text,{flag:'wx'});await fs.rename(tmp,dest);}finally{await fs.rm(tmp,{force:true});}}
 export async function appendJsonl(root,relative,value){const dest=safe(root,relative);await ensureSafeParent(root,relative);try{const stat=await fs.lstat(dest);if(stat.isSymbolicLink()||!stat.isFile())throw Error(`Unsafe output path: ${relative}`);}catch(error){if(error.code!=='ENOENT')throw error;}await fs.appendFile(dest,JSON.stringify(value)+'\n',{encoding:'utf8',flag:'a'});}
 export async function putJson(root,relative,data){await atomic(root,relative,JSON.stringify(data,null,2)+'\n');}
-export async function projectRoot(input,{initialized=true}={}){
+export async function projectRoot(input){
  if(!path.isAbsolute(requireText(input,'project')))throw Error('project must be an explicit absolute path');
  const root=await fs.realpath(input);if(!(await fs.stat(root)).isDirectory())throw Error('project is not a directory');
  const plugin=await fs.realpath(pluginRoot);
  if(root===plugin||root.startsWith(plugin+path.sep))throw Error('Project must not be inside the plugin installation');
- if(initialized){const config=await json(root,'.instar.json');if(config.schemaVersion!==1)throw Error('Unsupported project configuration version');}
  return root;
 }
 export async function assertTree(root,relative){const dir=safe(root,relative);if(!await exists(dir))return;const stat=await fs.lstat(dir);if(!stat.isDirectory())throw Error(`Expected directory: ${relative}`);for(const item of await fs.readdir(dir,{withFileTypes:true})){const name=path.join(relative,item.name);safe(root,name);if(item.isSymbolicLink())throw Error(`Symlink not supported: ${name}`);if(item.isDirectory())await assertTree(root,name);else if(!item.isFile())throw Error(`Unsupported entry: ${name}`);}}

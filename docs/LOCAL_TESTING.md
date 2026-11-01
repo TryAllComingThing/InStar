@@ -57,11 +57,9 @@ node <plugin>/bin/instar.mjs ci status --project /absolute/project
 
 在隔离目标项目中准备根目录和子目录 `AGENTS.md`、`docs/engineering/ARCHITECTURE.md`、`docs/design/DESIGN.md` 与 `standards/architecture/*.md`。在 Spec 阶段读取 `context`，确认 `projectArchitecture` 返回这些来源、规范正文和目录树；修改任一约束后重新读取，确认 `contextHash` 改变。用 `.instar-quality.json` 配置自定义文档路径，再验证 configured path 优先；移除所有可选架构/设计文档后，确认插件报告缺失并沿用项目现有模式，不自动套用预设架构。技术方案应包含 Architecture 和 File Change Plan，并引用实际规范。实现阶段确认 Skill 与 reviewer 指令要求再次读取目标路径适用规则。
 
-### Subagent 配置与 Token 来源
+### Token 来源
 
-在一个空临时目录运行 `initialize-project`，确认 `.codex/config.toml` 注册六个角色，且每个 `config_file` 指向 `.codex/agents/*.toml`；检查 `doctor` 显示六个角色均已注册。再准备已有 `.codex/config.toml`（包含自定义设置及 `[agents]` 表），重复初始化，确认旧内容原样保留、只追加缺少角色且重复运行不重复追加。测试同名角色指向其他文件时出现明确冲突；测试损坏 TOML 时不改写该文件并报告 `invalid-config`。确认 Doctor 提醒 Codex 仅在受信任项目加载项目级配置。该工作流初始化不创建前端工程，也不合并工程模板指令。
-
-对 `.instar-quality.json` 的 `context.tokens` 分别测试有效文件、缺失文件、目录、符号链接和工作区外路径。有效来源应同时出现在 Doctor 和 Spec 上下文；无效路径应在两处一致阻断，且不会读取符号链接目标。未配置路径时测试常见文件名自动发现；没有候选文件时 Doctor 应显示 INFO。修改有效 Token 文件后重新读取上下文，确认 `contextHash` 变化。发布包测试应确认 `smol-toml` 与共享解析模块存在于 runtime，并在隔离搬迁后的目录完成初始化和 Doctor。
+对 `.instar-quality.json` 的 `context.tokens` 分别测试有效文件、缺失文件、目录、符号链接和工作区外路径。有效来源应同时出现在 Doctor 和 Spec 上下文；无效路径应在两处一致阻断，且不会读取符号链接目标。未配置路径时测试常见文件名自动发现；没有候选文件时 Doctor 应显示 INFO。修改有效 Token 文件后重新读取上下文，确认 `contextHash` 变化。发布包测试应确认 `smol-toml` 与共享解析模块存在于 runtime，并在隔离搬迁后的目录完成工作流和 Doctor 检查。
 
 项目质量配置测试覆盖 `.instar-quality.json` 的脚本映射、上下文来源、超时和 CI required checks；项目配置只服务当前仓库，不承担组织策略或身份认证。不要在项目配置或测试报告中保存访问令牌、密码或私钥。
 
@@ -71,22 +69,21 @@ InStar 不提供新工程脚手架、项目模板或质量配置初始化命令�
 
 推荐顺序：
 
-1. `initialize-project`
-2. `requirements-workflow` / `write-a-prd`
-3. 人工确认当前 PRD
-4. `spec-explore` / `spec-propose` / `spec-verify`
-5. 人工确认当前 Spec
-6. `spec-design` / `spec-tasks`
-7. 明确授权后使用 `frontend-implement`
-8. 使用 `frontend-verify` 验证实现
-9. 使用 `quality-gate` 进行 AI Review
-10. 人工验收后再归档或进入 `ci`
+1. `requirements-workflow` / `write-a-prd`
+2. 人工确认当前 PRD
+3. `spec-explore` / `spec-propose` / `spec-verify`
+4. 人工确认当前 Spec
+5. `spec-design` / `spec-tasks`
+6. 明确授权后使用 `frontend-implement`
+7. 使用 `frontend-verify` 验证实现
+8. 使用 `quality-gate` 进行 AI Review
+9. 人工验收后再归档或进入 `ci`
 
 PRD 或 Spec 修改后必须重新提交当前版本评审，不能复用旧批准。
 
 ### 2. 调用轨迹与语义评测
 
-在独立临时项目中初始化并开始 PRD 工作流，检查每次成功的控制器操作自动追加一条 `.workflow/traces.jsonl`。分别为 `write-a-prd` 写入 started/completed 事件，确认同一 `invocationId`、Skill 名称、阶段、摘要和时间均可见，且 trace action 不增加工作流 `version`。验证未知 Skill、无效事件和符号链接日志路径会失败。
+在独立临时项目中直接开始 PRD 工作流，检查每次成功的控制器操作自动追加一条 `.workflow/traces.jsonl`。分别为 `write-a-prd` 写入 started/completed 事件，确认同一 `invocationId`、Skill 名称、阶段、摘要和时间均可见，且 trace action 不增加工作流 `version`。验证未知 Skill、无效事件和符号链接日志路径会失败。
 
 对 PRD 调用 `evaluate-quality`，提交全部 `problem-outcome`、`scope-boundaries`、`user-journey-states`、`measurable-acceptance`、`risks-dependencies` 评测项。确认报告出现在 `reports/semantic-quality/<changeId>/prd.json`，状态、分数、精确原文证据和 SHA-256 指纹存在；删减量表项、传入不存在的证据、错误版本应被拒绝。修改 PRD 后重新评测，指纹必须变化。对 Spec、technical design、tasks 分别核对量表 ID及产物读取；`BLOCK` 作为评测建议显示，但不绕过已有人工审批。
 
@@ -165,9 +162,9 @@ test "$?" -ne 0
 | `npm run release` | 完整测试、生成 release 并执行发布包冒烟测试 |
 | `npm run test:release` | 只验证已有发布包 |
 
-自动测试覆盖审批边界、失败短路、报告过期、暂存区变化、Hook 拦截、符号链接、并发锁、工作流初始化幂等、CI check 评估和发布包搬迁。工程模板由项目侧单独维护与验收。
+自动测试覆盖审批边界、失败短路、报告过期、暂存区变化、Hook 的提交/PR 拦截与普通调用快速返回、空 SessionEnd、显式 session-summary 收尾、符号链接、并发锁、CI check 评估和发布包搬迁。工程模板由项目侧单独维护与验收。
 
-检查 `design-system/DESIGN.md` 与 `design-system/rules/*.md` 均为插件侧 Markdown 指引；技术设计上下文只引用当前变更适用的规则。另在隔离目标项目中设置自有 `AGENTS.md` 和设计文档，配置对应路径，确认项目规则优先于插件建议，且规范变化会使未完成的技术设计过期并要求重审。测试旧 `.context/` 文档发现兼容，并确认未配置 session destinations 时 SessionEnd 不生成项目状态或经验文件。
+在隔离目标项目中设置自有 `AGENTS.md`、设计文档、框架主题配置、组件库和 Token 来源，配置对应路径，确认这些项目规则被设计检查和技术设计读取；规范变化会使未完成的技术设计过期并要求重审。测试旧 `.context/` 文档发现兼容，并确认未配置 session destinations 时 SessionEnd 不生成项目状态或经验文件。
 
 对规范选择做静态/手工核对：包含 TypeScript/Vue 的项目上下文应选择对应语言规则；需求涉及 API 时包含 `standards/api/DESIGN.md` 与 `SECURITY.md`；涉及数据库迁移时包含通用数据库设计、迁移规则，并仅在 PostgreSQL 项目加载其专属指南。确认不同语言的规则不会无差别全部加载，且对应引用内容变化会更新技术方案上下文指纹。
 

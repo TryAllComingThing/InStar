@@ -28,17 +28,18 @@ try {
  assert.equal(entry.source.source,'local');assert.equal(entry.source.path,'./plugins/instar');
  const plugin=path.join(temp,'plugin'),project=path.join(temp,'project');
  await cp(path.resolve(source,entry.source.path),plugin,{recursive:true});await mkdir(project);
- for(const name of ['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','agents','templates','standards','design-system','docs','.codex-plugin','hooks','commands','assets','logs','bin'])await sameTree(path.join(sourceRoot,name),path.join(plugin,name),`release/${name}`);
+ for(const name of ['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','standards','docs','.codex-plugin','hooks','commands','assets','logs','bin'])await sameTree(path.join(sourceRoot,name),path.join(plugin,name),`release/${name}`);
+ await assert.rejects(access(path.join(plugin,'design-system')),{code:'ENOENT'});
  const manifest=JSON.parse(await readFile(path.join(plugin,'.codex-plugin/plugin.json'),'utf8'));
  assert.equal(manifest.name,'instar');
  await assert.rejects(access(path.join(plugin,'assets/templates')),{code:'ENOENT'});
- assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,21);
- for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','agents/architect.md','agents/developer.md','agents/ui-reviewer.md','agents/code-reviewer.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
+ assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,20);
+ for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
  function call(input){
   const r=spawnSync(process.execPath,[path.join(plugin,'runtime/workflow-controller/cli.mjs'),'-'],{cwd:temp,input:JSON.stringify({project,...input}),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
   assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);
  }
- // Exercise the actual new entrypoint before initialization, from a relocated release.
+ // Exercise the actual new entrypoint from a relocated release.
  await writeFile(path.join(project,'search.js'),'export const search = (items, q) => items.filter(item => item.includes(q));\n');
  function discover(input){
   const r=spawnSync(process.execPath,[path.join(plugin,'bin/instar.mjs'),'spec-discover','-'],{cwd:temp,input:JSON.stringify({project,...input}),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
@@ -52,8 +53,6 @@ try {
  await assert.rejects(access(path.join(project,'.instar.json')),{code:'ENOENT'});
  await access(path.join(plugin,'skills/spec-discover/references/upstream-explore.ts'));
  await access(path.join(plugin,'runtime/openspec-min/LICENSE'));
- assert.ok(call({action:'initialize'}).created.length);
- assert.deepEqual(call({action:'initialize'}).created,[]);
  const changeId='release-smoke';
  const state=call({action:'start',changeId,document:'# PRD\n发布包隔离测试：订单筛选。'});
  call({action:'trace-skill',changeId,skill:'write-a-prd',event:'started',invocationId:'release-smoke-prd-1',stage:'prd',summary:'Drafting release smoke PRD'});
@@ -67,5 +66,5 @@ try {
  assert.deepEqual(events.map(x=>x.type),['workflow-action','skill-invocation','quality-evaluation','skill-invocation','workflow-action']);
  assert.equal(call({action:'state',changeId}).version,pending.version);
  assert.match(await readFile(path.join(project,'docs/prd/release-smoke.md'),'utf8'),/订单筛选/);
- console.log('PASS: release marketplace, twenty-one skills, standalone spec discovery, subagent definitions, workflow initialization, bundled dependencies, relocated CLI and UTF-8 PRD review.');
+ console.log('PASS: release marketplace, twenty skills, standalone spec discovery, workflow, bundled dependencies, relocated CLI and UTF-8 PRD review.');
 } finally {await rm(temp,{recursive:true,force:true});}

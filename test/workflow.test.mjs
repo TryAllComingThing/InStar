@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile,writeFile,mkdir,readdir,symlink} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {run,initialize} from '../runtime/workflow-controller/index.mjs';
+import {run} from '../runtime/workflow-controller/index.mjs';
 import {transaction,putJson,lock,fs} from '../runtime/workflow-controller/files.mjs';
 const proposal='## Why\nUsers need search.\n## What Changes\nAdd search.\n## Capabilities\nsearch\n## Impact\nFrontend.';
 const delta='## Purpose\nEnable users to find relevant orders using clear and consistent search behavior.\n## ADDED Requirements\n### Requirement: Search\nThe system SHALL search orders.\n#### Scenario: Match\n- **WHEN** a matching query is entered\n- **THEN** matching orders appear.\n';
@@ -11,7 +11,7 @@ const design='## Context\nOrder list.\n## Goals / Non-Goals\nFind orders.\n## De
 const tasks='- [ ] 1.1 Implement search; acceptance: matching query test passes.';
 const report={summary:'Reviewed documents against requirements.',source:'test fixture reviewer',issues:[],unverified:[]};
 const checks=[{kind:'test',name:'search test',outcome:'passed',evidence:'fixture simulated test result'},{kind:'browser',name:'search journey',outcome:'passed',evidence:'fixture simulated browser result'}];
-async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true}));await initialize(project);const base={project,changeId:'add-search'};let state;
+async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true}));const base={project,changeId:'add-search'};let state;
  return {project,base,get state(){return state;},async call(action,extra={}){const result=await run({...base,action,expectedVersion:state?.version,...extra});if(result.version)state=result;return result;},async context(){return run({...base,action:'context'});},async approve(){return this.call('approve',{reviewHash:state.pendingReview.hash,confirmation:{text:'Approved fixture',source:'test only'}});}};}
 async function toSpec(f){await f.call('start',{document:'# PRD\nSearch orders.'});await f.call('submit-prd');await f.approve();const c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});}
 async function toImplementation(f){await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();}
@@ -22,16 +22,6 @@ test('acceptance cannot archive after source changes since verification',async t
  await f.call('submit-verification',{report,checks});assert.ok(f.state.verification.sourceSnapshot.treeHash);await f.approve();
  await writeFile(path.join(f.project,'app.js'),'export const version = 2;');
  await assert.rejects(f.call('archive'),/Source tree changed after verification/);
-});
-test('initialization is non-destructive, idempotent, explicit and rejects symlinks',async t=>{const f=await setup(t);assert.equal((await initialize(f.project)).created.length,0);for(const file of ['.codex/config.toml','.codex/agents/architect.toml','.codex/agents/architect.md','.codex/agents/developer.toml','.codex/agents/ui-reviewer.toml','.codex/agents/code-reviewer.toml','.codex/agents/spec-reviewer.toml','.codex/agents/frontend-reviewer.toml'])await readFile(path.join(f.project,file),'utf8');await writeFile(path.join(f.project,'docs/engineering/testing.md'),'custom');const result=await initialize(f.project);assert.equal(result.conflicts.length,1);assert.equal(await readFile(path.join(f.project,'docs/engineering/testing.md'),'utf8'),'custom');await assert.rejects(initialize('.'),/absolute/);const p=await mkdtemp(path.join(os.tmpdir(),'frontend-symlink-'));t.after(()=>rm(p,{recursive:true,force:true}));await symlink(os.tmpdir(),path.join(p,'docs'));await assert.rejects(initialize(p),/Symlink/);});
-test('project Codex agent registrations merge safely and report conflicts or invalid TOML',async t=>{
- const project=await mkdtemp(path.join(os.tmpdir(),'frontend-agent-config-'));t.after(()=>rm(project,{recursive:true,force:true}));await mkdir(path.join(project,'.codex'),{recursive:true});
- const existing='model = "codex-test"\n\n[agents]\nmax_threads = 2\n';await writeFile(path.join(project,'.codex/config.toml'),existing);
- const merged=await initialize(project);assert.equal(merged.agents.status,'ready');assert.deepEqual(merged.agents.registered,['architect','developer','ui-reviewer','code-reviewer','spec-reviewer','frontend-reviewer']);assert.deepEqual(merged.updated,['.codex/config.toml']);
- const config=await readFile(path.join(project,'.codex/config.toml'),'utf8');assert.ok(config.startsWith(existing));assert.match(config,/max_threads = 2/);const {parseProjectAgentConfig}=await import('../runtime/shared/agent-config.mjs');const parsed=parseProjectAgentConfig(config);assert.equal(parsed.agents.architect.config_file,'agents/architect.toml');assert.equal(parsed.agents['code-reviewer'].config_file,'agents/code-reviewer.toml');assert.equal(parsed.agents['spec-reviewer'].config_file,'agents/spec-reviewer.toml');assert.equal(parsed.agents['frontend-reviewer'].config_file,'agents/frontend-reviewer.toml');
- assert.equal((await initialize(project)).updated.length,0);assert.equal((await readFile(path.join(project,'.codex/config.toml'),'utf8')).match(/\[agents\.architect\]/g).length,1);
- const conflict=await mkdtemp(path.join(os.tmpdir(),'frontend-agent-conflict-'));t.after(()=>rm(conflict,{recursive:true,force:true}));await mkdir(path.join(conflict,'.codex'),{recursive:true});await writeFile(path.join(conflict,'.codex/config.toml'),'[agents.architect]\nconfig_file = "agents/custom.toml"\n');const conflictResult=await initialize(conflict);assert.equal(conflictResult.agents.status,'conflict');assert.deepEqual(conflictResult.agents.missing,['architect']);assert.match(await readFile(path.join(conflict,'.codex/config.toml'),'utf8'),/agents\/custom.toml/);
- const invalid=await mkdtemp(path.join(os.tmpdir(),'frontend-agent-invalid-'));t.after(()=>rm(invalid,{recursive:true,force:true}));await mkdir(path.join(invalid,'.codex'),{recursive:true});await writeFile(path.join(invalid,'.codex/config.toml'),'[agents.architect\n');const invalidResult=await initialize(invalid);assert.equal(invalidResult.agents.status,'invalid-config');assert.equal(await readFile(path.join(invalid,'.codex/config.toml'),'utf8'),'[agents.architect\n');
 });
 test('stale versions, stale approvals and context changes are rejected',async t=>{const f=await setup(t);await f.call('start',{document:'PRD'});await assert.rejects(f.call('submit-prd',{expectedVersion:0}),/expectedVersion/);await f.call('submit-prd');await writeFile(path.join(f.project,'docs/prd/add-search.md'),'changed');await assert.rejects(f.approve(),/stale/);await f.call('reopen',{stage:'prd',reason:'requirements updated'});await f.call('submit-prd');await f.approve();const c=await f.context();await writeFile(path.join(f.project,'docs/prd/add-search.md'),'changed again');await assert.rejects(f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}}),/stale/);});
 test('Skill invocation traces and semantic assessments are auditable and artifact-bound',async t=>{
@@ -63,7 +53,7 @@ test('reopening tasks preserves design fingerprints and requires design refresh 
  assert.equal(f.state.designConstraintsHash,designFingerprint);
  assert.equal(await readFile(path.join(f.project,'planning/changes/add-search/technical-design.md'),'utf8'),originalDesign);
  await f.context();
- await writeFile(path.join(f.project,'AGENTS.md'),`${await readFile(path.join(f.project,'AGENTS.md'),'utf8')}\n## Updated architecture constraint\nKeep search behavior inside the existing feature.\n`);
+ await writeFile(path.join(f.project,'AGENTS.md'),'# Project rules\n\n## Updated architecture constraint\nKeep search behavior inside the existing feature.\n');
  await assert.rejects(f.context(),/Project architecture guidance changed after technical design/);
  await f.call('reopen',{stage:'design',reason:'Architecture guidance changed after the design was written.'});
  await assert.rejects(readFile(path.join(f.project,'planning/changes/add-search/technical-design.md')),/ENOENT/);

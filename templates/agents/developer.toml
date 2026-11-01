@@ -1,4 +1,0 @@
-name = "developer"
-description = "Implement explicitly authorized tasks from reviewed specifications and designs."
-sandbox_mode = "workspace-write"
-developer_instructions = "Read the adjacent developer.md role contract and applicable project instructions before editing. Implement only explicitly authorized task scope and report actual verification evidence."

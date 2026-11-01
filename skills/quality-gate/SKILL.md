@@ -9,7 +9,7 @@ description: Review software changes across frontend, backend and full-stack cod
 
 本地验证完成后、提交前或 PR 前使用。输入：绝对项目路径、与 baseRef 比较的代码变更（包括未跟踪文件）、适用的 `AGENTS.md`、已配置或发现的项目架构/设计文档、项目 `standards/`、PRD/Spec、`technical-design.md` 和设计约束。阅读 [质量协议](../../docs/QUALITY.md)，调用 snapshot 取得本次检查的 fingerprint。项目上下文文档是可选输入；优先使用项目现有规范，不为满足插件而复制空文件。必须实际阅读变更及相关调用链，不能用工具退出码代替 AI Review。
 
-按变更读取 [InStar review guidance](../../standards/README.md) 中与文件语言和领域匹配的规范；API 变更查阅 API 设计/安全规则，数据库变更查阅数据库设计/迁移规则。UI 变更参考 [design-system review checklist](../../design-system/rules/review-checklist.md)、相关设计规则和已有的 design-check Style Constraints。若没有该产物，按用户/项目规范和代码现状审查，不虚构 Token 门禁。插件规则用于补充审查，不自动升级为项目门禁；项目采用的规则和已配置工具才决定 BLOCK。不要因为项目未采用插件示例而要求引入特定框架、主题系统、Design Token 或样式架构。
+按变更读取 [InStar review guidance](../../standards/README.md) 中与文件语言和领域匹配的规范；API 变更查阅 API 设计/安全规则，数据库变更查阅数据库设计/迁移规则。UI 变更读取项目自己的设计文档、框架主题配置、组件库、Token 来源、现有模式和已生成的 design-check Style Constraints。若没有这些产物，按项目用户规范和代码现状审查，不虚构 Token 门禁。项目规则和已配置工具决定 BLOCK；不要因为项目未采用某种框架、主题系统、Design Token 或样式架构而要求引入它。
 
 对所有变更评估正确性、可读性/可维护性和架构；安全与性能按风险触发。安全敏感变更（认证/授权、API 边界、SQL、文件上传、反序列化、秘密、依赖或出站请求）必须审查对应安全控制并引用代码或测试证据。性能重点检查热路径、大数据/列表、渲染、数据库查询或并发行为；无相关风险时标 NA 并解释。不要把“性能审查”机械理解为要求基准测试，也不要把建议性优化当 BLOCK。
 
@@ -45,7 +45,7 @@ description: Review software changes across frontend, backend and full-stack cod
 
 ## 输出契约
 
-`reports/quality-gate.json` 及历史报告包含工具检查、全部 17 个 Review 项、证据、严重性、指纹；`logs/` 记录执行摘要。BLOCK 阻止提交/PR，WARN 保留并披露，INFO 提供建议。
+`reports/quality-gate.json` 及历史报告包含适用 Review 项、证据、严重性、指纹；清单由项目栈动态选择：未知栈使用通用项，Vue 使用 Vue 专项项，Python/Java/Go 追加后端项，额外检查来自项目配置。`logs/` 记录执行摘要。BLOCK 阻止提交/PR，WARN 保留并披露，INFO 提供建议。
 
 ## 边界与失败策略
 
@@ -53,7 +53,7 @@ description: Review software changes across frontend, backend and full-stack cod
 
 ## 审计
 
-记录实际 reviewer 标识及证据，不能伪造独立审查身份。报告是可审阅工件，不是防篡改签名；CI 和人工仍需独立验证。
+记录实际 reviewer 标识及证据，不能伪造独立审查身份。报告包含用于发现修改的内容哈希；高信任 CI 可通过 `.instar-quality.json` 的 `evidenceTrust.hmacEnv` 使用受保护 secret 增加 HMAC anchor。未配置 anchor 时报告不是防篡改签名，CI 和人工仍需独立验证。
 
 ## 设计约束
 

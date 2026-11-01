@@ -3,7 +3,7 @@ name: requirements-workflow
 description: Manage a software change from PRD through human reviews, specification, implementation, verification and archive across frontend, backend and full-stack projects. Use for 撰写需求, 写 PRD, new product requirements, or continuing an existing tracked change.
 ---
 
-Read the [controller protocol](references/controller.md). Resolve the explicit project path and change ID. If the project is not initialized, use initialize-project. Before resuming, read state; never infer the stage from conversation memory or file names.
+Read the [controller protocol](references/controller.md). Resolve the explicit project path and change ID. The workflow operates directly in the target project and does not initialize project files, agent configuration, or engineering templates. Before resuming, read state; never infer the stage from conversation memory or file names.
 
 Requests to reverse-document existing behavior from source use [spec-discover](../spec-discover/SKILL.md) instead. They need no synthetic PRD or implementation lifecycle; do not route them into start/approve/archive. New behavior changes still use this workflow.
 

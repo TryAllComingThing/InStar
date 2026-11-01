@@ -4,7 +4,7 @@ InStar 将需求/Spec 文档引擎、项目上下文治理和质量/交付编排
 
 ## 项目配置
 
-InStar 不创建前后端工程、不分发工程模板，也不提供项目质量配置初始化命令。目标项目应自行维护 `.instar-quality.json`、项目自己的验证命令、Git 仓库和所需报告目录。`initialize-project` 属于需求/Spec 工作流初始化，只准备工作流上下文和 Agent 配置。
+InStar 不创建前后端工程、不分发工程模板，也不提供项目质量配置初始化命令。目标项目应自行维护 `.instar-quality.json`、项目自己的验证命令、Git 仓库和所需报告目录。
 
 ## 质量动作
 
@@ -23,7 +23,7 @@ Review 必须提供完整 17 项检查证据。外部工具由 `.instar-quality.
 
 ## 上下文
 
-项目规范由项目维护，InStar 负责发现、注入、校验新鲜度和汇总检查结果，不强制项目采用 FSD 或特定模块架构。插件 `standards/` 与 `design-system/` 是 Skill 可按任务引用的建议，不是项目事实源，也不自动成为 BLOCK 门禁。InStar 不安装主题实现、视觉快照或架构扫描器。规则来源职责如下：
+项目规范由项目维护，InStar 负责发现、注入、校验新鲜度和汇总检查结果，不强制项目采用 FSD 或特定模块架构。插件 `standards/` 是 Skill 可按任务引用的工程建议，不是项目事实源，也不自动成为 BLOCK 门禁。UI 设计规则、主题、组件库和 Token 均由目标项目维护。InStar 不安装主题实现、视觉快照或架构扫描器。规则来源职责如下：
 
 - `AGENTS.md`：适用目录内的工作指令；越靠近目标目录的规则越具体。
 - 架构与设计文档是项目所有的可选输入。通过 `.instar-quality.json` 的 `context.architecture`、`context.design` 配置；未配置或设为 `null` 时依次发现根目录、`docs/engineering/`、`docs/architecture/` 或 `docs/design/` 中的文档，最后兼容旧 `.context/ARCHITECTURE.md`、`.context/DESIGN.md`。
@@ -80,17 +80,13 @@ Review 必须提供完整 17 项检查证据。外部工具由 `.instar-quality.
 
 团队的 GitHub 身份、仓库权限和合并门禁由 GitHub/`gh`、CI 与分支保护提供；InStar 只要求外部提交/PR 操作有明确的用户授权，并编排、检查和汇总结果。普通团队无需配置组织公钥、签名策略或身份服务。
 
-`design-check` 在 UI 变更需要落地样式约束时读取项目设计文档、配置或发现的 Token 来源，以及经确认的高保真说明/参考；输出本次变更的 Style Constraints 和带来源的 Token 映射。插件内 `design-system/` 与主题说明仅供参考，不会覆盖项目规则，也不会作为项目 Token 定义。
+`design-check` 在 UI 变更需要落地样式约束时读取项目设计文档、框架主题配置、组件库、配置或发现的 Token 来源，以及经确认的高保真说明/参考；输出本次变更的 Style Constraints 和带来源的 Token 映射。它不提供或引入插件级设计系统、主题实现或 Token 定义。
 
 `extract-design-md` 用于从已有前端实现整理完整的视觉设计说明，并按请求写入项目根目录 `DESIGN.md`。它保留人工章节和源码命名，区分可观察事实、设计解释与未确认内容，不修改应用代码。
 
-### 项目级 Subagents
-
-`initialize-project` 会在用户明确初始化工作流时，将 architect、developer、ui-reviewer、code-reviewer、spec-reviewer、frontend-reviewer 六种角色配置安装到项目 `.codex/agents/`，并在 `.codex/config.toml` 注册。前四种角色另有 Markdown 角色契约；后两种的指令内嵌在 TOML。已有合法 TOML 会保留原文并只追加缺少的角色；同名角色指向其他配置时报告冲突，不覆盖。无效 TOML 不会被改写。Doctor 会报告已注册/缺失角色、配置解析错误和角色文件状态。Codex 只在项目受信任时加载项目级配置，因此初始化成功不等于宿主已启用这些角色。
-
 插件侧的工程参考遵循通用规则 + 按需扩展的组织方式：`standards/languages/` 按仓库实际语言选择；`standards/api/` 覆盖 HTTP API 设计与安全；`standards/database/` 覆盖数据建模、迁移和 PostgreSQL 注意事项。它们依据 ECC 的分层规则思路整理，并以语言官方资料、OpenAPI、IETF HTTP RFC 和 OWASP 指引作为外部参考；它们是可供 Skill 使用的建议，不替代项目约定或自动化工具。
 
-规范冲突必须显式报告，不静默选择。缺少可选来源时沿用项目现有代码模式并说明未定义项。文档被截断时必须检查相关原文后再确定路径或约束。SessionEnd 始终写入 `logs/` 审计摘要；只有配置 `context.sessionState` 或 `context.lessons` 且本次提供了真实摘要/有证据教训时，才追加到项目文档。Session summary 不应包含密钥、内部凭据或未经审查的外部文本。
+规范冲突必须显式报告，不静默选择。缺少可选来源时沿用项目现有代码模式并说明未定义项。文档被截断时必须检查相关原文后再确定路径或约束。SessionEnd 只有在存在显式 `session-summary` 待处理摘要时才写入 `logs/` 审计摘要；只有配置 `context.sessionState` 或 `context.lessons` 且本次提供了真实摘要/有证据教训时，才追加到项目文档。Session summary 不应包含密钥、内部凭据或未经审查的外部文本。
 
 Spec 阶段审查需求与显式架构规则是否冲突；技术方案阶段生成 `technical-design.md` 的 Architecture、Project Constraints 和 File Change Plan；实现前再次读取目标路径适用规范。项目长期设计文档不会被每次变更自动改写。
 
@@ -123,7 +119,7 @@ Spec 阶段审查需求与显式架构规则是否冲突；技术方案阶段生
 
 `ci` 只允许功能分支，检查远端 URL、base、HEAD、PR head/base 和项目配置的 required checks；禁止主分支推送、force push、自动合并和生产部署。执行提交、推送或创建 PR 仍需用户明确授权；身份和仓库权限由 GitHub/`gh` 认证提供，InStar 不建立团队身份系统。发布报告前应脱敏并限制长度；真实 GitHub 联调需要项目配置仓库、认证和允许的 host。
 
-Hook 使用官方 `PreToolUse` 与 `SessionEnd`，作为本地质量反馈辅助；它不是不可绕过的安全边界。团队共享门禁应由 CI 和分支保护执行。Hook 不主动联网调用 AI。
+Hook 使用官方 `PreToolUse` 与 `SessionEnd`，作为本地质量反馈辅助；PreToolUse 对普通 Bash 调用快速返回，SessionEnd 没有待处理摘要时不产生文件。它不是不可绕过的安全边界。团队共享门禁应由 CI 和分支保护执行。Hook 不主动联网调用 AI。
 
 ## 清单和发布
 
