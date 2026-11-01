@@ -55,8 +55,8 @@ node <plugin>/bin/instar.mjs spec-discover --input /tmp/discovery-request.json
 - `frontend-verify`：兼容现有 Vue/npm 工作流，commit profile 运行 lint、typecheck、dependencies；full profile 额外运行 test、build、vite-build，以及项目配置的 E2E/视觉检查。
 - `quality-gate`：执行通用 AI Review 和已配置适用的架构/质量适配器；Vue 工具按项目配置启用。后端专项结果依赖项目配置的验证命令和 Review 证据。
 - 开发辅助 Skills：`engineering-research` 在新增依赖或不熟悉集成前做证据检索；`systematic-debugging` 用于根因诊断；`context-optimizer` 在上下文膨胀、冲突或过时时审计并改进可发现性。
-- `ci`：准备或执行功能分支推送、PR 创建/复用、Review 报告发布、CI 检查读取和失败定位。
-- `doctor`：诊断可选项目上下文、依赖、CI 和外部质量脚本。
+- `ci`（可选）：准备或执行功能分支推送、PR 创建/复用、Review 报告发布、CI 检查读取和失败定位；未配置 GitHub/CI 时不影响本地质量流程。
+- `doctor`：诊断可选项目上下文、依赖、CI 目录和质量配置；schema 3 只检查已配置命令，不执行这些命令。
 
 报告写入目标项目 `reports/`，执行摘要写入 `logs/`。报告绑定 Git HEAD、base、暂存区和工作区指纹，代码变化后旧报告不能继续用于 PR。
 
@@ -65,6 +65,8 @@ node <plugin>/bin/instar.mjs spec-discover --input /tmp/discovery-request.json
 `hooks/hooks.json` 使用 `PreToolUse` 和 `SessionEnd`：PreToolUse 先过滤命令，只对独立的提交/PR 命令校验本地证据；SessionEnd 只有在显式调用 `session-summary` 留下待处理摘要时才写入 `logs/`，普通会话结束不会创建空日志。Hook 是 Codex 工具调用的辅助门禁，最终约束由 CI 和分支保护执行。
 
 ## 安装
+
+评审整改建议见 [`docs/PLUGIN-REVIEW.md`](docs/PLUGIN-REVIEW.md)，能力、场景、接入和边界见 [`docs/PLUGIN-GUIDE.md`](docs/PLUGIN-GUIDE.md)。
 
 维护者构建发布包：
 
@@ -105,7 +107,7 @@ node <plugin>/bin/instar.mjs ci status --project .
 node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order filtering" --confirm
 ```
 
-先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和 17 项检查证据，格式见[质量协议](docs/QUALITY.md)。`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。UI 设计约束由目标项目自己的设计文档、框架配置、组件库和 Token 来源提供。
+先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和控制器按项目语言/框架动态选择的完整检查清单（Vue 项目通常为 17 项），格式见[质量协议](docs/QUALITY.md)。`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。UI 设计约束由目标项目自己的设计文档、框架配置、组件库和 Token 来源提供。
 
 ## JSON CLI
 
@@ -115,7 +117,19 @@ node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order fil
 node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 ```
 
-质量控制器不提供项目初始化 action。目标项目需自行准备 `.instar-quality.json`、npm scripts 和 Git 仓库；完整 action、配置、报告和 GitHub 边界见 [质量协议](docs/QUALITY.md)。
+质量控制器不提供项目初始化 action，也不会向目标项目写入配置文件。目标项目只需准备 Git 仓库即可使用 `doctor` 和 `snapshot` 的零配置发现；需要可重复质量门禁时，再由项目自行维护 `.instar-quality.json`、项目验证命令和 Git 仓库。schema 1/2 兼容 npm scripts，schema 3 支持直接执行多语言工具链。项目接入模板见 [`examples/quality/`](examples/quality/)；完整 action、配置、报告和 GitHub 边界见 [质量协议](docs/QUALITY.md)。
+
+## 能力承诺边界
+
+InStar 可以将工作流阶段、人工审批、项目检查结果和 PR/CI 状态绑定到具体代码快照，并在代码、上下文、报告或远端 SHA 不一致时阻断后续操作。它不能据此保证代码没有缺陷、测试覆盖充分、AI Review 真实或独立完成，或项目配置已经覆盖全部风险。
+
+- `verify` 通过：表示项目配置的检查命令成功，不表示代码正确或没有漏洞。
+- `quality-gate` 通过：表示 AI 辅助 Review 的结构和适用检查结果满足流程要求，不替代人工代码评审。
+- 风险等级：控制器会根据内置敏感路径和项目 `riskPolicy.rules` 自动提升风险，不能把已识别的高风险变更降级为 L1；L3 需要人工角色，远端 required checks 仅在项目接入 CI/GitHub 时启用。
+- 安全检查通过：只有在项目配置的真实扫描工具成功运行，并且对应 CI Check 受保护时才可这样描述；未配置的扫描器不能视为通过。
+- `spec-discover` 产物：描述源码观察到的当前行为，不等于业务方批准的目标需求。
+- 本地报告、Skill trace 和授权字段：用于流程记录，不是不可伪造的身份、签名或合规证明。
+- Hook：是本地辅助反馈；最终合并门禁必须由 CI、分支保护和 CODEOWNERS 执行。
 
 ## 安全边界
 

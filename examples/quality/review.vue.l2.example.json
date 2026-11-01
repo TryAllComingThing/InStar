@@ -1,0 +1,24 @@
+{
+  "reviewer": "human-or-ai-reviewer-id",
+  "riskLevel": "L2",
+  "fingerprint": "REPLACE_WITH_snapshot_fingerprint",
+  "checks": [
+    {"id":"correctness","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"Checked filtering state, empty results, and reactive updates.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"maintainability","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"Logic remains local and follows the existing feature pattern.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"architecture","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"The component does not cross the feature boundary.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"security","status":"NA","evidence":{"type":"not-applicable","note":"This UI-only change does not handle credentials, authorization, or untrusted server input.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"performance","status":"PASS","evidence":{"type":"test","path":"tests/orders/search.spec.ts","line":18,"excerpt":"expect(visibleOrders).toHaveLength(2);","note":"Checked filtering behavior for the representative list size.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"naming","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"Names match the order-search domain vocabulary.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"types","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"The computed value retains the typed order collection.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"component-boundaries","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"Filtering remains within the order-search component boundary.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"design","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":55,"excerpt":"<input v-model=\"query\" aria-label=\"Search orders\" />","note":"The control follows the project accessibility and UI pattern.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"watch-cleanup","status":"NA","evidence":{"type":"not-applicable","note":"No watch or asynchronous side effect is introduced.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"v-for-key","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":60,"excerpt":"<li v-for=\"order in visibleOrders\" :key=\"order.id\">","note":"The rendered list uses a stable domain key.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"reactive-destructure","status":"NA","evidence":{"type":"not-applicable","note":"No props or reactive object is destructured in this change.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"props","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":12,"excerpt":"const props = defineProps<{ orders: Order[] }>();","note":"The component input is explicitly typed.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"computed-purity","status":"PASS","evidence":{"type":"source","path":"src/features/orders/Search.vue","line":42,"excerpt":"const visibleOrders = computed(() => filterOrders(orders.value, query.value));","note":"The computed expression has no write or I/O side effect.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"unmount-cleanup","status":"NA","evidence":{"type":"not-applicable","note":"No subscriptions, timers, or event listeners are introduced.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"async-component","status":"NA","evidence":{"type":"not-applicable","note":"This change does not define an async component.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}},
+    {"id":"lazy-route","status":"NA","evidence":{"type":"not-applicable","note":"This change does not modify route loading.","snapshotFingerprint":"REPLACE_WITH_snapshot_fingerprint"}}
+  ]
+}

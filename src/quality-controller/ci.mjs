@@ -21,7 +21,8 @@ export async function orchestrate(root,input,api,execute=(exe,args,body)=>comman
   const {config,prePr,git,json,write,save}=api;
   const c=await config(root), ci=c.ci, phase=input.phase || 'prepare';
   if(!['prepare','publish','status'].includes(phase)) throw Error('ci phase must be prepare, publish or status');
-  if(!ci || !/^[\w.-]+\/[\w.-]+$/.test(ci.repo || '') || !/^[a-z0-9.-]+$/.test(ci.host || '') || !/^[\w.-]+$/.test(ci.remote || '')) throw Error('Configure ci.repo, ci.host and ci.remote');
+  if(!ci) return save(root,'ci',{status:'WARN',phase,configured:false,reason:'CI/GitHub integration is not configured; local verification, Review and provenance remain available'});
+  if(!/^[\w.-]+\/[\w.-]+$/.test(ci.repo || '') || !/^[a-z0-9.-]+$/.test(ci.host || '') || !/^[\w.-]+$/.test(ci.remote || '')) throw Error('Invalid ci configuration: configure repo, host and remote together');
   const branch=git(root,['branch','--show-current']);
   const base=ci.base;
   if(!base || !/^[a-zA-Z0-9][\w./-]*$/.test(base) || c.baseRef!==base) throw Error('ci.base must match baseRef');
@@ -46,11 +47,18 @@ export async function orchestrate(root,input,api,execute=(exe,args,body)=>comman
   }
   if(!Array.isArray(ci.allowedHosts) || !ci.allowedHosts.includes(ci.host)) throw Error('CI host is not explicitly allowed');
   const requiredChecks=ci.requiredChecks;
+  const riskLevel=evidence.riskLevel||'L1';
   const repoArg=`${ci.host}/${ci.repo}`;
   const gh=(args,body)=>execute('gh',args,body);
   const ghJson=args=>JSON.parse(gh(args));
   const endpoint=`repos/${ci.repo}`;
   const get=route=>ghJson(['api','--hostname',ci.host,`${endpoint}${route}`]);
+  const verifyBranchProtection=()=>{
+    const protection=get(`/branches/${encodeURIComponent(base)}/protection/required_status_checks`);
+    const contexts=new Set([...(protection.contexts||[]),...(protection.checks||[]).map(check=>check.context||check.name).filter(Boolean)]);
+    const missing=requiredChecks.filter(name=>!contexts.has(name));
+    if(missing.length)throw Error(`L3 branch protection is missing required checks: ${missing.join(', ')}`);
+  };
   let prUrl=null;
   try {
     const remote=git(root,['remote','get-url','--push','--all',ci.remote]);
@@ -61,6 +69,11 @@ export async function orchestrate(root,input,api,execute=(exe,args,body)=>comman
     const remoteBase=get(`/git/ref/heads/${encodeURIComponent(base)}`);
     if(remoteBase.object?.sha!==evidence.snapshot.base) throw Error('Remote base changed; fetch and reverify before publishing');
     if(!Array.isArray(requiredChecks) || !requiredChecks.length || !requiredChecks.includes(ci.secretCheck) || !ci.secretCheck) throw Error('Effective required checks must include the configured secretCheck');
+    if(riskLevel==='L3'){
+      const configuredL3Checks=c.riskPolicy?.l3?.requiredChecks||[];
+      if(configuredL3Checks.some(name=>!requiredChecks.includes(name)))throw Error('L3 risk policy checks must be included in ci.requiredChecks');
+      verifyBranchProtection();
+    }
     const existing=ghJson(['pr','list','--repo',repoArg,'--head',branch,'--base',base,'--state','open','--json','number,url,headRefOid']);
     if(existing.length>1) throw Error('Multiple matching PRs; select manually');
     let pr=existing[0];

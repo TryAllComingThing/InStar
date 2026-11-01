@@ -4,22 +4,34 @@ InStar 将需求/Spec 文档引擎、项目上下文治理和质量/交付编排
 
 ## 项目配置
 
-InStar 不创建前后端工程、不分发工程模板，也不提供项目质量配置初始化命令。目标项目应自行维护 `.instar-quality.json`、项目自己的验证命令、Git 仓库和所需报告目录。
+InStar 不创建前后端工程、不分发工程模板，也不向项目写入 `.instar-quality.json`。项目可以自行维护该文件，以固定检查命令、质量策略和长期门禁；没有该文件时，InStar 使用零配置发现模式，仅诊断项目上下文并生成带限制说明的本地验证报告。
 
 ## 质量动作
 
 | Action | 作用 |
 | --- | --- |
-| `engineering-verify` | schema 3 项目按配置运行任意本地前后端检查；记录命令、结果与代码快照 |
+| `engineering-verify` | schema 3 项目按配置运行任意本地前后端检查；没有配置时执行零配置发现并返回 `WARN`，不猜测或执行未声明命令 |
 | `frontend-verify` | schema 1/2 兼容入口：commit profile 执行 lint/typecheck/dependencies；full profile 额外执行 test/build/vite-build，以及已配置的安全扫描、E2E 和视觉回归 |
-| `quality-gate` | 17 项 AI Review（含按风险适用的安全/性能维度）；已配置的 Vue 工具才执行，其他专项适配器可选 |
+| `quality-gate` | 按项目语言、框架和 `review.extraChecks` 动态选择 AI Review 清单（Vue 项目通常为 17 项）；已配置的 Vue 工具才执行，其他专项适配器可选 |
 | `ai-provenance` | 绑定 HEAD、sessionId、summary 和 aiGenerated |
 | `pre-commit-check` | 校验 commit profile 与 Review |
 | `pre-pr-check` | 只接受 full profile、最新 Review 和 provenance |
 | `ci` | 准备或执行功能分支推送、PR 和 CI 查询 |
-| `doctor` | 检查上下文、依赖、CI 和外部质量脚本 |
+| `doctor` | 诊断上下文、依赖、CI 目录和质量配置；没有配置时报告自动识别结果，不创建配置文件 |
 
-Review 必须提供完整 17 项检查证据。外部工具由 `.instar-quality.json` 映射到项目脚本，脚本缺失或非零退出即 BLOCK。安全与性能维度按变更风险评估；不适用时记录 NA 和原因。后续可增加结构化 JSON 适配器，当前退出码仍是基础门禁。
+Review 必须覆盖控制器依据项目语言、框架和 `review.extraChecks` 动态选择的完整检查清单；Vue 项目通常为 17 项，后端和未知技术栈使用不同清单。显式项目配置时，外部工具由 `.instar-quality.json` 映射到项目脚本，脚本缺失或非零退出即 BLOCK；无配置模式不执行猜测的检查命令。安全与性能维度按变更风险评估；不适用时记录 NA 和原因。退出码是基础门禁；L2/L3 变更还必须提供可验证的结构化 Review evidence。
+
+### 变更风险与 Review 证据
+
+质量命令可以通过 `riskLevel` 标记变更风险：`L0`、`L1`、`L2` 或 `L3`。控制器会根据内置敏感路径规则和 `.instar-quality.json` 的 `riskPolicy.rules` 自动提升风险等级，调用方不能把已识别的高风险变更降级为 L1。L2/L3 变更必须使用 `full` profile；L2/L3 的 Review evidence 必须是结构化对象，包含证据类型、相对文件路径、单行 `line` 或闭合范围 `startLine`/`endLine`、当前源码摘录、说明和与 Review fingerprint 一致的 `snapshotFingerprint`。InStar 会校验引用文件、声明行范围和摘录是否匹配当前工作区，摘录存在于其他行不能通过。
+
+结构化 evidence 的状态语义也受门禁约束：`type: "not-verified"` 只能配合 `WARN` 或 `BLOCK`，`type: "not-applicable"` 只能配合 `NA`；不能用 `PASS` 掩盖未验证或不适用的检查。报告写入采用事务暂存目录，成功后才更新历史报告、日志和 canonical 报告；失败会清理已移动文件并恢复已备份的旧报告。
+
+L3 至少必须在 `riskPolicy.l3` 中配置必需的人工 Reviewer 角色；`requiredChecks` 是可选的，只有项目已经接入 CI/GitHub 时才配置。没有 `ci` 配置时，L3 仍可在本地完成 full verify、结构化 Review 和人工审批，但报告应被理解为“本地完成、远端未接入”，不能作为远端合并或生产发布证明。配置 `requiredChecks` 和 `ci` 后，CI publish/status 会校验这些检查确实属于 base 分支的 required status checks。审批字段只是外部身份系统的引用，不是 InStar 自己完成的身份认证。
+
+CI/GitHub 是可选交付适配器，不是本地质量门禁的前置条件：没有 `ci` 时，`doctor`、`snapshot`、`verify`、`quality-gate`、`ai-provenance`、`pre-commit-check` 和 `pre-pr-check` 仍可使用；直接调用 `ci prepare|publish|status` 会返回 WARN 并说明未配置，而不会阻断本地验证流程。团队可先采用本地模式，后续仅增加 `ci` 配置即可接入远端门禁。
+
+该机制提升证据关联性，但不证明 Review 独立完成、检查覆盖充分或代码没有缺陷。人工 Reviewer、CI required checks、分支保护和 CODEOWNERS 仍是最终质量与权限边界。
 
 ## 上下文
 
@@ -47,7 +59,9 @@ Review 必须提供完整 17 项检查证据。外部工具由 `.instar-quality.
 
 ### 项目质量配置
 
-`.instar-quality.json` 是单仓库的质量工具配置，用于映射项目检查命令、基础分支、上下文文档、超时和 CI 检查。schema 1/2 使用 npm scripts；schema 3 可用直接命令适配多语言工具链。它不是组织策略服务，也不提供身份认证或组织级策略继承。配置属于项目本身，质量结果会绑定相关配置和规范文件的快照指纹。
+`.instar-quality.json` 是单仓库的可选质量工具配置，用于映射项目检查命令、基础分支、上下文文档、超时和 CI 检查。schema 1/2 使用 npm scripts；schema 3 可用直接命令适配多语言工具链。它不是组织策略服务，也不提供身份认证或组织级策略继承。配置属于项目本身，质量结果会绑定相关配置和规范文件的快照指纹。
+
+没有配置文件时，`doctor` 和 `snapshot` 不写入项目配置、报告或日志；`verify` 才会生成 `WARN` 的自动发现报告，记录识别到的技术栈和未执行的检查。该报告不能满足 `pre-pr-check`，也不能作为远端 CI、合并或发布证明。若需要严格且可重复的本地门禁，项目应自行维护配置文件。
 
 当前解析器兼容 `schemaVersion` 1、2 和 3；不会自动改写项目配置。1/2 为 npm 前端验证格式。3 必须定义 commit/full profiles 和 `tools.checks`，并可通过 `verification.inputs` 声明 Git 忽略但影响检查的本地输入。每条检查提供直接命令及参数；命令不经 shell 启动，不支持命令拼接。配置命令及参数由项目维护者负责审查，只使用项目已有本地工具。环境变量敏感项过滤是启发式规则，不是完整 allowlist 或安全隔离，宿主 OS 沙盒才是执行边界。旧配置可继续使用，未知/不完整版本会明确报错。
 
@@ -124,3 +138,5 @@ Hook 使用官方 `PreToolUse` 与 `SessionEnd`，作为本地质量反馈辅助
 ## 清单和发布
 
 `.codex-plugin/plugin.json` 是唯一安装清单；根 `plugin.json` 是工程索引。Hook 路径为 `hooks/hooks.json`。设计 Skill 包括 `design-check`（单次变更样式约束）和 `extract-design-md`（完整项目视觉设计说明）。`runtime/` 与 `release/` 是构建产物，发布前必须通过 source/runtime/release 一致性检查，并确认 TOML 解析器随运行时打包。
+
+发布包包含 `RELEASE-PROVENANCE.json`，记录插件版本、源提交、构建 Node 版本、运行时哈希和发布包哈希。正式发布仍应在干净提交上执行 `npm run release`，并将 provenance 与外部制品存储或签名系统关联；本地 provenance 不等同于不可抵赖签名。

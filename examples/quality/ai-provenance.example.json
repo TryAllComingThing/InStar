@@ -1,0 +1,7 @@
+{
+  "action": "ai-provenance",
+  "project": "/absolute/path/to/project",
+  "aiGenerated": true,
+  "sessionId": "review-session-2026-10-31",
+  "summary": "Completed full verification, structured Review, and manual risk review for the current snapshot."
+}

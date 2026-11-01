@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 3,
+  "baseRef": "main",
+  "review": {
+    "language": "python",
+    "framework": "none"
+  },
+  "verification": {
+    "profiles": {
+      "commit": ["lint", "typecheck"],
+      "full": ["lint", "typecheck", "test", "build", "dependencies", "security"]
+    }
+  },
+  "tools": {
+    "checks": {
+      "lint": {"command": "python", "args": ["-m", "ruff", "check", "."]},
+      "typecheck": {"command": "python", "args": ["-m", "mypy", "."]},
+      "test": {"command": "python", "args": ["-m", "pytest"]},
+      "build": {"command": "python", "args": ["-m", "build"]},
+      "dependencies": {"command": "python", "args": ["-m", "pip_audit"]},
+      "security": {"command": "python", "args": ["-m", "bandit", "-r", "."]}
+    }
+  },
+  "qualityPolicy": {
+    "schemaVersion": 1,
+    "profiles": {
+      "commit": [
+        {"category": "Q-01", "checkId": "lint"},
+        {"category": "Q-02", "checkId": "typecheck"},
+        {"category": "Q-07", "checkId": "evidence-report"}
+      ],
+      "full": [
+        {"category": "Q-01", "checkId": "lint"},
+        {"category": "Q-02", "checkId": "typecheck"},
+        {"category": "Q-03", "checkId": "test"},
+        {"category": "Q-04", "checkId": "build"},
+        {"category": "Q-05", "checkId": "dependencies"},
+        {"category": "Q-06", "checkId": "security"},
+        {"category": "Q-07", "checkId": "evidence-report"}
+      ]
+    }
+  },
+  "context": {
+    "architecture": null,
+    "design": null,
+    "tokens": null
+  },
+  "ci": {
+    "host": "github.com",
+    "repo": "OWNER/REPOSITORY",
+    "remote": "origin",
+    "base": "main",
+    "allowedHosts": ["github.com"],
+    "requiredChecks": ["InStar Full Verify", "InStar Secret Check"],
+    "secretCheck": "InStar Secret Check"
+  },
+  "riskPolicy": {
+    "l3": {
+      "requiredReviewRoles": ["security", "architecture"],
+      "requiredChecks": ["InStar Full Verify", "InStar Secret Check"],
+      "requireHumanApproval": true
+    }
+  }
+}

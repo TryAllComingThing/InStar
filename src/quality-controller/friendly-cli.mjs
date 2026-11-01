@@ -18,11 +18,11 @@ export async function parseFriendlyArgs(args, cwd = process.cwd()) {
       throw Error(`Unexpected argument: ${token}. ${usage}`);
     }
     if (['--confirm'].includes(token)) { flags.add(token); continue; }
-    if (!['--project','--profile','--phase','--review-file','--title','--body','--body-file'].includes(token)) throw Error(`Unknown option: ${token}`);
+    if (!['--project','--profile','--risk','--phase','--review-file','--title','--body','--body-file'].includes(token)) throw Error(`Unknown option: ${token}`);
     if (i+1>=tokens.length || tokens[i+1].startsWith('--')) throw Error(`Option requires a value: ${token}`);
     values.set(token,tokens[++i]);
   }
-  const allowedValues={doctor:['--project'],snapshot:['--project'],verify:['--project','--profile'],review:['--project','--review-file'],ci:['--project','--phase','--title','--body','--body-file']};
+  const allowedValues={doctor:['--project'],snapshot:['--project'],verify:['--project','--profile','--risk'],review:['--project','--review-file','--risk'],ci:['--project','--phase','--title','--body','--body-file']};
   const allowedFlags={doctor:[],snapshot:[],verify:[],review:[],ci:['--confirm']};
   for(const option of values.keys())if(!allowedValues[command].includes(option))throw Error(`${option} is not supported by ${command}`);
   for(const flag of flags)if(!allowedFlags[command].includes(flag))throw Error(`${flag} is not supported by ${command}`);
@@ -30,12 +30,14 @@ export async function parseFriendlyArgs(args, cwd = process.cwd()) {
   if (command==='verify') {
     input.profile=values.get('--profile') || 'full';
     if (!['commit','full'].includes(input.profile)) throw Error('profile must be commit or full');
+    if (values.has('--risk')) input.riskLevel=values.get('--risk');
   }
   if (command==='review') {
     const reviewFile=values.get('--review-file');
     if (!reviewFile) throw Error('review requires --review-file <review.json>');
     const parsed=JSON.parse(await readBoundedFile(path.resolve(cwd,reviewFile)));
     input.review=parsed.review || parsed;
+    if (values.has('--risk')) input.riskLevel=values.get('--risk');
   }
   if (command==='ci') {
     input.phase=values.get('--phase') || phase;

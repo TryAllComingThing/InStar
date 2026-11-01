@@ -32,9 +32,12 @@ try {
  await assert.rejects(access(path.join(plugin,'design-system')),{code:'ENOENT'});
  const manifest=JSON.parse(await readFile(path.join(plugin,'.codex-plugin/plugin.json'),'utf8'));
  assert.equal(manifest.name,'instar');
+ const provenance=JSON.parse(await readFile(path.join(plugin,'RELEASE-PROVENANCE.json'),'utf8'));
+ assert.equal(provenance.packageName,'instar-plugin');assert.equal(provenance.packageVersion,manifest.version);
+ assert.match(provenance.sourceCommit,/^[0-9a-f]{40}$/);assert.match(provenance.runtimeHash,/^[0-9a-f]{64}$/);assert.match(provenance.releasePluginHash,/^[0-9a-f]{64}$/);
  await assert.rejects(access(path.join(plugin,'assets/templates')),{code:'ENOENT'});
  assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,20);
- for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
+ for(const file of ['.codex-plugin/plugin.json','RELEASE-PROVENANCE.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
  function call(input){
   const r=spawnSync(process.execPath,[path.join(plugin,'runtime/workflow-controller/cli.mjs'),'-'],{cwd:temp,input:JSON.stringify({project,...input}),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
   assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);
@@ -53,6 +56,30 @@ try {
  await assert.rejects(access(path.join(project,'.instar.json')),{code:'ENOENT'});
  await access(path.join(plugin,'skills/spec-discover/references/upstream-explore.ts'));
  await access(path.join(plugin,'runtime/openspec-min/LICENSE'));
+ // Exercise the relocated quality CLI against an independent schema 3 Git fixture.
+ const git=(...args)=>{const r=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout;};
+ git('init','-b','main');git('config','user.email','smoke@example.invalid');git('config','user.name','InStar release smoke');
+ await writeFile(path.join(project,'.gitignore'),'reports/\nlogs/\n');
+ await writeFile(path.join(project,'app.js'),'export const answer = 42;\n');
+ await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify({schemaVersion:3,baseRef:'main',review:{language:'javascript',framework:'none'},verification:{profiles:{commit:['check'],full:['check']}},tools:{checks:{check:{command:process.execPath,args:['-e','process.exit(0)']}}},qualityPolicy:{schemaVersion:1,profiles:{commit:[{category:'Q-01',checkId:'check'},{category:'Q-07',checkId:'evidence-report'}],full:[{category:'Q-01',checkId:'check'},{category:'Q-02',checkId:'check'},{category:'Q-03',checkId:'check'},{category:'Q-04',checkId:'check'},{category:'Q-05',checkId:'check'},{category:'Q-06',checkId:'check'},{category:'Q-07',checkId:'evidence-report'}]}}}));
+ git('add','.');git('commit','-m','baseline');git('checkout','-b','feature/smoke');
+ function qualityCli(args,input=null){
+  const r=spawnSync(process.execPath,[path.join(plugin,'bin/instar.mjs'),...args],{cwd:temp,input,encoding:'utf8',env:{...process.env,NODE_PATH:''}});
+  assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);
+ }
+ assert.equal(qualityCli(['doctor','--project','project']).status,'PASS');
+ assert.equal(qualityCli(['snapshot','--project','project']).fingerprint.length,64);
+ assert.equal(qualityCli(['verify','--project','project','--profile','full']).status,'PASS');
+ const qualitySnapshot=qualityCli(['snapshot','--project','project']);
+ const reviewFile=path.join(temp,'quality-review.json');
+ await writeFile(reviewFile,JSON.stringify({reviewer:'release-smoke',fingerprint:qualitySnapshot.fingerprint,checks:['correctness','maintainability','architecture','security','performance','naming'].map(id=>({id,status:'PASS',evidence:'Release fixture review evidence'}))}));
+ assert.equal(qualityCli(['review','--project','project','--review-file',reviewFile]).status,'PASS');
+ function rawQuality(input){
+  const r=spawnSync(process.execPath,[path.join(plugin,'runtime/quality-controller/cli.mjs'),'-'],{cwd:temp,input:JSON.stringify(input),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
+  assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);
+ }
+ assert.equal(rawQuality({action:'ai-provenance',project,aiGenerated:false,sessionId:'release-smoke',summary:'Relocated quality CLI smoke test'}).status,'PASS');
+ assert.equal(rawQuality({action:'pre-pr-check',project}).status,'PASS');
  const changeId='release-smoke';
  const state=call({action:'start',changeId,document:'# PRD\n发布包隔离测试：订单筛选。'});
  call({action:'trace-skill',changeId,skill:'write-a-prd',event:'started',invocationId:'release-smoke-prd-1',stage:'prd',summary:'Drafting release smoke PRD'});
@@ -66,5 +93,5 @@ try {
  assert.deepEqual(events.map(x=>x.type),['workflow-action','skill-invocation','quality-evaluation','skill-invocation','workflow-action']);
  assert.equal(call({action:'state',changeId}).version,pending.version);
  assert.match(await readFile(path.join(project,'docs/prd/release-smoke.md'),'utf8'),/订单筛选/);
- console.log('PASS: release marketplace, twenty skills, standalone spec discovery, workflow, bundled dependencies, relocated CLI and UTF-8 PRD review.');
+ console.log('PASS: release marketplace, twenty skills, standalone spec discovery, workflow, bundled dependencies, relocated quality CLI and UTF-8 PRD review.');
 } finally {await rm(temp,{recursive:true,force:true});}

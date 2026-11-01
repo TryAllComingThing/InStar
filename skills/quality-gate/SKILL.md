@@ -7,7 +7,7 @@ description: Review software changes across frontend, backend and full-stack cod
 
 ## 触发与输入契约
 
-本地验证完成后、提交前或 PR 前使用。输入：绝对项目路径、与 baseRef 比较的代码变更（包括未跟踪文件）、适用的 `AGENTS.md`、已配置或发现的项目架构/设计文档、项目 `standards/`、PRD/Spec、`technical-design.md` 和设计约束。阅读 [质量协议](../../docs/QUALITY.md)，调用 snapshot 取得本次检查的 fingerprint。项目上下文文档是可选输入；优先使用项目现有规范，不为满足插件而复制空文件。必须实际阅读变更及相关调用链，不能用工具退出码代替 AI Review。
+本地验证完成后、提交前或 PR 前使用。输入：绝对项目路径、与 baseRef 比较的代码变更（包括未跟踪文件）、可选 `riskLevel`（`L0`–`L3`，默认 `L1`）、适用的 `AGENTS.md`、已配置或发现的项目架构/设计文档、项目 `standards/`、PRD/Spec、`technical-design.md` 和设计约束。阅读 [质量协议](../../docs/QUALITY.md)，调用 snapshot 取得本次检查的 fingerprint。项目上下文文档是可选输入；优先使用项目现有规范，不为满足插件而复制空文件。必须实际阅读变更及相关调用链，不能用工具退出码代替 AI Review。L2/L3 Review 必须使用与当前 snapshot fingerprint 一致的结构化 evidence；L0/L1 可保留兼容的字符串 evidence。
 
 按变更读取 [InStar review guidance](../../standards/README.md) 中与文件语言和领域匹配的规范；API 变更查阅 API 设计/安全规则，数据库变更查阅数据库设计/迁移规则。UI 变更读取项目自己的设计文档、框架主题配置、组件库、Token 来源、现有模式和已生成的 design-check Style Constraints。若没有这些产物，按项目用户规范和代码现状审查，不虚构 Token 门禁。项目规则和已配置工具决定 BLOCK；不要因为项目未采用某种框架、主题系统、Design Token 或样式架构而要求引入它。
 
@@ -37,7 +37,9 @@ description: Review software changes across frontend, backend and full-stack cod
 | async-component | 大型非首屏组件是否适合 defineAsyncComponent；首屏关键组件可说明不适用 |
 | lazy-route | 路由组件是否合理使用动态 import() |
 
-每项 PASS/BLOCK/WARN/INFO/NA 均提供文件、行号或可复查证据；NA 必须解释适用性。UI 或 Vue 专项项只在对应技术栈/变更存在时评估，否则标 NA 并解释；后端变更应将安全、API、数据库迁移、并发和可观测性作为适用风险检查。
+每项 PASS/BLOCK/WARN/INFO/NA 均提供文件、行号或可复查证据；L2/L3 的 evidence 还必须包含证据类型、相对路径、单行 `line` 或 `startLine`/`endLine` 范围、当前源码摘录、说明和 `snapshotFingerprint`，控制器会校验摘录确实位于声明行范围。`not-verified` 只能配合 WARN/BLOCK，`not-applicable` 只能配合 NA，不能用 PASS 替代验证或适用性判断。NA 必须解释适用性。UI 或 Vue 专项项只在对应技术栈/变更存在时评估，否则标 NA 并解释；后端变更应将安全、API、数据库迁移、并发和可观测性作为适用风险检查。
+
+L3 变更还必须满足项目 `riskPolicy.l3` 的人工 Reviewer 角色要求；`review.approvals` 中的每个批准项必须包含角色、外部身份标识、身份提供方、批准 ID 和 `approved` 状态。CI/GitHub 是可选的：没有远端基础设施时仍可完成本地 full verify、Review 和人工审批，但必须披露远端未接入；接入后才由 CI、分支保护和 CODEOWNERS 提供远端门禁。控制器只校验元数据格式和完整性，不伪造或替代外部身份认证。
 
 纯后端改动时，下列 Vue 专项使用 `NA`，并在 evidence 写明“本次变更不包含 Vue/UI 文件，依据变更路径与仓库技术栈判定不适用”：`watch-cleanup`、`v-for-key`、`reactive-destructure`、`props`、`computed-purity`、`unmount-cleanup`、`async-component`、`lazy-route`。`component-boundaries` 仍需检查服务/模块边界；`design` 可 NA。若任务同时改 UI，则不能套用该 NA 说明，需审查对应的前端项。
 

@@ -24,9 +24,9 @@ InStar 是面向前后端协同软件交付的 Codex 编排插件，包含 Vue 3
 
 PRD、Spec、代码实施和最终产品验收均需要人工确认。PRD、Spec 或上下文发生变化后，旧的批准记录和验证报告自动失效。
 
-### 3. npm 作为唯一包管理器
+### 3. npm 作为插件默认包管理器
 
-插件运行时、验证流程和文档统一使用 npm：
+插件自身的构建、发布和工作区管理使用 npm。目标项目的验证命令由项目配置决定；schema 3 支持直接执行不依赖 npm 的多语言工具链：
 
 ```text
 npm install
@@ -94,7 +94,7 @@ InStar/
 
 ## 五、项目边界
 
-InStar 不生成 Vue/后端工程、脚手架、工程模板或质量配置，也不向目标仓库复制 `assets/` 或 `standards/` 内容。团队通过自己的项目模板与工程工具创建仓库；项目需自行维护 `.instar-quality.json`，schema 3 可映射任意本地可执行验证命令。
+InStar 不生成 Vue/后端工程、脚手架、工程模板或质量配置，也不向目标仓库复制 `assets/` 或 `standards/` 内容。团队通过自己的项目模板与工程工具创建仓库；项目可自行维护 `.instar-quality.json`，schema 3 可映射任意本地可执行验证命令。未配置时，插件提供不写入项目配置的零配置发现和带限制说明的 `WARN` 验证结果。
 
 ## 六、人类友好 CLI
 
@@ -115,7 +115,7 @@ node <plugin>/bin/instar.mjs ci status
 
 ## 七、Command 与 Hook
 
-`/doctor` 用于检查已配置或发现的项目上下文、npm 依赖、项目脚本、锁文件、CI 配置和外部质量脚本。上下文文档缺省时显示 INFO。
+`/doctor` 用于检查已配置或发现的项目上下文、npm 依赖、项目脚本、锁文件和可选 CI 配置。CI/GitHub 不是本地质量流程的前置条件；未配置时显示 INFO。schema 3 的已配置检查由 `verify` 执行，`doctor` 只诊断其配置，不执行命令。
 
 Hook 配置固定在 `hooks/hooks.json`：
 

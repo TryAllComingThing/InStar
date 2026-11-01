@@ -17,7 +17,7 @@ Use submit-verification with the structured report and actual test and browser c
 
 ## 触发与输入契约
 
-提交前、PR 前或用户要求验证时调用。输入：目标仓库根目录、.instar-quality.json、profile commit/full。commit profile 完成 lint、typecheck、dependencies；full profile 额外完成 test、build、vite-build，以及配置的安全扫描、E2E 和视觉回归。CLI action 为 frontend-verify，local-verify 仅为旧调用兼容别名。
+提交前、PR 前或用户要求验证时调用。输入：目标仓库根目录、可选 `.instar-quality.json`、profile commit/full 和可选 `riskLevel`（`L0`–`L3`，默认 `L1`）。L2/L3 必须使用 `full` profile。commit profile 完成 lint、typecheck、dependencies；full profile 额外完成 test、build、vite-build，以及配置的安全扫描、E2E 和视觉回归。CLI action 为 frontend-verify，local-verify 仅为旧调用兼容别名。没有配置文件时只做零配置发现，不猜测或执行脚本，返回 `WARN`，不创建项目配置文件，也不能满足严格 PR 门禁。
 
 ## 工具与执行
 

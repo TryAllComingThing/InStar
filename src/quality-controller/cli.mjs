@@ -4,7 +4,7 @@ import {parseFriendlyArgs} from './friendly-cli.mjs';
 import {readBoundedFile,readBoundedStdin} from '../shared/bounded-input.mjs';
 try {
   const args = process.argv.slice(2);
-  if (['init','adopt'].includes(args[0])) throw Error('Project scaffolding and quality-configuration initialization have been removed; use your project template and maintain .instar-quality.json in the project.');
+  if (['init','adopt'].includes(args[0])) throw Error('Project scaffolding and quality-configuration initialization have been removed; use project-owned configuration only when reproducible quality checks are needed. doctor and snapshot support zero-config discovery.');
   const shortcut = await parseFriendlyArgs(args);
   if (shortcut) {
     const result = await run(shortcut);

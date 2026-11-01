@@ -61,9 +61,9 @@ node <plugin>/bin/instar.mjs ci status --project /absolute/project
 
 对 `.instar-quality.json` 的 `context.tokens` 分别测试有效文件、缺失文件、目录、符号链接和工作区外路径。有效来源应同时出现在 Doctor 和 Spec 上下文；无效路径应在两处一致阻断，且不会读取符号链接目标。未配置路径时测试常见文件名自动发现；没有候选文件时 Doctor 应显示 INFO。修改有效 Token 文件后重新读取上下文，确认 `contextHash` 变化。发布包测试应确认 `smol-toml` 与共享解析模块存在于 runtime，并在隔离搬迁后的目录完成工作流和 Doctor 检查。
 
-项目质量配置测试覆盖 `.instar-quality.json` 的脚本映射、上下文来源、超时和 CI required checks；项目配置只服务当前仓库，不承担组织策略或身份认证。不要在项目配置或测试报告中保存访问令牌、密码或私钥。
+项目质量配置测试覆盖 `.instar-quality.json` 的脚本映射、上下文来源、超时和 CI required checks；配置只服务当前仓库，不承担组织策略或身份认证。没有配置文件时应验证零配置 `doctor`、`snapshot` 和 `WARN` 的 `verify` 路径，并确认 `doctor`/`snapshot` 不创建项目配置、报告或日志。不要在项目配置或测试报告中保存访问令牌、密码或私钥。
 
-InStar 不提供新工程脚手架、项目模板或质量配置初始化命令。项目模板由团队自行维护；接入质量控制前，项目需自行准备 `.instar-quality.json`、`package.json` scripts、Git 初始提交和 base 分支。
+InStar 不提供新工程脚手架、项目模板或质量配置初始化命令。项目模板由团队自行维护；零配置发现只需要 Git 仓库，严格质量门禁再由项目自行准备 `.instar-quality.json`、验证命令、Git 初始提交和 base 分支。
 
 ### 1. 需求到实现
 
@@ -103,7 +103,7 @@ commit profile 用于提交前；full profile 用于 PR。任一脚本缺失、�
 
 ### 3. AI Review 和溯源
 
-质量 Review 需要完整 17 项检查证据。完成 Review 后记录 AI 溯源：
+质量 Review 需要覆盖控制器按项目语言、框架和额外检查选择的完整清单；Vue 项目通常为 17 项，后端和未知技术栈不同。完成 Review 后记录 AI 溯源：
 
 ```json
 {"action":"ai-provenance","project":"/absolute/project","aiGenerated":true,"sessionId":"session-id","summary":"本次会话完成订单筛选实现和验证。"}
@@ -119,7 +119,7 @@ commit profile 用于提交前；full profile 用于 PR。任一脚本缺失、�
 {"action":"ci","project":"/absolute/project","phase":"prepare","title":"feat: add order filter","body":"变更说明"}
 ```
 
-只有在已有明确授权、配置了目标仓库和允许 host 后，才执行 publish。publish 只推送功能分支，检查远端 base、HEAD、PR 和 required checks；不推主分支、不 force push、不自动合并。
+没有 CI/GitHub 时可以跳过本节，只执行本地 `full`、Review、provenance 和 `pre-pr-check`。直接调用 `ci` 会提示未配置而不影响本地流程。只有在已有明确授权、配置了目标仓库和允许 host 后，才执行 publish。publish 只推送功能分支，检查远端 base、HEAD、PR 和 required checks；不推主分支、不 force push、不自动合并。
 
 ## 控制器手动冒烟测试
 
@@ -133,7 +133,7 @@ git -C "$INSTAR_PROJECT" config user.email test@example.invalid
 git -C "$INSTAR_PROJECT" config user.name InStar-test
 ```
 
-真实质量验证前，项目需要存在 `package.json`、`.instar-quality.json`、初始 commit 和 `main` base。没有这些条件时，控制器应返回结构化 BLOCK，而不是假装通过。
+严格质量验证前，项目需要存在 `package.json` 或对应语言的工程文件、`.instar-quality.json`、初始 commit 和 `main` base。没有配置文件时，控制器应返回零配置 `WARN`，而不是假装完成了项目检查；没有初始 commit 或 base 时，快照操作应返回结构化 BLOCK。
 
 `.instar-quality.json`、项目 scripts 和 Git 初始状态由项目自身维护；质量控制器没有初始化 action。
 

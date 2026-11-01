@@ -20,6 +20,8 @@ description: Push a verified feature branch to GitHub, create or update its PR, 
 5. Review 与验证 JSON 通过 PR 正文上传，reportUrl 是真实 PR 链接；模板 CI 从正文提取匹配 HEAD/base 的报告，再上传 artifact。不是把本地路径冒充远端 artifact。正文超长即停止。
 6. phase status 读取确切 PR 的 CI 检查与 run；未完成返回 PENDING，缺少/取消/跳过/失败为 BLOCK。按报告链接定位失败 job/step。最多观察 10 分钟，每次间隔不超过 60 秒；到期交还状态，不无限轮询。
 
+对 L3 变更，publish/status 还必须读取 base 分支的 required status checks，并确认 `.instar-quality.json` 的 `ci.requiredChecks` 全部存在于服务端分支保护规则中；项目配置中的检查名称或本地审批字段不能替代远端分支保护和真实 Reviewer 身份。
+
 ## 输出契约
 
 reports/ci.json 及历史报告包含 PREPARED/PENDING/PASS/BLOCK、head/base、分支、PR/report URL、CI runs、失败步骤。logs/ 记录执行摘要；发布前 ci-intent 记录授权来源。第一次创建后响应失败，重试先查询已有 PR，避免重复创建。
