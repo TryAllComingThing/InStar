@@ -9,7 +9,7 @@ If a name is provided, use it. Otherwise infer from conversation context when cl
 or select the sole active change under the caller's explicit `<root>/changes/`.
 If ambiguous, list available active change directories and ask the user to select.
 Include changes with no tasks: this gate normally runs before design or tasks exist.
-Do not initialize a workspace, select a different root, or inspect archived changes
+Do not create a workspace, select a different root, or inspect archived changes
 as though they were active. Announce the selected `root` and `changeId` and let the
 user identify a different one.
 
@@ -29,7 +29,7 @@ complete; it is not a passing verdict. The current API reports the first blockin
 issue, so fix-and-rerun may reveal more issues. This skill reports findings and
 never implements tasks, edits review records, merges baseline specs, or archives.
 
-## 3. Initialize the report
+## 3. Prepare the report
 
 Retain the original three dimensions, scoped to document evidence:
 

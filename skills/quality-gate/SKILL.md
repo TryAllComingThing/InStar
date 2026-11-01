@@ -43,7 +43,7 @@ L3 变更还必须满足项目 `riskPolicy.l3` 的人工 Reviewer 角色要求�
 
 纯后端改动时，下列 Vue 专项使用 `NA`，并在 evidence 写明“本次变更不包含 Vue/UI 文件，依据变更路径与仓库技术栈判定不适用”：`watch-cleanup`、`v-for-key`、`reactive-destructure`、`props`、`computed-purity`、`unmount-cleanup`、`async-component`、`lazy-route`。`component-boundaries` 仍需检查服务/模块边界；`design` 可 NA。若任务同时改 UI，则不能套用该 NA 说明，需审查对应的前端项。
 
-调用 `quality-gate`，传入 reviewer、fingerprint、完整 checks；运行时只执行已配置的项目适配器。旧 npm 项目可调用 design-lint、Vue Doctor、Vue AI Sanitizer 和 ai-code-gate。先核实项目安装版本及接口；不得猜造工具参数或把插件名称直接当 CLI。项目适配脚本负责把评分阈值/策略违规转换为非零退出码。
+调用 `quality-gate`，传入 reviewer、fingerprint、完整 checks；运行时只执行已配置的项目适配器。旧 npm 项目可调用 design-lint、Vue Doctor、Vue AI Sanitizer 和 ai-code-gate。先核实项目安装版本及接口；不得猜造工具参数或把插件名称直接当 CLI。项目适配脚本负责把评分阈值/策略违规转换为非零退出码。完成 Review 后，必须通过 workflow controller 的 `submit-quality-review` 绑定当前源代码快照，再进入 `submit-verification`；源代码变化后必须重新执行质量评审。
 
 ## 输出契约
 

@@ -12,7 +12,7 @@ Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约
 
 `extract-design-md` 从现有前端代码整理完整的视觉设计说明，涵盖色彩、字体、间距、组件、布局和响应式行为，并按请求写入项目根目录 `DESIGN.md`。它保留源码中的原始值和项目命名，区分观察事实与设计解释，不修改应用样式。
 
-需求流程必须经过 PRD 人工确认，再进入 Spec；Spec 变更会重新验证并等待确认；生成技术设计和任务后，用户需明确批准完整实施计划才能开始实现，最终验收也需单独确认。
+需求流程必须经过 PRD 人工确认，再进入 Spec；Spec 变更会重新验证并等待确认；生成技术设计和任务后，用户需明确批准完整实施计划才能开始实现。实现后先由 `quality-gate` 产生稳定的当前快照评审，再提交工程验证；最终验收仍需单独确认。工作流记录支持 `trace-skill` 的 canonical 名称和路径形式，并通过 `list-skills` 返回可用 Skill。InStar 不创建 `.instar-quality.json`。
 
 工作流控制器会将成功的状态变更写入目标项目 `.workflow/traces.jsonl`；requirements-workflow 按指引登记 specialist Skill 的开始/结束。`quality-evaluation` 为 PRD、Spec、技术设计和任务输出带原文证据及指纹的语义评测报告。评测和 Skill 轨迹是本地可编辑的辅助证据，不替代人工审批或证明模型实际执行。
 
@@ -28,7 +28,7 @@ $spec-discover 根据当前代码更新 orders/search 的现状 Spec，保留其
 
 AI 按移植并改造的 OpenSpec 探索方法阅读源代码，输出
 `planning/specs/<capability>/spec.md`，附逐条需求的源码位置和快照指纹。
-它独立于新增需求工作流，无需初始化、PRD、proposal 或实施任务。
+它独立于新增需求工作流，无需启动 PRD、proposal 或实施任务。
 生成结果描述已观察到的行为，不等同于人工批准的产品要求；缺少证据的行为
 列为未知。默认保护已有 Spec，明确要求更新时才替换指定能力并保留事务备份。
 
@@ -117,7 +117,7 @@ node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order fil
 node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 ```
 
-质量控制器不提供项目初始化 action，也不会向目标项目写入配置文件。目标项目只需准备 Git 仓库即可使用 `doctor` 和 `snapshot` 的零配置发现；需要可重复质量门禁时，再由项目自行维护 `.instar-quality.json`、项目验证命令和 Git 仓库。schema 1/2 兼容 npm scripts，schema 3 支持直接执行多语言工具链。项目接入模板见 [`examples/quality/`](examples/quality/)；完整 action、配置、报告和 GitHub 边界见 [质量协议](docs/QUALITY.md)。
+质量控制器不会向目标项目写入配置文件。目标项目只需准备 Git 仓库即可使用 `doctor` 和 `snapshot` 的零配置发现；需要可重复质量门禁时，再由项目自行维护 `.instar-quality.json`、项目验证命令和 Git 仓库。schema 1/2 兼容 npm scripts，schema 3 支持直接执行多语言工具链。项目接入模板见 [`examples/quality/`](examples/quality/)；完整 action、配置、报告和 GitHub 边界见 [质量协议](docs/QUALITY.md)。
 
 ## 能力承诺边界
 

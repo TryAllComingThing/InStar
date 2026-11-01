@@ -10,26 +10,59 @@ function clearPending(s){s.pendingApproval=null;s.pendingReview=null;s.status='i
 function packageInput(input){requireText(input.proposal,'proposal');if(!input.specs||typeof input.specs!=='object'||Array.isArray(input.specs)||!Object.keys(input.specs).length)throw Error('specs must be a nonempty mapping');for(const [id,doc] of Object.entries(input.specs)){identifier(id,true);requireText(doc,'spec');}return {proposal:input.proposal,specs:input.specs};}
 async function completed(root,s){const items=taskItems(await read(changeDir(root,s.changeId),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');}
 async function gate(ref){const result=await engine.runSpecVerifyGate(ref);if(!result.valid)throw Error(result.issues.join('\n'));return result;}
-export async function run(input){
- const root=await projectRoot(input.project);const id=identifier(input.changeId);const file=statePath(id);const ref={root:safe(root,'planning'),changeId:id};
- if(input.action==='trace-skill')return lock(root,async()=>{
-  const known=new Set();async function scan(dir){for(const item of await fs.readdir(dir,{withFileTypes:true})){const p=safe(dir,item.name);if(item.isDirectory())await scan(p);else if(item.name==='SKILL.md')known.add(p.slice(safe(pluginRoot).length+1).split('/').slice(1,-1).join('/'));}}
-  await scan(safe(pluginRoot,'skills'));const skill=requireText(input.skill,'skill');if(!known.has(skill))throw Error(`Unknown Skill: ${skill}`);
-  if(!['started','completed','failed'].includes(input.event))throw Error('event must be started, completed or failed');
-  const invocationId=boundedText(requireText(input.invocationId,'invocationId'),128);
-  if(!invocationId)throw Error('invocationId is empty after normalization');
-  const summary=boundedText(requireText(input.summary,'summary'),1000);
-  if(!summary)throw Error('summary is empty after normalization');
-  const stages=new Set(['prd','spec','design','tasks','implementation','verification','acceptance']);
-  if(input.stage!==undefined&&input.stage!==null&&!stages.has(input.stage))throw Error('Invalid Skill trace stage');
-  const record={type:'skill-invocation',changeId:id,skill,event:input.event,invocationId,summary,stage:input.stage||null,at:now()};
-  if(input.outcome!==undefined){
-   if(!['string','number','boolean'].includes(typeof input.outcome)&&(!input.outcome||typeof input.outcome!=='object'||Array.isArray(input.outcome)))throw Error('outcome must be a string, number, boolean or object');
-   const serialized=JSON.stringify(input.outcome);if(Buffer.byteLength(serialized)>4096)throw Error('outcome exceeds 4096 byte limit');
-   record.outcome=redactData(input.outcome);
+function normalizeSkillName(value){
+ const raw=requireText(value,'skill').replaceAll('\\','/');
+ const marker='/skills/';
+ const markerIndex=raw.indexOf(marker);
+ const normalized=markerIndex>=0?raw.slice(markerIndex+marker.length):raw.replace(/^skills\//,'');
+ return normalized.replace(/\/SKILL\.md$/,'').replace(/^\/+|\/+$/g,'');
+}
+async function availableSkills(){
+ const skills=[];
+ async function scan(dir,relative=''){
+  for(const item of await fs.readdir(dir,{withFileTypes:true})){
+   const current=relative?`${relative}/${item.name}`:item.name;
+   const full=safe(dir,item.name);
+   if(item.isDirectory())await scan(full,current);
+   else if(item.name==='SKILL.md')skills.push(current.slice(0,-'/SKILL.md'.length));
   }
-  await appendJsonl(root,'.workflow/traces.jsonl',record);return record;
- });
+ }
+ await scan(safe(pluginRoot,'skills'));return skills.sort();
+}
+async function traceRecords(root){
+ const file=safe(root,'.workflow','traces.jsonl');if(!await exists(file))return [];
+ return (await fs.readFile(file,'utf8')).split('\n').filter(Boolean).map((line,index)=>{try{return JSON.parse(line);}catch(error){throw Error(`Invalid trace record at line ${index+1}: ${error.message}`);}});
+}
+async function recordSkillTrace(root,input){
+ const skill=normalizeSkillName(input.skill),known=await availableSkills();
+ if(!known.includes(skill))throw Error(`Unknown Skill: ${input.skill}. Use one of: ${known.join(', ')}`);
+ if(!['started','completed','failed'].includes(input.event))throw Error('event must be started, completed or failed');
+ const invocationId=boundedText(requireText(input.invocationId,'invocationId'),128);if(!invocationId)throw Error('invocationId is empty after normalization');
+ const summary=boundedText(requireText(input.summary,'summary'),1000);if(!summary)throw Error('summary is empty after normalization');
+ const stages=new Set(['prd','spec','design','tasks','implementation','verification','acceptance']);
+ if(input.stage!==undefined&&input.stage!==null&&!stages.has(input.stage))throw Error('Invalid Skill trace stage');
+ const same=(await traceRecords(root)).filter(record=>record.type==='skill-invocation'&&record.invocationId===invocationId);
+ if(input.event==='started'&&same.length)throw Error(`Skill invocation already exists: ${invocationId}`);
+ if(['completed','failed'].includes(input.event)&&(!same.some(record=>record.event==='started')||same.some(record=>['completed','failed'].includes(record.event))))throw Error(`Skill invocation must have exactly one open lifecycle: ${invocationId}`);
+ const record={type:'skill-invocation',changeId:input.changeId,skill,event:input.event,invocationId,summary,stage:input.stage||null,at:now()};
+ if(input.outcome!==undefined){
+  if(!['string','number','boolean'].includes(typeof input.outcome)&&(!input.outcome||typeof input.outcome!=='object'||Array.isArray(input.outcome)))throw Error('outcome must be a string, number, boolean or object');
+  const serialized=JSON.stringify(input.outcome);if(Buffer.byteLength(serialized)>4096)throw Error('outcome exceeds 4096 byte limit');record.outcome=redactData(input.outcome);
+ }
+ await appendJsonl(root,'.workflow/traces.jsonl',record);return record;
+}
+function checkRecord(input){
+ requireText(input.name,'check.name');requireText(input.evidence,'check.evidence');
+ if(typeof input.kind!=='string'||!input.kind.trim())throw Error('check.kind must be a nonempty string');
+ const applicable=input.applicable!==false;
+ const allowed=applicable?['passed','failed','not-verified']:['not-applicable','not-verified'];
+ if(!allowed.includes(input.outcome))throw Error(`Invalid check outcome for ${input.name}; expected ${allowed.join(' or ')}`);
+ return {...input,applicable};
+}
+export async function run(input){
+ if(input.action==='list-skills')return {skills:await availableSkills()};
+ const root=await projectRoot(input.project);const id=identifier(input.changeId);const file=statePath(id);const ref={root:safe(root,'planning'),changeId:id};
+ if(input.action==='trace-skill')return lock(root,()=>recordSkillTrace(root,{...input,changeId:id}));
  if(input.action==='state'||input.action==='context'){
   if(await exists(safe(root,'.workflow/pending.json')))throw Error('Recovery required before reading workflow');
   const s=await json(root,file);return input.action==='state'?s:{state:s,...await generationContext(root,s)};
@@ -81,7 +114,7 @@ export async function run(input){
       const kind=s.pendingApproval;clearPending(s);s.stage={prd:'prd',spec:'spec',implementation:'tasks',acceptance:'implementation'}[kind];s.feedback=input.feedback;
       if(kind==='implementation'){await fs.rm(safe(changeDir(root,id),'tasks.md'),{force:true});await fs.rm(safe(changeDir(root,id),'.tasks.json'),{force:true});}
       if(kind==='spec'){const dir=changeDir(root,id);for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;s.taskEvidence={};delete s.approvals.implementation;}
-      delete s.verification;delete s.approvals.acceptance;break;
+      delete s.verification;delete s.qualityReview;delete s.approvals.acceptance;break;
      }
      case 'create-spec':case 'save-spec':{
       requireStage(s,'spec');await assertApprovals(root,s);const ctx=await generationContext(root,s);if(input.contextHash!==ctx.contextHash)throw Error('Generation context changed');const output=packageInput(input);
@@ -105,14 +138,24 @@ export async function run(input){
      case 'submit-implementation':{
       requireStage(s,'implementation');await assertApprovals(root,s,{spec:true,implementation:true});const items=taskItems(await read(changeDir(root,id),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');s.stage='verification';s.status='in-progress';break;
      }
+     case 'submit-quality-review':{
+      requireStage(s,'verification');await assertApprovals(root,s,{spec:true,implementation:true});
+      const qualityReview=input.report;
+      if(!qualityReview||typeof qualityReview!=='object'||!['PASS','WARN','PASS_WITH_WAIVERS'].includes(qualityReview.status))throw Error('A current PASS, WARN or PASS_WITH_WAIVERS quality-gate report is required');
+      if(qualityReview.kind!=='quality-gate'||qualityReview.stable!==true||typeof qualityReview.snapshot?.fingerprint!=='string'||!qualityReview.snapshot.fingerprint.trim())throw Error('Quality-gate report must be stable and include a snapshot fingerprint');
+      s.qualityReview={reportId:qualityReview.id||qualityReview.reportId||null,status:qualityReview.status,snapshotFingerprint:qualityReview.snapshot.fingerprint,sourceSnapshot:await sourceSnapshot(root),at:now()};
+      break;
+     }
      case 'submit-verification':{
       requireStage(s,'verification');await assertApprovals(root,s,{spec:true,implementation:true});await completed(root,s);const review=report(input.report);
       if(!Array.isArray(input.checks)||!input.checks.length)throw Error('Verification checks required');
-      for(const check of input.checks){requireText(check.name,'check.name');requireText(check.evidence,'check.evidence');if(!['passed','failed','not-verified'].includes(check.outcome))throw Error('Invalid check outcome');}
-      if(!input.checks.some(c=>c.kind==='test')||!input.checks.some(c=>c.kind==='browser'))throw Error('Test and browser evidence required');
-      s.verification={report:review,checks:input.checks,at:now()};
+      const checks=input.checks.map(checkRecord);
+      if(!checks.some(check=>check.applicable))throw Error('At least one applicable verification check is required');
+      if(!s.qualityReview)throw Error('Current quality-gate review is required before verification');
+      if(hash(s.qualityReview.sourceSnapshot)!==hash(await sourceSnapshot(root)))throw Error('Quality-gate review is stale; run quality-gate again');
+      s.verification={report:review,checks,at:now()};
       s.verification.sourceSnapshot=await sourceSnapshot(root);
-      if(review.issues.some(x=>x.severity==='critical')||review.unverified.length||input.checks.some(x=>x.outcome!=='passed'))s.status='blocked';else await pending(root,s,'acceptance');break;
+      if(review.issues.some(x=>x.severity==='critical')||review.unverified.length||checks.some(x=>x.applicable&&x.outcome!=='passed'))s.status='blocked';else await pending(root,s,'acceptance');break;
      }
      case 'archive':{
       requireStage(s,'archive');await completed(root,s);await assertApprovals(root,s,{spec:true,implementation:true});if(s.approvals.acceptance?.hash!==await approvalHash(root,s,'acceptance'))throw Error('Acceptance missing or stale');if(!s.verification?.sourceSnapshot||hash(s.verification.sourceSnapshot)!==hash(await sourceSnapshot(root)))throw Error('Source tree changed after verification; reopen implementation and verify again');s.promotion=await engine.promoteToBaseline({...ref,accepted:true});s.status='completed';break;
@@ -125,7 +168,7 @@ export async function run(input){
       if(['spec','design','tasks'].includes(stage))for(const name of stage==='tasks'?['tasks.md','.tasks.json']:['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});
       if(['prd','spec','design','tasks'].includes(stage)){s.taskEvidence={};delete s.specReview;delete s.gate;}
       if(['prd','spec','design'].includes(stage)){delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;}
-      delete s.verification;clearPending(s);s.stage=stage;s.reopenReason=input.reason;if(stage==='prd'){s.clarifications=[];s.status='in-progress';}break;
+      delete s.verification;delete s.qualityReview;clearPending(s);s.stage=stage;s.reopenReason=input.reason;if(stage==='prd'){s.clarifications=[];s.status='in-progress';}break;
      }
      default:throw Error(`Unknown action: ${input.action}`);
     }

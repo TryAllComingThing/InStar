@@ -38,7 +38,13 @@ export async function evaluate(root,state,input){
   if(!['PASS','WARN','BLOCK','NA'].includes(item.status))throw Error(`Invalid status for ${item.id}`);
   requireText(item.reason,`${item.id}.reason`);
   if(!Array.isArray(item.evidence))throw Error(`${item.id}.evidence must be an array`);
-  for(const quote of item.evidence){requireText(quote,`${item.id}.evidence item`);if(!doc.text.includes(quote))throw Error(`Evidence for ${item.id} is not present in ${doc.path}`);}
+  for(const quote of item.evidence){
+   requireText(quote,`${item.id}.evidence item`);
+   if(!doc.text.includes(quote)){
+    const hint=quote.split(/\s+/).filter(Boolean).slice(0,8).join(' ');
+    throw Error(`Evidence for ${item.id} is not present in ${doc.path}. Check the full task line or use an exact excerpt; nearest search hint: ${hint}`);
+   }
+  }
   if(item.status==='PASS'&&!item.evidence.length)throw Error(`PASS requires artifact evidence: ${item.id}`);
   if(['WARN','BLOCK'].includes(item.status)&&!item.evidence.length)throw Error(`${item.status} requires artifact evidence: ${item.id}`);
   criteria.push({id:item.id,status:item.status,reason:item.reason,evidence:item.evidence});

@@ -46,8 +46,8 @@ This summary is a conversational handoff to `spec-propose`, not a separate persi
 **This is a stance, not a workflow.** There are no fixed steps, no required sequence, no mandatory outputs. You're a thinking partner helping the user explore.
 
 **External integration:** This skill is outside the openspec-min engine. Use the
-caller's explicit planning root and available project context; do not initialize
-or infer a workspace as a side effect of exploration. It can explore without an
+caller's explicit planning root and available project context; do not create or
+infer a workspace as a side effect of exploration. It can explore without an
 existing change. Source investigation here is read-only and belongs to the
 external Superpowers environment, never to the document engine.
 

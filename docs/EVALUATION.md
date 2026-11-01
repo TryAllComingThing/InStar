@@ -2,7 +2,7 @@
 
 ## Invocation trace
 
-Successful workflow mutations are appended to `.workflow/traces.jsonl` as `workflow-action` events. The writing agent records Skill lifecycle events with `trace-skill` (`started`, `completed`, or `failed`), a stable per-invocation ID, skill path, stage, and short summary. Semantic evaluation also records a `quality-evaluation` event. Use the JSONL file for a chronological audit trail; the existing `workflow.json` history remains the authoritative workflow state history.
+Successful workflow mutations are appended to `.workflow/traces.jsonl` as `workflow-action` events. The writing agent records Skill lifecycle events with `trace-skill` (`started`, `completed`, or `failed`), a stable per-invocation ID, canonical Skill name, stage, and short summary. Canonical names and path forms such as `skills/requirements-workflow` are accepted, but every invocation must have exactly one `started` event followed by one terminal event. Semantic evaluation also records a `quality-evaluation` event. Use the JSONL file for a chronological audit trail; the existing `workflow.json` history remains the authoritative workflow state history.
 
 Example Skill trace request:
 

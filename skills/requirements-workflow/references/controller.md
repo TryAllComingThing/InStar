@@ -10,13 +10,14 @@ The wrapper reads one JSON request and prints JSON. `-` reads stdin. It has no t
 
 Every request has `action`, `project` (existing absolute target project path), and, except for `recover`, a kebab-case `changeId`. Every mutation except start and recover requires `expectedVersion` from the latest state. All paths in state are project-relative except returned engine paths. Planning root is `<project>/planning`.
 
-For `evaluate-quality`, `criteria` must contain every ID in [the stage rubrics](../../../docs/EVALUATION.md), with `{id,status,reason,evidence}`. Status is `PASS`, `WARN`, `BLOCK`, or `NA`; evidence is an array of exact excerpts from the current artifact (NA needs a reason). The controller verifies complete rubric coverage and literal excerpt presence, computes a score and SHA-256 artifact fingerprint. Re-run after edits. Reports are quality signals, not controller gates. For `trace-skill`, use a Skill path present under the plugin's `skills/`, a stable invocation ID for its lifecycle, and short summaries without secrets.
+For `evaluate-quality`, `criteria` must contain every ID in [the stage rubrics](../../../docs/EVALUATION.md), with `{id,status,reason,evidence}`. Status is `PASS`, `WARN`, `BLOCK`, or `NA`; evidence is an array of exact excerpts from the current artifact (NA needs a reason). The controller verifies complete rubric coverage and literal excerpt presence, computes a score and SHA-256 artifact fingerprint. Re-run after edits. Reports are quality signals, not controller gates. For `trace-skill`, use the canonical Skill name or a path form such as `skills/spec-explore` or `/absolute/plugin/skills/spec-explore/SKILL.md`; each invocation must have exactly one `started` event followed by one `completed` or `failed` event.
 
 ## Actions
 
 | action | Additional fields | Result / prerequisite |
 |---|---|---|
-| trace-skill | skill, event (`started`/`completed`/`failed`), invocationId, stage, summary | Appends one agent-reported Skill event to `.workflow/traces.jsonl`; does not change workflow version |
+| list-skills | none | Lists canonical Skill names discovered under the installed plugin |
+| trace-skill | skill, event (`started`/`completed`/`failed`), invocationId, stage, summary | Appends one agent-reported Skill lifecycle event to `.workflow/traces.jsonl`; accepts canonical names and path forms; does not change workflow version |
 | evaluate-quality | expectedVersion, stage (`prd`/`spec`/`design`/`tasks`), evaluator, criteria | Writes a fingerprint-bound report under `reports/semantic-quality/<changeId>/`; does not change workflow version or approve a stage |
 | start | document | Starts PRD; unique change ID |
 | state | none | Current stage, version, approvals and history |
@@ -32,14 +33,15 @@ For `evaluate-quality`, `criteria` must contain every ID in [the stage rubrics](
 | write-tasks | contextHash, document | Calls generateTaskList; opens one implementation-plan review covering both technical-design.md and tasks.md; approval authorizes implementation |
 | complete-task | taskId, evidence | Records actual completion and checks canonical numbered task |
 | submit-implementation | none | Requires all tasks completed with evidence; enters verification |
-| submit-verification | report, checks | Requires test and browser evidence; records a source-tree fingerprint, blocks failures or awaits acceptance |
+| submit-quality-review | report | Records a current stable `quality-gate` report and binds it to the current source snapshot; required before verification |
+| submit-verification | report, checks | Requires a current quality-gate review and at least one applicable check; records a source-tree fingerprint, blocks failed or unverified applicable checks or awaits acceptance |
 | archive | none | After human acceptance verifies the source tree still matches the verification fingerprint, then calls promoteToBaseline; archives proposal.md, the delta-specs directory, technical-design.md, tasks.md, and workflow.json. The PRD remains at docs/prd/<changeId>.md. |
 | reopen | stage, reason | Invalidates downstream approvals and removes downstream generated artifacts; transaction backup retained |
 | recover | transactionId, reason | Explicitly restores interrupted transaction snapshot |
 
 `report` is `{summary:string,source:string,issues:[{severity:"critical"|"warning"|"suggestion",message:string}],unverified:string[]}`. Include paths and evidence in messages. An empty issue list is a substantive reviewer conclusion, not a default. Unverified applicable checks block progression. The controller validates this structure and applies the deterministic Spec gate; it cannot prove that a reviewer Skill ran or that a model's semantic review is complete. Report the actual reviewer or disclose a main-agent fallback.
 
-`checks` is an array of `{name,kind,outcome,evidence}`. Include at least `kind:"test"` and `kind:"browser"`; outcome is `passed`, `failed` or `not-verified`. Evidence identifies the actual command/result or browser journey and artifact. Never fabricate successful evidence. Missing browser capabilities block acceptance rather than pretending source review is a browser check.
+`checks` is an array of `{name,kind,outcome,evidence,applicable?}`. Applicable checks use `passed`, `failed` or `not-verified`; non-applicable checks use `not-applicable` or `not-verified` and must explain why. Do not require browser evidence for CLI or backend-only changes that have no browser surface. Failed or unverified applicable checks block acceptance. Evidence identifies the actual command/result or browser journey and artifact. Never fabricate successful evidence.
 
 For approve, copy `pendingReview.hash` from the current state and provide the actual user's message plus conversation identifier/source. Show documents before requesting review. One reply approves one pending boundary. These records are local workflow evidence, not identity authentication.
 

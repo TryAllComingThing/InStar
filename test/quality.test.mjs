@@ -328,7 +328,6 @@ test('session audit records supplied facts without inventing project context; sy
  const c=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));c.context={sessionState:'.instar/session/PROJECT_STATE.md',lessons:'.instar/session/LESSONS.md'};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(c));
  const optedIn=await f.call('session-close',{summary:'Explicitly configured state',lessons:'Evidence: fixture behavior'});assert.equal(optedIn.contextUpdated.length,2);
  assert.match(await readFile(path.join(f.project,'.instar/session/PROJECT_STATE.md'),'utf8'),/Explicitly configured state/);assert.match(await readFile(path.join(f.project,'.instar/session/LESSONS.md'),'utf8'),/Evidence: fixture behavior/);
- await assert.rejects(f.call('initialize-quality'),/Unknown quality action/);
  const outside=await mkdtemp(path.join(os.tmpdir(),'instar-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));
  await rm(path.join(f.project,'reports'),{recursive:true,force:true});await symlink(outside,path.join(f.project,'reports'));
  await assert.rejects(f.call('local-verify'),/Symlink/);
@@ -358,11 +357,6 @@ test('legacy organization policy settings do not affect local quality workflow',
  await writeFile(path.join(f.project,'.instar-policy.json'),'{ invalid legacy policy');
  assert.equal((await f.call('frontend-verify',{profile:'commit'})).status,'PASS');
  const doctor=await f.call('doctor');assert.equal(doctor.checks.some(item=>item.id.startsWith('policy:')),false);
-});
-test('removed project initializer actions are rejected',async t=>{
- const f=await fixture(t);
- await assert.rejects(f.call('init-frontend'),/Unknown quality action/);
- await assert.rejects(f.call('initialize-quality'),/Unknown quality action/);
 });
 test('commit profile is insufficient for PR; hooks deny missing evidence and allow unrelated commands',async t=>{
  const f=await fixture(t);

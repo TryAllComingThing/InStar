@@ -23,7 +23,7 @@ async function request(project,extra={}) {
   return {action:'capture',project,scopes:context.scopes,contextHash:context.contextHash,specs:{'orders/search':document},evidence:{'orders/search':[{requirement:'Search orders',path:'src/orders.js',startLine:1,endLine:3,excerpt:'return orders.filter(order => order.name.includes(query));'}]},reviewedFiles:['src/orders.js'],limitations:['Static source analysis only']};
 }
 
-test('discovery preview is read-only; capture creates baselines without initialization or PRD',async t=>{
+test('discovery preview is read-only; capture creates baselines without project setup or PRD',async t=>{
   const project=await fixture(t), input=await request(project);
   const before=await readdir(project);
   const preview=await run({...input,preview:true});
@@ -173,7 +173,7 @@ test('ordinary write failure rolls back the whole baseline package',async t=>{
   await assert.rejects(access(path.join(project,'.workflow/pending.json')),{code:'ENOENT'});
 });
 
-test('standalone interrupted discovery can recover without initialization',async t=>{
+test('standalone interrupted discovery can recover without project setup',async t=>{
   const project=await fixture(t), id='12345678-1234-1234-1234-123456789012';
   const backup=`.workflow/transactions/${id}`;
   await mkdir(path.join(project,backup,'before/planning/specs/orders/search'),{recursive:true});

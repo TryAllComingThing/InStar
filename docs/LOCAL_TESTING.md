@@ -63,7 +63,7 @@ node <plugin>/bin/instar.mjs ci status --project /absolute/project
 
 项目质量配置测试覆盖 `.instar-quality.json` 的脚本映射、上下文来源、超时和 CI required checks；配置只服务当前仓库，不承担组织策略或身份认证。没有配置文件时应验证零配置 `doctor`、`snapshot` 和 `WARN` 的 `verify` 路径，并确认 `doctor`/`snapshot` 不创建项目配置、报告或日志。不要在项目配置或测试报告中保存访问令牌、密码或私钥。
 
-InStar 不提供新工程脚手架、项目模板或质量配置初始化命令。项目模板由团队自行维护；零配置发现只需要 Git 仓库，严格质量门禁再由项目自行准备 `.instar-quality.json`、验证命令、Git 初始提交和 base 分支。
+InStar 不提供新工程脚手架或项目模板。项目模板由团队自行维护；零配置发现只需要 Git 仓库，严格质量门禁再由项目自行准备 `.instar-quality.json`、验证命令、Git 初始提交和 base 分支。
 
 ### 1. 需求到实现
 
@@ -135,7 +135,7 @@ git -C "$INSTAR_PROJECT" config user.name InStar-test
 
 严格质量验证前，项目需要存在 `package.json` 或对应语言的工程文件、`.instar-quality.json`、初始 commit 和 `main` base。没有配置文件时，控制器应返回零配置 `WARN`，而不是假装完成了项目检查；没有初始 commit 或 base 时，快照操作应返回结构化 BLOCK。
 
-`.instar-quality.json`、项目 scripts 和 Git 初始状态由项目自身维护；质量控制器没有初始化 action。
+`.instar-quality.json`、项目 scripts 和 Git 初始状态由项目自身维护。
 
 测试 JSON 错误：
 

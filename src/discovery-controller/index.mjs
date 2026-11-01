@@ -110,7 +110,7 @@ export async function run(input) {
   const prepared = await prepare(input,context);
   if (input.preview) return {status:'PREVIEW',project:context.project,contextHash:context.contextHash,...prepared};
   return lock(context.project,async()=>{
-    // Match the normal workflow lock and recovery journal, without initializing it.
+    // Match the normal workflow lock and recovery journal without creating setup state.
     // Re-scan under the lock before any write to detect changes during generation.
     const latest = await discoveryContext(input);
     if (latest.contextHash !== context.contextHash) throw Error('Discovery context changed before capture');

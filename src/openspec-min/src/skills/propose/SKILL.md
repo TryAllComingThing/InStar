@@ -22,7 +22,7 @@ owned by the external Superpowers workflow under the user's authorization.
 Use the caller's explicit `root`, kebab-case `changeId`, and finalized PRD.
 `root` is the single planning directory; do not infer another root from the
 current working directory. If a material input is missing, obtain it before
-creating anything. Do not initialize a planning workspace merely because this
+creating anything. Do not create a planning workspace merely because this
 skill was selected automatically.
 
 The caller invokes `createSpecChange({root, changeId, prd, generate})`. The

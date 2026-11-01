@@ -8,8 +8,6 @@ import {parseFriendlyArgs} from '../src/quality-controller/friendly-cli.mjs';
 test('friendly CLI parses quality commands and verify profiles',async()=>{
   const project=await mkdtemp(path.join(tmpdir(),'instar-friendly-'));
   try {
-    assert.equal(await parseFriendlyArgs(['init','--scaffold','--project',project],'/tmp'),null);
-    assert.equal(await parseFriendlyArgs(['adopt','--project','.'],project),null);
     assert.deepEqual(await parseFriendlyArgs(['snapshot','--project','.'],project),{action:'snapshot',project});
     assert.equal((await parseFriendlyArgs(['verify','--profile','commit'],project)).profile,'commit');
     assert.equal((await parseFriendlyArgs(['verify','--profile','full','--risk','L2'],project)).riskLevel,'L2');

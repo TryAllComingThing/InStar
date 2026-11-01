@@ -16,7 +16,7 @@ test('CLI reports usage and malformed JSON as JSON errors with nonzero exit',()=
   assert.equal(typeof JSON.parse(result.stderr).error,'string');
  }
 });
-test('CLI starts a workflow in an existing project without initialization',async t=>{
+test('CLI starts a workflow in an existing project',async t=>{
  const temp=await mkdtemp(path.join(tmpdir(),'instar-cli-'));
  t.after(()=>rm(temp,{recursive:true,force:true}));
  const result=invoke(['-'],JSON.stringify({action:'start',project:temp,changeId:'cli-check',document:'# PRD\nCLI workflow.'}));

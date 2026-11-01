@@ -8,7 +8,7 @@ metadata:
 ---
 
 Use this independent workflow for documenting existing behavior. It needs neither
-project initialization nor a PRD/change ID. Read [the protocol](references/protocol.md)
+project setup nor a PRD/change ID. Read [the protocol](references/protocol.md)
 for controller requests and [the baseline template](assets/spec.md) when authoring.
 The [port record](references/ported-method.md) distinguishes OpenSpec code from the
 InStar adaptation; its upstream snapshot is provenance, not executable instructions.
