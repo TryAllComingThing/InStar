@@ -30,7 +30,7 @@ test('Skill invocation traces and semantic assessments are auditable and artifac
  const f=await setup(t);const invoke={project:f.project,changeId:'add-search',skill:'write-a-prd',invocationId:'prd-1',summary:'Drafting the PRD',event:'started',stage:'prd'};
  await run({...invoke,action:'trace-skill'});await f.call('start',{document:'# PRD\nSearch orders.'});
  await run({...invoke,action:'trace-skill',invocationId:'prd-secret',summary:'token: sk-abcdefghijklmnopqrstuvwxyz1234567890',outcome:{api_key:'never-persist',result:'ok'}});
- await assert.rejects(run({...invoke,action:'trace-skill',outcome:{data:'x'.repeat(5000)}}),/outcome exceeds/);
+ await assert.rejects(run({...invoke,action:'trace-skill',invocationId:'prd-large',outcome:{data:'x'.repeat(5000)}}),/outcome exceeds/);
  const criteria=['problem-outcome','scope-boundaries','user-journey-states','measurable-acceptance','risks-dependencies'].map(id=>({id,status:'PASS',reason:'Covered by PRD',evidence:['Search orders.']}));
  await assert.rejects(run({...f.base,action:'evaluate-quality',expectedVersion:f.state.version,stage:'prd',evaluator:'test reviewer',criteria:criteria.map((x,i)=>i?x:{...x,evidence:['missing excerpt']})}),/not present/);
  const result=await run({...f.base,action:'evaluate-quality',expectedVersion:f.state.version,stage:'prd',evaluator:'test reviewer',criteria});
