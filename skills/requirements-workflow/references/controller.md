@@ -4,7 +4,7 @@
 
 `recovery-status` reports recovery storage; `prune-recovery` previews explicit
 completed IDs and requires preview:false/confirm:true to remove them. Both omit
-changeId. See [recovery storage](../../../docs/RECOVERY-STORAGE.md).
+changeId. See [recovery storage](../../../docs/LOCAL_TESTING.md#7-故障注入与恢复演练).
 
 `baseline-context`, `baseline-adopt`, `baseline-check` and `reuse-context` use an
 absolute project but no changeId. Adoption uses explicit confirmation and a fresh

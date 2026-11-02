@@ -9,7 +9,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const release=path.join(root,'release');
 const staging=await mkdtemp(path.join(root,'.release-staging-'));
 const plugin=path.join(staging,'plugins/instar');
-const files=['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','standards','docs','.codex-plugin','hooks','commands','assets','logs','bin'];
+const files=['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','standards','docs','.codex-plugin','hooks','commands','assets','bin'];
 const hashTree=async directory=>{
  const entries=[];
  const walk=async current=>{

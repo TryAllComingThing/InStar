@@ -4,11 +4,19 @@ InStar 是一个 Codex 软件交付插件，支持前后端协同的需求、Spe
 
 Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约定发现的架构/设计文档与可选 `standards/`，并将规则纳入生成上下文。插件内 `standards/` 按通用、语言、API、数据库分层；Skill 根据代码和任务按需加载，不把建议强加给项目。架构规范由项目维护；InStar 不强制采用特定架构模式。
 
+## 文档索引
+
+- [架构书](docs/plugin-arch.md)：定位、模块、状态机、证据链、恢复和安全模型。
+- [使用说明书](docs/PLUGIN-GUIDE.md)：安装接入、22 个 Skill、工作流、质量验证和命令速查。
+- [质量协议](docs/QUALITY.md)：schema、Q-01 至 Q-07、Review 清单、报告与 CI 协议。
+- [开发测试手册](docs/LOCAL_TESTING.md)：构建、测试分层、故障注入、发布验收和覆盖缺口。
+- [评测与验收说明](docs/EVALUATION.md)：语义评测 Rubric、评分、报告格式和模型验收夹具。
+
 ## 能力地图
 
 ### 需求与 Spec
 
-需求与实现 Skill：`requirements-workflow`、`write-a-prd`、`spec-explore`、`spec-discover`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks`、`engineering-implement`、`engineering-verify`、`frontend-implement`、`frontend-verify`。设计、质量与辅助 Skill：`design-check`、`extract-design-md`、`quality-gate`、`quality-evaluation`、`ci`、`context-optimizer`、`engineering-research`、`systematic-debugging`。另有 `project-discover` 工程基线提取和 `reuse-discover` 复用治理，共 22 个 Skill 入口。当前验证状态见 [VALIDATION.md](docs/VALIDATION.md)。
+需求与实现 Skill：`requirements-workflow`、`write-a-prd`、`spec-explore`、`spec-discover`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks`、`engineering-implement`、`engineering-verify`、`frontend-implement`、`frontend-verify`。设计、质量与辅助 Skill：`design-check`、`extract-design-md`、`quality-gate`、`quality-evaluation`、`ci`、`context-optimizer`、`engineering-research`、`systematic-debugging`。另有 `project-discover` 工程基线提取和 `reuse-discover` 复用治理，共 22 个 Skill 入口。
 
 `extract-design-md` 从现有前端代码整理完整的视觉设计说明，涵盖色彩、字体、间距、组件、布局和响应式行为，并按请求写入项目根目录 `DESIGN.md`。它保留源码中的原始值和项目命名，区分观察事实与设计解释，不修改应用样式。
 
@@ -66,8 +74,6 @@ node <plugin>/bin/instar.mjs spec-discover --input /tmp/discovery-request.json
 
 ## 安装
 
-评审整改建议见 [`docs/PLUGIN-REVIEW.md`](docs/PLUGIN-REVIEW.md)，能力、场景、接入和边界见 [`docs/PLUGIN-GUIDE.md`](docs/PLUGIN-GUIDE.md)。
-
 维护者构建发布包：
 
 ```sh
@@ -107,7 +113,7 @@ node <plugin>/bin/instar.mjs ci status --project .
 node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order filtering" --confirm
 ```
 
-先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和控制器按项目语言/框架动态选择的完整检查清单（Vue 项目通常为 17 项），格式见[质量协议](docs/QUALITY.md)。`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。UI 设计约束由目标项目自己的设计文档、框架配置、组件库和 Token 来源提供。
+`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。UI 设计约束由目标项目自己的设计文档、框架配置、组件库和 Token 来源提供。
 
 ## JSON CLI
 
@@ -117,7 +123,7 @@ node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order fil
 node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 ```
 
-质量控制器不会向目标项目写入配置文件。目标项目只需准备 Git 仓库即可使用 `doctor` 和 `snapshot` 的零配置发现；需要可重复质量门禁时，再由项目自行维护 `.instar-quality.json`、项目验证命令和 Git 仓库。schema 1/2 兼容 npm scripts，schema 3 支持直接执行多语言工具链。项目接入模板见 [`examples/quality/`](examples/quality/)；完整 action、配置、报告和 GitHub 边界见 [质量协议](docs/QUALITY.md)。
+质量控制器不会向目标项目写入配置文件。目标项目只需准备 Git 仓库即可使用 `doctor` 和 `snapshot` 的零配置发现；需要可重复质量门禁时，再由项目自行维护 `.instar-quality.json`、项目验证命令和 Git 仓库。schema 1/2 兼容 npm scripts，schema 3 支持直接执行多语言工具链。
 
 ## 能力承诺边界
 
@@ -141,5 +147,3 @@ InStar 可以将工作流阶段、人工审批、项目检查结果和 PR/CI 状
 npm test
 npm run release
 ```
-
-详细步骤见 [使用与本地测试手册](docs/LOCAL_TESTING.md)。真实 GitHub、真实外部扫描器、真实模型和浏览器验收需要目标项目单独联调，插件自动测试不伪造这些结果。

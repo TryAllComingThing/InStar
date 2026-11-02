@@ -30,7 +30,7 @@ try {
  assert.equal(entry.source.source,'local');assert.equal(entry.source.path,'./plugins/instar');
  const plugin=path.join(temp,'plugin'),project=path.join(temp,'project');
  await cp(path.resolve(source,entry.source.path),plugin,{recursive:true});await mkdir(project);
- for(const name of ['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','standards','docs','.codex-plugin','hooks','commands','assets','logs','bin'])await sameTree(path.join(sourceRoot,name),path.join(plugin,name),`release/${name}`);
+ for(const name of ['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','standards','docs','.codex-plugin','hooks','commands','assets','bin'])await sameTree(path.join(sourceRoot,name),path.join(plugin,name),`release/${name}`);
  await assert.rejects(access(path.join(plugin,'design-system')),{code:'ENOENT'});
  const manifest=JSON.parse(await readFile(path.join(plugin,'.codex-plugin/plugin.json'),'utf8'));
  assert.equal(manifest.name,'instar');
