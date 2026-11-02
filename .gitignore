@@ -1,5 +1,7 @@
 node_modules/
 runtime/
 release/
+reports/
+logs/
 **/dist/
 .DS_Store
