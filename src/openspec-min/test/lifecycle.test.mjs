@@ -1,3 +1,4 @@
+import {symlinkAvailable} from '../../../test/symlink-support.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile,writeFile,mkdir,symlink} from 'node:fs/promises';
@@ -8,7 +9,7 @@ const proposal='## Why\nA useful business reason.\n## What Changes\nAdds behavio
 const requirement=(name='Login',scenario='Success')=>`### Requirement: ${name}\nThe system SHALL authenticate users.\n\n#### Scenario: ${scenario}\n- **WHEN** credentials are valid\n- **THEN** authentication succeeds\n`;
 const delta=`## Purpose\nAuthenticate users so that protected services can be accessed safely and consistently.\n\n## ADDED Requirements\n${requirement()}`;
 const design='## Context\nExisting clients.\n## Goals / Non-Goals\nAuthentication.\n## Decisions\nUse existing provider.\n## Project Constraints\nUse existing auth module.\n## Architecture\nExtend the existing auth module.\n## File Change Plan\nUpdate src/auth/provider.ts.\n## Risks / Trade-offs\nProvider availability.\n## Migration Plan\nIncremental rollout.';
-async function setup(t){const root=await mkdtemp(path.join(os.tmpdir(),'openspec-min-'));t.after(()=>rm(root,{recursive:true,force:true}));return {root,changeId:'add-login'};}
+async function setup(t){const root=await mkdtemp(path.join(os.tmpdir(),'openspec-min-'));t.after(()=>rm(root,{recursive:true,force:true,maxRetries:20,retryDelay:100}));return {root,changeId:'add-login'};}
 async function create(ref,doc=delta){await api.createSpecChange({...ref,prd:'Allow login.',generate:async()=>({proposal,specs:{'user-auth':doc}})});}
 async function ready(ref){await api.generateDesignDoc({...ref,specReviewed:true,generate:async()=>design});await api.generateTaskList({...ref,generate:async()=>'- [ ] 1.1 Implement login; acceptance: successful login test passes.'});}
 test('five exports and complete lifecycle with full archive',async t=>{
@@ -24,7 +25,11 @@ test('five exports and complete lifecycle with full archive',async t=>{
 test('invalid documents block design generation',async t=>{const ref=await setup(t);await create(ref,delta.replace('SHALL','should'));assert.equal((await api.runSpecVerifyGate(ref)).valid,false);let called=false;await assert.rejects(api.generateDesignDoc({...ref,specReviewed:true,generate:async()=>{called=true;return design;}}));assert.equal(called,false);});
 test('review invalidated by spec changes',async t=>{const ref=await setup(t);await create(ref);await api.generateDesignDoc({...ref,specReviewed:true,generate:async()=>design});await writeFile(path.join(ref.root,'changes',ref.changeId,'proposal.md'),proposal+'\nChanged.');await assert.rejects(api.generateTaskList({...ref,generate:async()=>'- [ ] 1.1 Task'}),/changed/);});
 test('duplicate creation preserves existing documents',async t=>{const ref=await setup(t);await create(ref);await assert.rejects(create(ref));assert.equal(await readFile(path.join(ref.root,'changes',ref.changeId,'proposal.md'),'utf8'),proposal);});
-test('path traversal and symlink roots rejected',async t=>{const ref=await setup(t);await assert.rejects(create({...ref,changeId:'../bad'}),/identifier/);await symlink(os.tmpdir(),path.join(ref.root,'specs'));await assert.rejects(create(ref),/Symlink/);});
+test('path traversal and symlink roots rejected',async t=>{if(!await symlinkAvailable(t))return;const ref=await setup(t);await assert.rejects(create({...ref,changeId:'../bad'}),/identifier/);await symlink(os.tmpdir(),path.join(ref.root,'specs'));await assert.rejects(create(ref),/Symlink/);});
+
+test('path traversal is rejected without requiring symlink privileges',async t=>{
+ const ref=await setup(t);await assert.rejects(create({...ref,changeId:'../bad'}),/identifier/);
+});
 test('modified scenarios cannot silently disappear',async t=>{const ref=await setup(t);await mkdir(path.join(ref.root,'specs/user-auth'),{recursive:true});await writeFile(path.join(ref.root,'specs/user-auth/spec.md'),`# Authentication\n## Purpose\nUsers authenticate.\n## Requirements\n${requirement()}`);await create(ref,`## MODIFIED Requirements\n${requirement('Login','Different')}`);const gate=await api.runSpecVerifyGate(ref);assert.equal(gate.valid,false);assert.match(gate.issues.join(' '),/scenario/i);});
 test('merge conflicts in one capability prevent all writes',async t=>{const ref=await setup(t);await api.createSpecChange({...ref,prd:'Change',generate:async()=>({proposal,specs:{'user-auth':delta,'other':`## MODIFIED Requirements\n${requirement()}`}})});assert.equal((await api.runSpecVerifyGate(ref)).valid,false);await assert.rejects(readFile(path.join(ref.root,'specs/user-auth/spec.md')));});
 test('original merge supports add, modify, rename and remove together',async t=>{

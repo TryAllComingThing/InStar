@@ -11,7 +11,7 @@ const report={summary:'Workflow review complete',source:'P0-03 fixture',issues:[
 
 async function fixture(t,name){
  const project=await mkdtemp(path.join(os.tmpdir(),`instar-p0-03-${name}-`));
- t.after(()=>rm(project,{recursive:true,force:true}));
+ t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
  
  let state;
  const call=async(action,extra={})=>{const result=await run({project,changeId:name,action,expectedVersion:state?.version,...extra});if(result.version!==undefined)state=result;return result;};

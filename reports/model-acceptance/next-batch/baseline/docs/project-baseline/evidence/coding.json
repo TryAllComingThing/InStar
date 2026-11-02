@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scope": [
+    "."
+  ],
+  "coverage": {
+    "read": [
+      "AGENTS.md",
+      "TASK.md",
+      "docs/api.md",
+      "src/orders/handler.mjs",
+      "src/orders/index.mjs",
+      "test/orders.test.mjs"
+    ],
+    "unread": [],
+    "excluded": [],
+    "limitations": [
+      "Only the isolated directory was inspected; no production or HTTP service evidence."
+    ]
+  },
+  "domains": [
+    {
+      "name": "coding",
+      "status": "observed",
+      "reason": "All visible inputs inspected; absent production guarantees remain unknown."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CODE-001",
+      "domain": "coding",
+      "status": "observed",
+      "statement": "Observed conventions are .mjs files, named exports, relative imports, node:test and strict assert. The sole test checks default limit=20. No formatter, type or lint configuration exists here. These observations do not establish adopted team rules. Proposed follow-up: integer, boundary and error-contract tests.",
+      "scope": [
+        "test/orders.test.mjs"
+      ],
+      "sources": [
+        {
+          "path": "test/orders.test.mjs",
+          "startLine": 1,
+          "endLine": 1,
+          "excerpt": "import test from 'node:test';import assert from 'node:assert/strict';import {listOrders} from '../src/orders/index.mjs';test('default limit',()=>assert.equal(listOrders({}).limit,20));"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "Visible source or explicit contract only; no claim of human approval.",
+      "verification": {
+        "method": "review and node:test",
+        "command": "node --test test/orders.test.mjs",
+        "result": "pass: 1 test; only default limit covered"
+      }
+    }
+  ]
+}

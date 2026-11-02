@@ -38,6 +38,14 @@ CODEX_HOME="$INSTAR_TEST_HOME" codex plugin list --json
 
 ## 使用流程
 
+| 项目 | 实现 / 验证路径 |
+| --- | --- |
+| schema 3 后端或跨栈 | engineering-implement / engineering-verify |
+| 现有 Vue/npm | frontend-implement / frontend-verify |
+
+两类均先生成质量 Review，再将真实质量报告提交工作流；InStar 不把字符串说明当作已执行检查。
+
+
 ### 快捷 CLI
 
 发布包提供可直接记忆的命令入口，项目参数默认为当前目录：
@@ -147,6 +155,17 @@ test "$?" -ne 0
 测试旧报告失效：先运行 full verify 和 quality-gate，再修改一个受检文件，重新执行 `pre-pr-check`；预期返回 BLOCK。
 
 ## 自动测试命令
+
+### Windows 兼容与安全测试覆盖
+
+本地 CLI 的文件 URL 必须用 `fileURLToPath()` 转换，不能把 URL 的
+`.pathname` 当作 Windows 文件路径。故障注入路径使用 `path.join()`。
+质量控制器在 Windows 通过 Node 执行已安装 npm 的 JavaScript 入口，
+不通过通用 shell 拼接命令；schema 3 支持原生绝对可执行文件路径。
+
+符号链接相关测试会探测宿主能力。不支持时测试明确显示 SKIP，并说明
+需要在支持符号链接的 CI worker 执行；SKIP 不代表安全行为已经验证。
+Windows 临时目录清理使用有限重试处理进程退出后的短暂文件占用。
 
 存量 Spec 建档：在目标项目调用 `$spec-discover`。终端可通过
 `node <plugin>/bin/instar.mjs spec-discover --project /absolute/project` 读取清单和移植后的分析指令，

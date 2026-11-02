@@ -59,3 +59,7 @@
 ## Migration Plan
 
 <!-- Application/data migration order, old/new version compatibility, rollout and rollback/forward-fix plan, or explain why no migration is needed -->
+
+## Reuse Decisions
+
+<!-- Map needs to searched scope, candidate capability IDs, reuse/adapt/extend/local-new/extract-shared/defer decisions, reasons, boundaries, consumers and verification. -->

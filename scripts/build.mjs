@@ -1,4 +1,6 @@
 import {cp, mkdir, writeFile, rm} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 const root = new URL('../',import.meta.url);
 await rm(new URL('runtime/',root),{recursive:true,force:true});
 await mkdir(new URL('runtime/',root),{recursive:true});
@@ -11,7 +13,7 @@ await cp(new URL('src/openspec-min/LICENSE',root),new URL('runtime/openspec-min/
 // Ship only runtime JavaScript and package metadata; omit TypeScript sources,
 // declaration files, tests, and build inputs from the standalone runtime.
 await cp(new URL('node_modules/zod/',root),new URL('runtime/openspec-min/node_modules/zod/',root),{recursive:true,filter:source=>{
- const relative=source.slice(new URL('node_modules/zod/',root).pathname.length).replaceAll('\\','/');
+ const relative=path.relative(fileURLToPath(new URL('node_modules/zod/',root)),source).replaceAll('\\','/');
  if(/(^|\/)(src|tests|__tests__)(\/|$)/.test(relative)||/\.d\.(?:ts|mts|cts)$|\.map$/.test(relative))return false;
  return true;
 }});

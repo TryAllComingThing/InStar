@@ -75,8 +75,10 @@ export async function createSpecChange(input:ChangeRef & {prd:string; generate:(
     try {
       await write(staging,'proposal.md',output.proposal);
       for(const [id,doc] of Object.entries(output.specs)) await write(staging,`specs/${id}/spec.md`,doc);
-      // mkdir reserves the destination without overwriting an existing change.
-      await fs.mkdir(dir); try { await fs.rename(staging,dir); } catch(error) { await fs.rmdir(dir); throw error; }
+      // The project lock serializes writers; Windows cannot rename over an empty directory.
+      try { await fs.lstat(dir); throw new Error('Change already exists'); }
+      catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error; }
+      await fs.rename(staging,dir);
     } finally { await fs.rm(staging,{recursive:true,force:true}); }
     return {changeId:input.changeId,path:dir};
   });

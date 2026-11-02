@@ -15,7 +15,7 @@ Find and correct the cause of a failure without hiding it, weakening the require
 4. Form a short list of hypotheses tied to evidence. Choose a low-cost observation that distinguishes them; change one causal variable at a time.
 5. Trace data and control flow to the earliest incorrect assumption or state transition. Check boundary inputs, ordering, concurrency, cleanup, retries, and version/config differences when relevant.
 6. Make the smallest root-cause fix. Add or update a regression test that fails before the fix and passes after it when the project supports a suitable test.
-7. Rerun the focused reproduction and affected checks. Then hand broader verification to `frontend-verify`; do not claim checks that were not run.
+7. Rerun the focused reproduction and affected checks. Then hand broader verification to `engineering-verify` for backend/cross-stack projects or `frontend-verify` for the existing Vue workflow; do not claim checks that were not run.
 
 ## Guardrails
 

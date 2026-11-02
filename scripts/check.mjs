@@ -1,3 +1,4 @@
+import {fileURLToPath} from 'node:url';
 import {readFile,readdir,access,lstat,readlink} from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -14,17 +15,17 @@ async function sameTree(left,right,label){
   else{assert(as.isFile(),`${label}/${x.name}: unsupported source entry`);assert(bs.isFile(),`${label}/${x.name}: packaged entry is not a file`);assert.deepEqual(await readFile(bp),await readFile(ap),`${label}/${x.name}: content drift`);}
  }
 }
-for(const name of ['quality-controller','workflow-controller','shared','discovery-controller'])await sameTree(new URL(`src/${name}/`,root).pathname,new URL(`runtime/${name}/`,root).pathname,`runtime/${name}`);
+for(const name of ['quality-controller','workflow-controller','shared','discovery-controller'])await sameTree(fileURLToPath(new URL(`src/${name}/`,root)),fileURLToPath(new URL(`runtime/${name}/`,root)),`runtime/${name}`);
 async function treeBytes(dir){let total=0;for(const item of await readdir(dir,{withFileTypes:true})){const full=path.join(dir,item.name);if(item.isDirectory())total+=await treeBytes(full);else if(item.isFile())total+=(await lstat(full)).size;}return total;}
-assert((await treeBytes(new URL('runtime/openspec-min/node_modules/zod/',root).pathname))<6*1024*1024,'Bundled Zod runtime exceeded 6 MiB; inspect build pruning');
-const names=['requirements-workflow','write-a-prd','spec-explore','spec-discover','spec-propose','spec-verify','spec-design','spec-tasks','engineering-implement','frontend-implement','frontend-verify','engineering-verify','design-check','extract-design-md','quality-gate','quality-evaluation','ci','context-optimizer','engineering-research','systematic-debugging'];
+assert((await treeBytes(fileURLToPath(new URL('runtime/openspec-min/node_modules/zod/',root))))<6*1024*1024,'Bundled Zod runtime exceeded 6 MiB; inspect build pruning');
+const names=['reuse-discover','project-discover','requirements-workflow','write-a-prd','spec-explore','spec-discover','spec-propose','spec-verify','spec-design','spec-tasks','engineering-implement','frontend-implement','frontend-verify','engineering-verify','design-check','extract-design-md','quality-gate','quality-evaluation','ci','context-optimizer','engineering-research','systematic-debugging'];
 assert.deepEqual((await readdir(new URL('skills/',root),{withFileTypes:true})).filter(x=>x.isDirectory()).map(x=>x.name).sort(),names.sort());
-for(const name of names){const p=new URL(`skills/${name}/SKILL.md`,root),s=await readFile(p,'utf8');assert(s.startsWith(`---\nname: ${name}\n`));assert(/\ndescription: .+/.test(s));}
+for(const name of names){const p=new URL(`skills/${name}/SKILL.md`,root),s=(await readFile(p,'utf8')).replaceAll('\r\n','\n');assert(s.startsWith(`---\nname: ${name}\n`));assert(/\ndescription: .+/.test(s));}
 const visualDesignSkill=await readFile(new URL('skills/extract-design-md/SKILL.md',root),'utf8');assert.match(visualDesignSkill,/project root DESIGN\.md/);assert.match(visualDesignSkill,/`\.\/DESIGN\.md`/);assert.doesNotMatch(visualDesignSkill,/Place it at\s+`\.stitch\/DESIGN\.md`/);
 async function links(dir){for(const item of await readdir(dir,{withFileTypes:true})){const p=path.join(dir,item.name);if(item.isDirectory())await links(p);else if(item.name.endsWith('.md')&&!p.endsWith('/upstream.md')){const text=await readFile(p,'utf8');for(const m of text.matchAll(/\]\(([^)]+)\)/g)){if(/^(https?:|#)/.test(m[1])||m[1].includes('<'))continue;await access(path.resolve(path.dirname(p),m[1].split('#')[0]));}}}}
-await links(new URL('skills/',root).pathname);
-await links(new URL('standards/',root).pathname);
-for(const file of ['docs/plugin-arch.md','docs/QUALITY.md','docs/LOCAL_TESTING.md']){const full=new URL(file,root),source=await readFile(full,'utf8');for(const match of source.matchAll(/\]\(([^)]+)\)/g)){if(/^(https?:|#)/.test(match[1])||match[1].includes('<'))continue;await access(path.resolve(path.dirname(full.pathname),match[1].split('#')[0]));}}
+await links(fileURLToPath(new URL('skills/',root)));
+await links(fileURLToPath(new URL('standards/',root)));
+for(const file of ['docs/plugin-arch.md','docs/QUALITY.md','docs/LOCAL_TESTING.md']){const full=new URL(file,root),source=await readFile(full,'utf8');for(const match of source.matchAll(/\]\(([^)]+)\)/g)){if(/^(https?:|#)/.test(match[1])||match[1].includes('<'))continue;await access(path.resolve(path.dirname(fileURLToPath(full)),match[1].split('#')[0]));}}
 const api=await import('../runtime/openspec-min/entry.js');assert.deepEqual(Object.keys(api).sort(),['createSpecChange','runSpecVerifyGate','generateDesignDoc','generateTaskList','promoteToBaseline'].sort());
 const manifest=JSON.parse(await readFile(new URL('.codex-plugin/plugin.json',root),'utf8'));
 assert.equal(manifest.name,'instar');assert.equal(manifest.version,'2.4.0');assert.equal(manifest.skills,'./skills/');assert.equal(manifest.hooks,'./hooks/hooks.json');

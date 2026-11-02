@@ -1,3 +1,4 @@
+import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -13,14 +14,14 @@ const review={summary:'Reviewed fixture',source:'P0 workflow acceptance',issues:
 const confirmation={text:'Approved by workflow acceptance fixture',source:'human test fixture'};
 
 async function fixture(t,name){
- const project=await mkdtemp(path.join(os.tmpdir(),`instar-p0-workflow-${name}-`));t.after(()=>rm(project,{recursive:true,force:true}));let state;
+ const project=await mkdtemp(path.join(os.tmpdir(),`instar-p0-workflow-${name}-`));t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));let state;
  const call=async(action,extra={})=>{const result=await run({project,changeId:name,action,expectedVersion:state?.version,...extra});if(result.version!==undefined)state=result;return result;};
  return {project,call,get state(){return state;}};
 }
 async function approve(f){return f.call('approve',{reviewHash:f.state.pendingReview.hash,confirmation});}
 async function prdApproved(f){await f.call('start',{document:'# PRD\nSearch.'});await f.call('submit-prd');await approve(f);}
 async function specPending(f){const context=await f.call('context');await f.call('create-spec',{contextHash:context.contextHash,proposal,specs:{search:spec}});await f.call('submit-spec',{report:review});}
-function invoke(project,input){return spawnSync(process.execPath,[cli.pathname,'-'],{cwd:project,input:JSON.stringify({project,...input}),encoding:'utf8'});}
+function invoke(project,input){return spawnSync(process.execPath,[fileURLToPath(cli),'-'],{cwd:project,input:JSON.stringify({project,...input}),encoding:'utf8'});}
 
 test('WF-13 repeated answer is rejected and original clarification remains',async t=>{
  const f=await fixture(t,'wf13');await f.call('start',{document:'# PRD\nSearch.'});await f.call('request-clarification',{questions:[{id:'roles',question:'Which roles?'},{id:'data',question:'Which data?'}]});await f.call('answer-clarification',{answers:[{id:'roles',answer:'Staff'}]});

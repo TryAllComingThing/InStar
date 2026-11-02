@@ -1,0 +1,34 @@
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+
+const root=fileURLToPath(new URL('../reports/model-acceptance/next-batch/',import.meta.url));
+const hash=text=>createHash('sha256').update(text).digest('hex');
+const manifest=[];
+async function put(project,file,text){const dest=path.join(root,project,file);await mkdir(path.dirname(dest),{recursive:true});await writeFile(dest,text,{flag:'wx'});manifest.push({project,file,sha256:hash(text)});}
+await put('reuse-core','AGENTS.md','Use only public module exports across boundaries. src/network/internal is private to network. Existing project tests are node:test. Do not install dependencies.\n');
+await put('reuse-core','src/network/index.mjs',"export {request} from './request.mjs';\n");
+await put('reuse-core','src/network/request.mjs',"import {headers} from './internal/headers.mjs';\nexport async function request(path,transport){const response=await transport(path,{headers:headers()});if(!response.ok)throw new Error('REQUEST_FAILED');return response.json();}\n");
+await put('reuse-core','src/network/internal/headers.mjs',"export const headers=()=>({'x-client':'orders'});\n");
+await put('reuse-core','src/orders/list.mjs',"import {request} from '../network/index.mjs';\nexport const listOrders=transport=>request('/orders',transport);\n");
+await put('reuse-core','src/billing/formatAmount.mjs',"// Input is dollars, output is display text.\nexport const formatAmount=dollars=>`$${dollars.toFixed(2)}`;\n");
+await put('reuse-core','src/settlement/formatAmount.mjs',"// Input is integer cents, output is display text.\nexport const formatAmount=cents=>`$${(cents/100).toFixed(2)}`;\n");
+await put('reuse-core','test/requests.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';import {listOrders} from '../src/orders/list.mjs';test('orders use public request contract',async()=>{assert.deepEqual(await listOrders(async(path,options)=>({ok:options.headers['x-client']==='orders',json:async()=>[path]})),['/orders']);});\n");
+await put('reuse-core','TASK.md','使用 reuse-discover 为新增订单详情读取和金额展示提出复用设计，生成能力索引、设计决策和 Review 记录。另评估团队提出的统一两个 formatAmount、从 network/internal 直接导入 headers，以及为一次性导出增加多开关共享管线的建议。只分析和生成文档，不改业务实现；记录实际运行的检查。\n');
+await put('baseline','AGENTS.md','Follow project-owned contracts; report conflicts rather than silently changing policy. No dependencies or implementation changes during discovery.\n');
+await put('baseline','docs/api.md','# API contract\nGET /orders returns {items, limit}. Limit must be an integer from 1 to 100; invalid values return INVALID_LIMIT.\n');
+await put('baseline','src/orders/handler.mjs',"export function listOrders(query){const limit=Number(query.limit??20);return {items:[],limit};}\n");
+await put('baseline','src/orders/index.mjs',"export {listOrders} from './handler.mjs';\n");
+await put('baseline','test/orders.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';import {listOrders} from '../src/orders/index.mjs';test('default limit',()=>assert.equal(listOrders({}).limit,20));\n");
+await put('baseline','TASK.md','使用 project-discover 为当前工程生成供设计开发引用的六类基线文档、索引与证据。保留已有 docs/api.md，说明来源、覆盖和未知项，并给出后续建议。不要修改实现或自动采纳候选规则。\n');
+const dateSource='export const dateKey=date=>date.toISOString().slice(0,10);\n';
+await put('incremental','AGENTS.md','Preserve unrelated capability IDs and authored notes. Public modules use index.mjs. Do not modify application source during discovery.\n');
+await put('incremental','src/orders/index.mjs',"export {searchOrders} from './search.mjs';\n");
+await put('incremental','src/orders/search.mjs',"export const searchOrders=(orders,q)=>orders.filter(order=>order.name.includes(q));\n");
+await put('incremental','src/date.mjs',dateSource);
+await put('incremental','docs/project-baseline/capabilities/index.json',JSON.stringify({schemaVersion:1,enabled:false,capabilities:[{id:'CAP-ORDER-QUERY',name:'Order query',summary:'Search order names',entry:'src/orders/query.mjs',sourceHash:hash('old order query'),status:'active',visibility:'public'},{id:'CAP-DATE',name:'Date key',summary:'UTC date key',entry:'src/date.mjs',sourceHash:hash(dateSource),status:'active',visibility:'public'}]},null,2)+'\n');
+await put('incremental','docs/project-baseline/capabilities/date.md','# Date\nMaintainer note: billing exports depend on UTC semantics; preserve this note.\n');
+await put('incremental','TASK.md','使用 reuse-discover 更新订单搜索能力索引：订单实现已改名，并通过 src/orders/index.mjs 导出。记录实现与契约来源，处理旧入口，保留其他模块能力和人工说明。输出更新说明和复用建议，不修改业务源码，不启用治理。\n');
+await writeFile(path.join(root,'source-manifest.json'),JSON.stringify({scope:'synthetic isolated fixtures; no production data',sources:manifest},null,2)+'\n',{flag:'wx'});
+console.log(root);

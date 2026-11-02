@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scope": [
+    "."
+  ],
+  "coverage": {
+    "read": [
+      "AGENTS.md",
+      "TASK.md",
+      "docs/api.md",
+      "src/orders/handler.mjs",
+      "src/orders/index.mjs",
+      "test/orders.test.mjs"
+    ],
+    "unread": [],
+    "excluded": [],
+    "limitations": [
+      "Only the isolated directory was inspected; no production or HTTP service evidence."
+    ]
+  },
+  "domains": [
+    {
+      "name": "domain",
+      "status": "observed",
+      "reason": "All visible inputs inspected; absent production guarantees remain unknown."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DOMAIN-001",
+      "domain": "domain",
+      "status": "observed",
+      "statement": "The list always contains an empty items array. Missing or null limit defaults to 20 through nullish coalescing; other values use Number conversion. Money, time, order states and entity fields remain unknown. This is not evidence of a complete business model.",
+      "scope": [
+        "src/orders/handler.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/orders/handler.mjs",
+          "startLine": 1,
+          "endLine": 1,
+          "excerpt": "export function listOrders(query){const limit=Number(query.limit??20);return {items:[],limit};}"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "Visible source or explicit contract only; no claim of human approval.",
+      "verification": {
+        "method": "review and node:test",
+        "command": "node --test test/orders.test.mjs",
+        "result": "pass: 1 test; only default limit covered"
+      }
+    }
+  ]
+}

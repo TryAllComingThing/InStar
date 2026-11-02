@@ -1,3 +1,6 @@
+import {runNpm,validExecutable} from '../shared/process-runner.mjs';
+import {isRuntimeState} from '../shared/project-files.mjs';
+import {sourceSnapshot} from '../workflow-controller/files.mjs';
 import {promises as fs,constants as fsConstants} from 'node:fs';
 import path from 'node:path';
 import {createHash,createHmac,randomUUID} from 'node:crypto';
@@ -6,6 +9,8 @@ import {fileURLToPath} from 'node:url';
 import {resolveTokenSources} from '../shared/token-sources.mjs';
 import {redactData,redactText,boundedText} from '../shared/redaction.mjs';
 import {evaluateQualityPolicy,validateQualityPolicy} from './policy.mjs';
+import {baselineContext,validateRuleReferences} from '../shared/project-baseline.mjs';
+import {reuseContext,validateReuseReview,validateReusePlan} from '../shared/code-reuse.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
@@ -90,7 +95,7 @@ function checksForProfile(c,profile){
  const base=[...verifyProfiles[profile],...(profile==='full'&&c.tools?.security?['security-scan']:[]),...(profile==='full'&&c.scripts?.e2e?['e2e']:[]),...(profile==='full'&&c.scripts?.visual?['visual']:[])];
  return base;
 }
-const generated = name => /(^|\/)(reports|logs|node_modules|dist|coverage|\.git)(\/|$)/.test(name) || /^\.instar\/session\//.test(name) || /^\.context\/(PROJECT_STATE|LESSONS)\.md$/.test(name);
+const generated = name => isRuntimeState(name) || /(^|\/)(reports|logs|node_modules|dist|coverage|\.git)(\/|$)/.test(name);
 const sensitive = name => /(^|\/)(\.ssh|\.aws)(\/|$)|(^|\/)\.env(?:\.|$)/.test(name);
 const credentialEnv = key => /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION|(?:^|_)API_KEY$|ACCESS_KEY|PRIVATE_KEY|(?:DATABASE|DB|POSTGRES(?:QL)?|MYSQL|MONGO(?:DB)?|REDIS|JDBC|ODBC)_URL|(?:^|_)(?:DSN|URI|CONNECTION_STRING|CERTIFICATE)(?:_|$)|^GH_|^GITHUB_|^AWS_|^AZURE_|^GOOGLE_APPLICATION_CREDENTIALS$|^NPM_CONFIG_.*(?:AUTH|TOKEN|USERCONFIG|GLOBALCONFIG)|^SSH_AUTH_SOCK$|^GIT_|^(?:SSH)_ASKPASS$|^CODEX_HOME$|^(?:NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONHOME|RUBYOPT|PERL5OPT|LD_PRELOAD)$|^DYLD_)/i.test(key);
 function safeEnvironment(){return Object.fromEntries(Object.entries(process.env).filter(([key])=>!credentialEnv(key)));}
@@ -149,7 +154,7 @@ async function config(root) {
     for (const profile of ['commit','full']) {
       const ids=c.verification.profiles[profile];
       if (!Array.isArray(ids) || !ids.length || ids.some(id=>typeof id!=='string'||!/^[a-z][a-z0-9-]{0,39}$/.test(id)) || new Set(ids).size!==ids.length) throw Error(`verification.profiles.${profile} must be a non-empty list of unique check ids`);
-      for(const id of ids){const spec=c.tools.checks[id];const argBytes=Array.isArray(spec?.args)?spec.args.reduce((sum,arg)=>sum+(typeof arg==='string'?Buffer.byteLength(arg):0),0):Infinity;if(!spec||typeof spec!=='object'||Array.isArray(spec)||typeof spec.command!=='string'||spec.command.length>256||spec.command.includes('\0')||!/^[-\w./]+$/.test(spec.command)||!Array.isArray(spec.args)||spec.args.length>128||argBytes>16384||spec.args.some(arg=>typeof arg!=='string'||arg.includes('\0')||Buffer.byteLength(arg)>2048)|| (spec.cwd!==undefined&&(typeof spec.cwd!=='string'||path.isAbsolute(spec.cwd)||spec.cwd.split(/[\\/]/).includes('..'))) || (spec.timeoutMs!==undefined&&(!Number.isInteger(spec.timeoutMs)||spec.timeoutMs<1||spec.timeoutMs>600000)))throw Error(`Invalid tools.checks.${id}`);}
+      for(const id of ids){const spec=c.tools.checks[id];const argBytes=Array.isArray(spec?.args)?spec.args.reduce((sum,arg)=>sum+(typeof arg==='string'?Buffer.byteLength(arg):0),0):Infinity;if(!spec||typeof spec!=='object'||Array.isArray(spec)||typeof spec.command!=='string'||spec.command.length>256||spec.command.includes('\0')||!validExecutable(spec.command)||!Array.isArray(spec.args)||spec.args.length>128||argBytes>16384||spec.args.some(arg=>typeof arg!=='string'||arg.includes('\0')||Buffer.byteLength(arg)>2048)|| (spec.cwd!==undefined&&(typeof spec.cwd!=='string'||path.isAbsolute(spec.cwd)||spec.cwd.split(/[\\/]/).includes('..'))) || (spec.timeoutMs!==undefined&&(!Number.isInteger(spec.timeoutMs)||spec.timeoutMs<1||spec.timeoutMs>600000)))throw Error(`Invalid tools.checks.${id}`);}
     }
   }
   if(c.schemaVersion===3&&([...qualityTools,'architecture','security','dependencies','ci-config','vite-build'].some(key=>c.tools?.[key]!==undefined)||c.scripts!==undefined))throw Error('schemaVersion 3 uses tools.checks and verification.profiles; legacy npm script adapters are not supported');
@@ -246,6 +251,9 @@ export async function snapshot(root) {
   for (const name of ['.instar-quality.json','package.json',...['AGENTS.md','.context/AGENTS.md',context.architecture,context.design].filter(Boolean),...context.tokens]) {
     files.push([name, await exists(root,name) ? digest(await read(root,name)) : 'missing']);
   }
+  const baseline=await baselineContext(root);
+  files.push(['project-baseline',baseline.fingerprint]);
+  files.push(['code-reuse',(await reuseContext(root)).fingerprint]);
   const guidance=await guidanceFingerprint(root);
   return {tree,fingerprint:digest(JSON.stringify({head,base,files,guidance,index:git(root,['ls-files','--stage','-z']).split('\0').filter(entry=>entry && !generated(entry.slice(entry.indexOf('\t')+1)))})),head,base,baseRef:c.baseRef,changed,configurationSource:c.configurationSource||'project'};
 }
@@ -287,7 +295,7 @@ async function runScript(root, c, script) {
   // prevent package fetching, but are NOT an OS network isolation boundary.
   const timeoutMs=c.timeoutMs||120000;
   const env=safeEnvironment();
-  const r = spawnSync(c.packageManager, ['run',script], {cwd:root, encoding:'utf8', timeout:timeoutMs, maxBuffer:4*1024*1024,
+  const r = runNpm(['run',script], {cwd:root, encoding:'utf8', timeout:timeoutMs, maxBuffer:4*1024*1024,
     env:{...env,CI:'true',npm_config_offline:'true',npm_config_update_notifier:'false',npm_config_audit:'false',npm_config_fund:'false'}});
   const error=r.error?.code||null,result=executionResult(r.error,r.status,r.signal),status=result==='EXECUTED_PASS'?'PASS':'BLOCK';
   return {script,status,result,exitCode:r.status,signal:r.signal,error,durationMs:Date.now()-start,outputHash:digest((r.stdout||'')+(r.stderr||'')),reason:status === 'PASS' ? 'Completed' : 'Command failed; rerun this script locally for diagnostics (raw output is not persisted)'};
@@ -329,7 +337,7 @@ async function saveUnifiedQualityReport(root,{profile,verification,policy,review
   if(profile)profiles[profile]={status:verification.status,riskLevel:verification.riskLevel||'L1',verificationReportId:verification.id,checks:verification.reportChecks||persistedChecks(verification.checks),mandatory:policy?.mandatory||[],waivers:policy?.waivers||[]};
   const reviewResult=profile?null:(review?{status:review.status,riskLevel:review.riskLevel||'L1',checks:review.checks,reviewReportId:review.id,snapshot:review.snapshot}:existing.review||null);
   const statuses=[...Object.values(profiles).map(p=>p.status),reviewResult?.status].filter(Boolean);
-  const status=statuses.includes('FAIL')?'FAIL':statuses.includes('BLOCK')||statuses.includes('BLOCKED')?'BLOCK':statuses.includes('PASS_WITH_WAIVERS')?'PASS_WITH_WAIVERS':statuses.length&&statuses.every(x=>x==='PASS'||x==='WARN')?'PASS':'BLOCK';
+  const status=statuses.includes('FAIL')?'FAIL':statuses.includes('BLOCK')||statuses.includes('BLOCKED')?'BLOCK':statuses.includes('PASS_WITH_WAIVERS')?'PASS_WITH_WAIVERS':statuses.includes('WARN')?'WARN':statuses.length&&statuses.every(x=>x==='PASS')?'PASS':'BLOCK';
   const report=sealReport({schemaVersion:2,kind:'unified-quality',reportId:randomUUID(),generatedAt:now(),project:{id:path.basename(root),stack:stackFor(c)},configurationSource:c.configurationSource||'project',source:{head:sourceSnapshot?.head||null,baseRef:sourceSnapshot?.baseRef||c.baseRef||null,snapshotFingerprint:current},snapshotFingerprint:current,policy:policy?{schemaVersion:policy.schemaVersion,profile}:existing.policy||null,status,releaseReady:!!reviewResult&&!!profiles.full&&['PASS','PASS_WITH_WAIVERS'].includes(profiles.full.status)&&['PASS','WARN'].includes(reviewResult.status),profiles,review:reviewResult},evidenceKey(c));
   await write(root,file,JSON.stringify(report,null,2)+'\n');
   const lines=['# InStar Unified Quality Report','',`Status: ${report.status}`,`Release ready: ${report.releaseReady}`,`Project: ${report.project.id}`,`Stack: ${report.project.stack.join(', ')||'unknown'}`,`HEAD: ${report.source.head}`,`Base: ${report.source.baseRef}`,`Snapshot: ${current}`,'','## Verification profiles'];
@@ -433,6 +441,9 @@ async function quality(root, review, requestedRisk=null) {
   if (review?.riskLevel && riskRank(normalizeRiskLevel(review.riskLevel))<riskRank(riskLevel)) throw Error('Review risk level is lower than the effective change risk');
   review={...review,riskLevel};
   await validateReview(review,reviewItemsFor(c),root,riskLevel);
+  validateRuleReferences(await baselineContext(root,before.changed),review.ruleReferences);
+  validateReuseReview(await reuseContext(root),review.reuseReview);
+  await validateReusePlan(root,await reuseContext(root),review.reuseReview);
   if(riskLevel==='L3')validateL3Review(review,c);
   review=redactData(review);
   if (review.fingerprint !== before.fingerprint) throw Error('Review is stale');
@@ -442,12 +453,14 @@ async function quality(root, review, requestedRisk=null) {
     checks.push({id,...await runScript(root,c,c.tools[id])});
     if (checks.at(-1).status !== 'PASS') break;
   }
-  if (checks.every(check=>check.status==='PASS')) checks.push(c.tools?.architecture
+  if (checks.every(check=>['PASS','INFO'].includes(check.status))) checks.push(c.tools?.architecture
     ? {id:'architecture',...await runScript(root,c,c.tools.architecture)}
     : {id:'architecture',status:'INFO',reason:'No project architecture adapter configured; AI architecture review still applies'});
   const stable = before.fingerprint === (await snapshot(root)).fingerprint;
   const blocked = !stable || checks.some(c=>c.status==='BLOCK') || review.checks.some(c=>c.status==='BLOCK');
-  const result=await save(root,'quality-gate',{snapshot:before,riskLevel,status:blocked?'BLOCK':review.checks.some(c=>c.status==='WARN')?'WARN':'PASS',checks,review,stable},evidenceKey(c));
+  const reuseWarnings=review.reuseReview?.checks?.some(c=>c.status==='WARN');
+  const ruleWarnings=review.ruleReferences?.some(c=>c.status==='WARN');
+  const result=await save(root,'quality-gate',{projectRoot:root,workflowSourceSnapshot:await sourceSnapshot(root),snapshot:before,riskLevel,status:blocked?'BLOCK':review.checks.some(c=>c.status==='WARN')||reuseWarnings||ruleWarnings?'WARN':'PASS',checks,review,stable},evidenceKey(c));
   await saveUnifiedQualityReport(root,{profile:null,verification:null,policy:null,review:result,config:c});
   return result;
 }
@@ -458,6 +471,13 @@ async function readRegularFile(root,relative){
     const stat=await handle.stat();if(!stat.isFile())throw Error('Invalid evidence file');
     return await handle.readFile('utf8');
   }finally{if(handle)await handle.close();}
+}
+export async function validateQualityReviewReport(root,report){
+ const c=await config(root);validateReportIntegrity(report,evidenceKey(c),Boolean(evidenceKey(c)));
+ if(report.projectRoot!==root||!report.stable||report.kind!=='quality-gate'||!['PASS','WARN','PASS_WITH_WAIVERS'].includes(report.status))throw Error('Quality review report project or status mismatch');
+ if(report.snapshot?.fingerprint!==(await snapshot(root)).fingerprint)throw Error('Quality review report is stale');
+ if(JSON.stringify(report.workflowSourceSnapshot)!==JSON.stringify(await sourceSnapshot(root)))throw Error('Quality review source snapshot is stale');
+ return report.workflowSourceSnapshot;
 }
 export async function validateEvidenceChain(root, verification, unified, profile, key=null) {
   if (!verification?.id || !verification?.snapshot) throw Error('Invalid verification evidence');
@@ -501,6 +521,9 @@ async function gate(root, profile) {
   if (local.riskLevel && riskRank(normalizeRiskLevel(local.riskLevel))<riskRank(riskLevel)) throw Error('Verification risk level is lower than the effective change risk');
   if (highRisk(riskLevel) && profile!=='full') throw Error(`${riskLevel} changes require the full verification profile`);
   await validateReview(review.review,reviewItemsFor(c),root,riskLevel);
+  validateRuleReferences(await baselineContext(root,current.changed),review.review.ruleReferences);
+  validateReuseReview(await reuseContext(root),review.review.reuseReview);
+  await validateReusePlan(root,await reuseContext(root),review.review.reuseReview);
   if(riskLevel==='L3')validateL3Review(review.review,c);
   if (review.review.fingerprint!==current.fingerprint || review.review.checks.some(c=>c.status==='BLOCK') || !qualityTools.filter(id=>c.tools?.[id]).every(id=>review.checks?.some(c=>c.id===id && c.status==='PASS'))) throw Error('Review checks incomplete');
   if(c.tools?.architecture&&!review.checks?.some(c=>c.id==='architecture'&&c.status==='PASS'))throw Error('Configured architecture check is missing or did not pass');

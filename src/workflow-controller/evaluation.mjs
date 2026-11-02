@@ -1,4 +1,4 @@
-import {readdir} from 'node:fs/promises';
+import {discoverSpecFiles} from '../openspec-min/src/utils/spec-discovery.js';
 import {appendJsonl,atomic,exists,hash,now,read,requireText,safe} from './files.mjs';
 import {changeDir} from './documents.mjs';
 
@@ -15,8 +15,8 @@ async function artifact(root,state,stage){
  if(stage==='spec'){
   const proposal=await read(dir,'proposal.md');
   const specsRoot=safe(dir,'specs');let docs='';
-  for(const capability of await readdir(specsRoot)){
-   const full=safe(specsRoot,capability,'spec.md');if(await exists(full))docs+=`\n\n<!-- ${capability} -->\n${await read(full)}`;
+  for(const item of (await discoverSpecFiles(specsRoot)).sort((a,b)=>a.id.localeCompare(b.id))){
+   docs+=`\n\n<!-- ${item.id} -->\n${await read(item.specFile)}`;
   }
   return {path:`planning/changes/${state.changeId}/(proposal.md + specs/*/spec.md)`,text:proposal+docs};
  }

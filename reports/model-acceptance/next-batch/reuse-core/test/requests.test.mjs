@@ -1,0 +1,1 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {listOrders} from '../src/orders/list.mjs';test('orders use public request contract',async()=>{assert.deepEqual(await listOrders(async(path,options)=>({ok:options.headers['x-client']==='orders',json:async()=>[path]})),['/orders']);});

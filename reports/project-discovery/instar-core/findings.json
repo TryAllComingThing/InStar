@@ -1,0 +1,336 @@
+{
+  "schemaVersion": 1,
+  "scope": [
+    "InStar core engineering baseline (sample)"
+  ],
+  "coverage": {
+    "read": [
+      "package.json",
+      "scripts/release.mjs",
+      "src/quality-controller/index.mjs",
+      "src/quality-controller/policy.mjs",
+      "src/workflow-controller/documents.mjs",
+      "standards/README.md"
+    ],
+    "unread": [
+      "其他控制器与工具函数未逐文件审查",
+      "全部测试和全部语言规范未逐项审查",
+      "目标业务项目未采集"
+    ],
+    "excluded": [
+      "node_modules/",
+      "runtime/",
+      "release/",
+      ".git/"
+    ],
+    "limitations": [
+      "局部静态分析样例，不是全项目审计",
+      "未进行独立人工规范采纳",
+      "报告生成不代表 P0 行为验收通过"
+    ]
+  },
+  "domains": [
+    {
+      "name": "architecture",
+      "status": "partial",
+      "reason": "已检查上下文与版本约束，未完成依赖图分析"
+    },
+    {
+      "name": "api",
+      "status": "partial",
+      "reason": "仅检查本地 Review 协议"
+    },
+    {
+      "name": "coding",
+      "status": "partial",
+      "reason": "仅提取显式优先级与运行配置"
+    },
+    {
+      "name": "database",
+      "status": "unknown",
+      "reason": "本次未检查是否存在应用持久化 schema 或迁移"
+    },
+    {
+      "name": "security/runtime",
+      "status": "partial",
+      "reason": "仅检查快照与质量策略"
+    },
+    {
+      "name": "testing/delivery",
+      "status": "partial",
+      "reason": "读取脚本与本次测试日志"
+    },
+    {
+      "name": "UI",
+      "status": "NA",
+      "reason": "本次范围为插件控制器，未分析目标应用 UI"
+    },
+    {
+      "name": "domain",
+      "status": "partial",
+      "reason": "仅覆盖设计上下文和证据生命周期"
+    }
+  ],
+  "findings": [
+    {
+      "id": "ARCH-001",
+      "domain": "architecture",
+      "status": "observed",
+      "statement": "Spec、技术设计和任务上下文由工作流控制器组织，并绑定上下文指纹。",
+      "scope": [
+        "src/workflow-controller/documents.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/workflow-controller/documents.mjs",
+          "startLine": 47,
+          "endLine": 47,
+          "excerpt": " return {stage:state.stage,context,contextHash:hash({project:root,changeId:state.changeId,version:state.version,context})};",
+          "sha256": "0748f4feb37d2b9bde9fa7a67f5ca81132da9be35eaae2f140c6001c9d1d8439"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "上下文一致性检查不能证明设计语义正确。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "ARCH-002",
+      "domain": "architecture",
+      "status": "observed",
+      "statement": "技术设计之后项目指导文档变化，会阻止继续生成任务并要求重审设计。",
+      "scope": [
+        "src/workflow-controller/documents.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/workflow-controller/documents.mjs",
+          "startLine": 42,
+          "endLine": 42,
+          "excerpt": "  if(state.stage==='tasks'&&state.designConstraintsHash!==constraintsHash)throw Error('Project architecture guidance changed after technical design; reopen design and review it again');",
+          "sha256": "0748f4feb37d2b9bde9fa7a67f5ca81132da9be35eaae2f140c6001c9d1d8439"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "维护设计与规范版本的一致性。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "POLICY-001",
+      "domain": "coding",
+      "status": "adopted",
+      "statement": "项目规则优先于插件参考；插件建议未经采纳不得直接成为阻断条件。",
+      "scope": [
+        "standards/README.md"
+      ],
+      "sources": [
+        {
+          "path": "standards/README.md",
+          "startLine": 19,
+          "endLine": 19,
+          "excerpt": "The user's request and the target project's applicable `AGENTS.md`, configured or discovered context/architecture/design documents, `standards/`, and existing code patterns take precedence. InStar references fill gaps and remain advisory. A deviation is not a BLOCK unless the target project adopted that rule, the user explicitly required it, or a configured automated check enforces it.",
+          "sha256": "3f228f527cb1236e7f714ee57c31ae12ac02ff06aa306873a49f89c066419707"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "该规则来自插件维护文档，约束插件如何使用参考材料。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "BUILD-001",
+      "domain": "delivery",
+      "status": "adopted",
+      "statement": "运行环境声明 Node.js >=20.19.0，项目采用 ESM。",
+      "scope": [
+        "package.json"
+      ],
+      "sources": [
+        {
+          "path": "package.json",
+          "startLine": 10,
+          "endLine": 10,
+          "excerpt": "    \"node\": \">=20.19.0\"",
+          "sha256": "da8138aa40bc4839486529191f68363fa01ad0916cd08af708180678f8b49073"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "来自项目包清单；未验证所有环境组合。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "TEST-001",
+      "domain": "testing",
+      "status": "observed",
+      "statement": "npm test 顺序执行构建、静态检查和 Node 测试。",
+      "scope": [
+        "package.json"
+      ],
+      "sources": [
+        {
+          "path": "package.json",
+          "startLine": 16,
+          "endLine": 16,
+          "excerpt": "    \"test\": \"npm run build && npm run check && node --test test/*.test.mjs src/openspec-min/test/*.test.mjs\",",
+          "sha256": "da8138aa40bc4839486529191f68363fa01ad0916cd08af708180678f8b49073"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "命令存在不代表执行成功。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "API-001",
+      "domain": "api",
+      "status": "observed",
+      "statement": "质量控制器的 Review 输入要求 reviewer、fingerprint 和完整检查清单。",
+      "scope": [
+        "src/quality-controller/index.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/quality-controller/index.mjs",
+          "startLine": 404,
+          "endLine": 404,
+          "excerpt": "  if (!review || typeof review.reviewer !== 'string' || !review.reviewer.trim() || typeof review.fingerprint !== 'string') throw Error('Review requires reviewer and snapshot fingerprint');",
+          "sha256": "2ef7f925fe4fce33634b13468aa84d444ac6f0f264f11c78960c4608e967e428"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "这里的接口是本地控制器协议，不是 HTTP API。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "REVIEW-001",
+      "domain": "security/runtime",
+      "status": "observed",
+      "statement": "质量门禁拒绝与当前代码快照不一致的 Review。",
+      "scope": [
+        "src/quality-controller/index.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/quality-controller/index.mjs",
+          "startLine": 438,
+          "endLine": 438,
+          "excerpt": "  if (review.fingerprint !== before.fingerprint) throw Error('Review is stale');",
+          "sha256": "2ef7f925fe4fce33634b13468aa84d444ac6f0f264f11c78960c4608e967e428"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "指纹可检测过期，不能证明审查独立或结论正确。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "RISK-001",
+      "domain": "architecture",
+      "status": "proposed",
+      "statement": "建议使架构适配器执行条件区分未配置 INFO 与实际失败，避免漏执行已配置检查。",
+      "scope": [
+        "src/quality-controller/index.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/quality-controller/index.mjs",
+          "startLine": 445,
+          "endLine": 445,
+          "excerpt": "  if (checks.every(check=>check.status==='PASS')) checks.push(c.tools?.architecture",
+          "sha256": "2ef7f925fe4fce33634b13468aa84d444ac6f0f264f11c78960c4608e967e428"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "当前条件要求所有前置项均为 PASS；需补专项行为测试再修改。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "QUALITY-001",
+      "domain": "testing",
+      "status": "observed",
+      "statement": "强制质量策略要求 full profile 显式覆盖 Q-01 到 Q-07，证据完整性 Q-07 不可豁免。",
+      "scope": [
+        "src/quality-controller/policy.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/quality-controller/policy.mjs",
+          "startLine": 9,
+          "endLine": 9,
+          "excerpt": "  if(profile==='full' && categories.some(category=>!ids.has(category)))throw Error('Full profile must explicitly cover Q-01 through Q-07');",
+          "sha256": "f42b181b67f3eb4daf035bc50b101367859689db1c55fe30aa3c2cc7d1beb3f3"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "这是控制器校验行为，不表示项目配置已全部满足。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    },
+    {
+      "id": "RELEASE-001",
+      "domain": "delivery",
+      "status": "observed",
+      "statement": "发布脚本复制 runtime、skills、standards 等目录，并记录发布来源和内容哈希。",
+      "scope": [
+        "scripts/release.mjs"
+      ],
+      "sources": [
+        {
+          "path": "scripts/release.mjs",
+          "startLine": 11,
+          "endLine": 11,
+          "excerpt": "const files=['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','standards','docs','.codex-plugin','hooks','commands','assets','logs','bin'];",
+          "sha256": "e9961c886a6d6d706d1d8185eb7e3978be27f1becf130391036328870154deb9"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "本次未构建和验证新发布包。",
+      "verification": {
+        "method": "static-source-review",
+        "command": null,
+        "result": "source-matched-not-runtime-verified"
+      }
+    }
+  ]
+}

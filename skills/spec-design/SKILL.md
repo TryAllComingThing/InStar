@@ -14,3 +14,7 @@ After human Spec approval, read the fresh technical-design context. The controll
 Plugin integration takes precedence over API invocation examples in the ported method: use workflow-controller, with an explicit absolute project path and current state version. The controller calls the five engine APIs. Do not call them directly to bypass review state or write tracked artifacts by hand. The planning root in the method is `<project>/planning`.
 
 Read current dependencies and retain the full authoring rules, delta semantics and examples. Never infer approval from a document or reviewer report. Implementation belongs to engineering-implement or frontend-implement according to the affected stack, outside the document engine.
+
+When projectBaseline or docs/project-baseline/rules.json exists, follow the [baseline rule protocol](../project-discover/references/baseline-registry.md). Read applicable domain documents on demand, cite rule IDs and provide ruleReferences for planning or Review submissions. Existing verification commands supply actual automated evidence; extracted guidance does not execute itself.
+
+For Code Reuse & Shared Capability Governance, follow [reuse discovery](../reuse-discover/SKILL.md) and its protocol. Search existing capabilities before adding implementations, preserve module boundaries, justify local-new or shared extraction, and review duplication and abstraction costs. Governance is optional and project-owned tests remain required evidence.

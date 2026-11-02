@@ -1,6 +1,11 @@
+import {symlinkAvailable} from './symlink-support.mjs';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {run as qualityRun} from '../runtime/quality-controller/index.mjs';
+import {reuseContext,reusePlanHash,validateReusePlan} from '../src/shared/code-reuse.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readFile,writeFile,mkdir,readdir,symlink} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile,mkdir,readdir,symlink,access} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {run} from '../runtime/workflow-controller/index.mjs';
@@ -11,12 +16,57 @@ const design='## Context\nOrder list.\n## Goals / Non-Goals\nFind orders.\n## De
 const tasks='- [ ] 1.1 Implement search; acceptance: matching query test passes.';
 const report={summary:'Reviewed documents against requirements.',source:'test fixture reviewer',issues:[],unverified:[]};
 const checks=[{kind:'test',name:'search test',outcome:'passed',evidence:'fixture simulated test result'},{kind:'browser',name:'search journey',outcome:'passed',evidence:'fixture simulated browser result'}];
-const qualityReview={kind:'quality-gate',id:'fixture-quality-review',status:'PASS',stable:true,snapshot:{fingerprint:'fixture-quality-fingerprint'}};
-async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true}));const base={project,changeId:'add-search'};let state;
+async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));const base={project,changeId:'add-search'};let state;
  return {project,base,get state(){return state;},async call(action,extra={}){const result=await run({...base,action,expectedVersion:state?.version,...extra});if(result.version)state=result;return result;},async context(){return run({...base,action:'context'});},async approve(){return this.call('approve',{reviewHash:state.pendingReview.hash,confirmation:{text:'Approved fixture',source:'test only'}});}};}
 async function toSpec(f){await f.call('start',{document:'# PRD\nSearch orders.'});await f.call('submit-prd');await f.approve();const c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});}
+
+test('semantic evaluation reads nested capability specs and invalidates their fingerprint',async t=>{
+ const f=await setup(t);await toSpec(f);const dir=path.join(f.project,'planning/changes/add-search/specs/orders/search');await mkdir(dir,{recursive:true});await fs.rename(path.join(f.project,'planning/changes/add-search/specs/search/spec.md'),path.join(dir,'spec.md'));
+ const criteria=['prd-traceability','normative-requirements','behavior-scenarios','baseline-delta','architecture-impact'].map(id=>({id,status:'PASS',reason:'Nested spec reviewed',evidence:['The system SHALL search orders.']}));
+ const first=await f.call('evaluate-quality',{stage:'spec',evaluator:'fixture',criteria});await fs.appendFile(path.join(dir,'spec.md'),'\nNested change.');
+ const next=await f.call('evaluate-quality',{stage:'spec',evaluator:'fixture',criteria});assert.notEqual(first.fingerprint,next.fingerprint);
+});
 async function toImplementation(f){await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();}
-async function submitVerification(f,verificationChecks=checks){await f.call('submit-quality-review',{report:qualityReview});return f.call('submit-verification',{report,checks:verificationChecks});}
+async function currentReview(f){
+ const git=(...args)=>{const result=spawnSync('git',args,{cwd:f.project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);};
+ if(!await access(path.join(f.project,'.git')).then(()=>true,()=>false)){git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','Workflow fixture');git('add','.');git('commit','-m','fixture baseline');}
+ const snapshot=await qualityRun({action:'snapshot',project:f.project});
+ return qualityRun({action:'quality-gate',project:f.project,review:{reviewer:'workflow fixture',fingerprint:snapshot.fingerprint,checks:['correctness','maintainability','architecture','security','performance','naming'].map(id=>({id,status:'PASS',evidence:'Fixture orchestration evidence'}))}});
+}
+async function submitVerification(f,verificationChecks=checks){await f.call('submit-quality-review',{report:await currentReview(f)});return f.call('submit-verification',{report,checks:verificationChecks});}
+
+test('workflow rejects a stale or modified quality report before binding source',async t=>{
+ const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'Fixture'});await f.call('submit-implementation');
+ const old=await currentReview(f);await writeFile(path.join(f.project,'unindexed.js'),'export const changed=true;');
+ await assert.rejects(f.call('submit-quality-review',{report:old}),/stale/);
+ const fresh=await currentReview(f);await assert.rejects(f.call('submit-quality-review',{report:{...fresh,projectRoot:'other'}}),/integrity/);
+ await f.call('submit-quality-review',{report:fresh});
+});
+
+test('enabled reuse permits planned extension and binds review to approved decisions',async t=>{
+ const f=await setup(t),entry='service.js',source='export const value=1;';
+ await writeFile(path.join(f.project,entry),source);
+ const sourceHash=createHash('sha256').update(source).digest('hex');
+ await mkdir(path.join(f.project,'docs/project-baseline/capabilities'),{recursive:true});
+ await writeFile(path.join(f.project,'docs/project-baseline/capabilities/index.json'),JSON.stringify({schemaVersion:1,enabled:true,capabilities:[{id:'CAP-SERVICE',name:'Service',summary:'Service value',entry,sourceHash,visibility:'public',status:'active'}]}));
+ await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();
+ const decisions=[{need:'Extend service',searched:[entry],candidates:['CAP-SERVICE'],selected:'CAP-SERVICE',decision:'extend',sourceHash,reason:'Same responsibility',verification:'Service contract test'}];
+ await f.call('write-design',{contextHash:c.contextHash,document:design,reuseDecisions:decisions});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();
+ await writeFile(path.join(f.project,entry),'export const value=2;');
+ await f.call('complete-task',{taskId:'1.1',evidence:'Updated contract test'});await f.call('submit-implementation');
+ const context=await reuseContext(f.project),review={changeId:'add-search',planHash:reusePlanHash(decisions),decisions};
+ await validateReusePlan(f.project,context,review);
+ await assert.rejects(validateReusePlan(f.project,context,{...review,decisions:[{...decisions[0],decision:'local-new'}]}),/differ/);
+ await assert.rejects(validateReusePlan(f.project,context,{...review,planHash:'old'}),/stale/);
+});
+
+test('disabled capability inventory does not invalidate task generation',async t=>{
+ const f=await setup(t);await mkdir(path.join(f.project,'docs/project-baseline/capabilities'),{recursive:true});
+ const file=path.join(f.project,'docs/project-baseline/capabilities/index.json');await writeFile(file,JSON.stringify({schemaVersion:1,enabled:false,capabilities:[]}));
+ await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});
+ await writeFile(file,JSON.stringify({schemaVersion:1,enabled:false,capabilities:[],note:'inventory maintenance'}));
+ c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();await f.call('complete-task',{taskId:'1.1',evidence:'No governance opt-in'});
+});
 test('all review boundaries and complete baseline/archive lifecycle',async t=>{const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.'});await assert.rejects(f.call('create-spec',{proposal,specs:{search:delta}}),/unavailable/);await f.call('submit-prd');assert.equal(f.state.pendingApproval,'prd');await assert.rejects(f.call('approve',{reviewHash:'wrong',confirmation:{text:'yes',source:'fixture'}}),/hash/);await f.approve();let c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});await f.call('submit-spec',{report});assert.equal(f.state.pendingApproval,'spec');await assert.rejects(f.call('write-design',{document:design}),/unavailable/);await f.approve();c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});assert.equal(f.state.pendingApproval,'implementation');await assert.rejects(f.call('complete-task',{taskId:'1.1',evidence:'fixture'}),/unavailable/);await f.approve();await f.call('complete-task',{taskId:'1.1',evidence:'fixture test and review'});await f.call('submit-implementation');await submitVerification(f);assert.equal(f.state.pendingApproval,'acceptance');await assert.rejects(f.call('archive'),/unavailable/);await f.approve();await f.call('archive');assert.equal(f.state.status,'completed');for(const p of ['proposal.md','specs/search/spec.md','technical-design.md','tasks.md','workflow.json'])assert.ok(await readFile(path.join(f.project,'planning/archive/add-search',p),'utf8'));assert.match(await readFile(path.join(f.project,'planning/specs/search/spec.md'),'utf8'),/Requirement: Search/);await assert.rejects(f.call('reopen',{stage:'prd',reason:'late edit'}),/immutable/);});
 test('acceptance cannot archive after source changes since verification',async t=>{
  const f=await setup(t);await writeFile(path.join(f.project,'app.js'),'export const version = 1;');await toImplementation(f);
@@ -64,7 +114,7 @@ test('reopening tasks preserves design fingerprints and requires design refresh 
  assert.equal(f.state.pendingApproval,'implementation');
 });
 test('Spec context honors configured canonical architecture, design and token paths',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'project-docs/system.md'),'# Canonical architecture');await writeFile(path.join(f.project,'project-docs/ui.md'),'# Canonical design');await writeFile(path.join(f.project,'project-docs/tokens.css'),'--color-primary: blue;');await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({context:{architecture:'project-docs/system.md',design:'project-docs/ui.md',tokens:['project-docs/tokens.css']}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();const c=await f.context();assert.equal(c.context.projectArchitecture.guidance['project-docs/system.md'],'# Canonical architecture');assert.equal(c.context.projectArchitecture.guidance['project-docs/ui.md'],'# Canonical design');assert.equal(c.context.projectArchitecture.guidance['project-docs/tokens.css'],'--color-primary: blue;');assert.deepEqual(c.context.projectArchitecture.tokenSources,['project-docs/tokens.css']);assert.equal(c.context.projectArchitecture.guidance['.context/ARCHITECTURE.md'],undefined);});
-test('Spec context rejects missing, symlinked and non-file Token sources',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({context:{tokens:'project-docs/tokens.css'}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(MISSING\)/);await writeFile(path.join(f.project,'outside.css'),'--color-primary: blue;');await symlink(path.join(f.project,'outside.css'),path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);await rm(path.join(f.project,'project-docs/tokens.css'));await mkdir(path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);});
+test('Spec context rejects missing, symlinked and non-file Token sources',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({context:{tokens:'project-docs/tokens.css'}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(MISSING\)/);await writeFile(path.join(f.project,'outside.css'),'--color-primary: blue;');await t.test('reject linked Token',async t=>{if(!await symlinkAvailable(t))return;await symlink(path.join(f.project,'outside.css'),path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);await rm(path.join(f.project,'project-docs/tokens.css'));});await mkdir(path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);});
 test('document and implementation verification block missing evidence',async t=>{const f=await setup(t);await toSpec(f);await f.call('submit-spec',{report:{...report,unverified:['business mapping missing']}});assert.equal(f.state.status,'blocked');await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await assert.rejects(f.call('write-tasks',{contextHash:c.contextHash,document:tasks+'\n- [ ] 1.1 Duplicate'}),/duplicate/);await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();await assert.rejects(f.call('submit-implementation'),/evidence/);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});await f.call('submit-implementation');await assert.rejects(f.call('submit-verification',{report,checks}),/quality-gate/);await submitVerification(f,checks.map(c=>({...c,outcome:'not-verified'})));assert.equal(f.state.status,'blocked');await assert.rejects(f.call('approve',{reviewHash:'none',confirmation:{text:'yes',source:'fixture'}}),/hash/);await submitVerification(f);assert.equal(f.state.pendingApproval,'acceptance');});
 
 test('verification allows non-applicable browser checks for CLI projects',async t=>{const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});await f.call('submit-implementation');await submitVerification(f,[{kind:'test',name:'CLI test',outcome:'passed',evidence:'fixture CLI test result'},{kind:'browser',name:'Browser journey',applicable:false,outcome:'not-applicable',evidence:'CLI project has no browser surface'}]);assert.equal(f.state.pendingApproval,'acceptance');assert.equal(f.state.verification.checks[1].applicable,false);});

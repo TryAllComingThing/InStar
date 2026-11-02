@@ -1,3 +1,4 @@
+import {symlinkAvailable} from './symlink-support.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,symlink,cp,access} from 'node:fs/promises';
@@ -13,7 +14,7 @@ const source = 'export function search(orders, query) {\n  return orders.filter(
 const document = '# Order search\n\n## Purpose\nRecords the current local order search.\n\n## Requirements\n\n### Requirement: Search orders\nThe UI SHALL filter orders whose names contain the query.\n\n#### Scenario: Matching name\n- **WHEN** the query is part of an order name\n- **THEN** that order is included.\n\n## Known limitations\nRemote APIs are not implemented in this fixture.\n';
 async function fixture(t) {
   const project = await mkdtemp(path.join(tmpdir(),'instar-discover-'));
-  t.after(()=>rm(project,{recursive:true,force:true}));
+  t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
   await mkdir(path.join(project,'src'));
   await writeFile(path.join(project,'src/orders.js'),source);
   return project;
@@ -48,16 +49,20 @@ test('scope discovery preserves ancestor guidance, exclusions and honest unrevie
   await writeFile(path.join(project,'src/unused.js'),'export const unused = true;');
   await writeFile(path.join(project,'.env'),'PRIVATE_DATA=never-read');
   await mkdir(path.join(project,'node_modules'));await writeFile(path.join(project,'node_modules/private.js'),'secret');
-  await symlink(path.join(project,'src/orders.js'),path.join(project,'src/link.js'));
   const context=await run({action:'context',project,scopes:['src']});
   assert.ok(context.inventory['AGENTS.md']);assert.ok(context.inventory['src/AGENTS.md']);
   assert.equal(context.inventory['.env'],undefined);assert.equal(context.inventory['src/link.js'],undefined);
-  assert.ok(context.omitted.some(x=>x.path==='src/link.js'));
   const result=await run({...await request(project,{scopes:['src']}),preview:true});
   assert.ok(result.coverage.unreviewedFiles.includes('src/unused.js'));
   await assert.rejects(run({action:'context',project,scopes:['../outside']}),/relative/);
   await assert.rejects(run({action:'context',project,scopes:['.env']}),/Excluded/);
-  await assert.rejects(run({action:'context',project,scopes:['src/link.js']}),/Symlink/i);
+  await t.test('symlink scopes are omitted and rejected',async t=>{
+   if(!await symlinkAvailable(t))return;
+   await symlink(path.join(project,'src/orders.js'),path.join(project,'src/link.js'));
+   const linked=await run({action:'context',project,scopes:['src']});
+   assert.ok(linked.omitted.some(x=>x.path==='src/link.js'));
+   await assert.rejects(run({action:'context',project,scopes:['src/link.js']}),/Symlink/i);
+  });
 });
 
 test('source edits, additions, deletions and baseline edits invalidate capture context',async t=>{
@@ -139,9 +144,9 @@ test('invalid unrelated baselines are reported without blocking scoped discovery
   assert.ok(context.omitted.some(x=>x.path==='planning'));
 });
 
-test('baseline roots and workflow lock directories reject symlinks',async t=>{
+test('baseline roots and workflow lock directories reject symlinks',async t=>{if(!await symlinkAvailable(t))return;
   const project=await fixture(t), outside=await mkdtemp(path.join(tmpdir(),'instar-outside-'));
-  t.after(()=>rm(outside,{recursive:true,force:true}));
+  t.after(()=>rm(outside,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
   await mkdir(path.join(outside,'specs'),{recursive:true});
   await symlink(outside,path.join(project,'planning'));
   await assert.rejects(run({action:'context',project}),/Symlinks are unsupported|Unsafe baseline directory/);
@@ -156,10 +161,12 @@ test('all documents validate before writing, and unsafe output links are rejecte
   const project=await fixture(t), input=await request(project);
   input.specs['another']='invalid document';
   await assert.rejects(run(input));await assert.rejects(access(path.join(project,'planning')),{code:'ENOENT'});
-  const outside=await mkdtemp(path.join(tmpdir(),'instar-discover-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+  const outside=await mkdtemp(path.join(tmpdir(),'instar-discover-outside-'));t.after(()=>rm(outside,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
+  await t.test('unsafe output link',async t=>{if(!await symlinkAvailable(t))return;
   await symlink(outside,path.join(project,'planning'));
   await assert.rejects(run({action:'context',project}),/Symlink/i);
   assert.deepEqual(await readdir(outside),[]);
+  });
 });
 
 test('ordinary write failure rolls back the whole baseline package',async t=>{
@@ -201,7 +208,7 @@ test('captured baseline works with existing workflow context and OpenSpec MODIFI
 
 test('relocated plugin CLI exposes discovery and captures UTF-8 specs with bundled runtime only',async t=>{
   const project=await fixture(t), parent=await mkdtemp(path.join(tmpdir(),'instar-discovery-cli-'));
-  t.after(()=>rm(parent,{recursive:true,force:true}));
+  t.after(()=>rm(parent,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
   const plugin=path.join(parent,'plugin with spaces');await mkdir(plugin);
   for(const name of ['runtime','bin'])await cp(new URL(`../${name}`,import.meta.url),path.join(plugin,name),{recursive:true});
   function cli(args,input){return spawnSync(process.execPath,[path.join(plugin,'bin/instar.mjs'),'spec-discover',...args],{cwd:project,input,encoding:'utf8',env:{...process.env,NODE_PATH:''}});}

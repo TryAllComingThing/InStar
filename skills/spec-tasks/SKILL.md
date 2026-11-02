@@ -14,3 +14,7 @@ Read the fresh `technicalDesign` and `instarReferences` context in the tasks sta
 Plugin integration takes precedence over API invocation examples in the ported method: use workflow-controller, with an explicit absolute project path and current state version. The controller calls the five engine APIs. Do not call them directly to bypass review state or write tracked artifacts by hand. The planning root in the method is `<project>/planning`.
 
 Read current dependencies and retain the full authoring rules, delta semantics and examples. Never infer approval from a document or reviewer report. Implementation belongs to engineering-implement or frontend-implement according to the affected stack, outside the document engine.
+
+For tasks affecting shared capabilities, carry approved Reuse Decisions and the
+relevant capability/rule IDs into descriptions and acceptance evidence. Include
+affected-consumer compatibility checks; unrelated tasks need no reuse fields.

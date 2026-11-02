@@ -1,0 +1,20 @@
+{
+  "scope": "Initial independent model outputs, before explicit corrective follow-up",
+  "cases": [
+    {
+      "project": "baseline",
+      "result": "needs-correction",
+      "finding": "Generated Markdown and evidence JSON contained repeated question marks in place of non-ASCII prose. JSON parsing and source matching alone did not detect unreadable guidance.",
+      "evaluatorEvidence": "Initial verify-model-acceptance run reported readable-domain-output=false for architecture, domain, api, database, coding and security-runtime.",
+      "correction": "Original execution agent rewrote 14 generated documents/evidence files as readable UTF-8 English, preserving conclusions and original source. Chinese output fidelity is not certified by this repair."
+    },
+    {
+      "project": "incremental",
+      "result": "needs-correction",
+      "finding": "Generated capabilities/index.json included a UTF-8 BOM; reuseContext JSON.parse rejected it.",
+      "evaluatorEvidence": "SyntaxError: Unexpected token U+FEFF from runtime/shared/code-reuse.mjs JSON.parse.",
+      "correction": "Original execution agent removed the BOM and verified unchanged text, capability IDs and disabled mode."
+    }
+  ],
+  "reportingRule": "Do not describe corrected outputs as an unassisted first-run pass; retain exact-model-version and human-review limitations."
+}

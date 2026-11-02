@@ -30,3 +30,7 @@
 ## Impact
 
 <!-- Affected code, APIs, dependencies, systems. Include a concise Architecture impact (exploration) subsection: sources read, affected modules, applicable dependency direction, and conflicts/unknowns. Keep detailed implementation choices for technical-design.md. -->
+
+## Reuse Discovery
+
+<!-- Existing business capabilities, searched scope, candidates and gaps. Keep internal implementation choices in technical design. -->

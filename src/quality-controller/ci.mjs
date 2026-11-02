@@ -1,5 +1,6 @@
 import {spawnSync} from 'node:child_process';
 import {redactData,boundedText} from '../shared/redaction.mjs';
+import {isRuntimeState} from '../shared/project-files.mjs';
 
 function command(root, executable, args, input) {
   const result=spawnSync(executable,args,{cwd:root,input,encoding:'utf8',timeout:60000,maxBuffer:8*1024*1024,env:{...process.env,GH_PROMPT_DISABLED:'1',GIT_TERMINAL_PROMPT:'0'}});
@@ -29,7 +30,7 @@ export async function orchestrate(root,input,api,execute=(exe,args,body)=>comman
   if(!branch || ['main','master',base].includes(branch)) throw Error('CI requires a feature branch');
   const evidence=await prePr(root), head=evidence.snapshot.head;
   if(head===evidence.snapshot.base) throw Error('No feature commit to publish');
-  const ignored=name=>/^(reports|logs)\//.test(name) || /^\.instar\/session\//.test(name) || /^\.context\/(PROJECT_STATE|LESSONS)\.md$/.test(name);
+  const ignored=isRuntimeState;
   const modified=git(root,['diff','HEAD','--name-only','-z']).split('\0').filter(Boolean).filter(n=>!ignored(n));
   const untracked=git(root,['ls-files','--others','--exclude-standard','-z']).split('\0').filter(Boolean).filter(n=>!ignored(n));
   if(modified.length || untracked.length) throw Error('Commit reviewed source/config before CI; working tree must match HEAD');

@@ -1,5 +1,20 @@
 # Controller protocol
 
+## Optional governance contracts
+
+`recovery-status` reports recovery storage; `prune-recovery` previews explicit
+completed IDs and requires preview:false/confirm:true to remove them. Both omit
+changeId. See [recovery storage](../../../docs/RECOVERY-STORAGE.md).
+
+`baseline-context`, `baseline-adopt`, `baseline-check` and `reuse-context` use an
+absolute project but no changeId. Adoption uses explicit confirmation and a fresh
+fingerprint. See [baseline registry](../../project-discover/references/baseline-registry.md).
+Start may include affectedPaths; enabled baseline Spec/design submissions require
+ruleReferences. Enabled reuse design requires reuseDecisions; Review requires
+changeId/planHash and current result evidence. See [reuse protocol](../../reuse-discover/references/protocol.md).
+submit-quality-review now validates report integrity, project and current source;
+regenerate old reports rather than constructing acceptance-time fingerprints.
+
 Resolve the plugin directory from this skill's installed path (three levels above this reference folder), not the shell working directory. Run:
 
 ```sh
@@ -8,7 +23,7 @@ node /absolute/plugin/runtime/workflow-controller/cli.mjs /absolute/request.json
 
 The wrapper reads one JSON request and prints JSON. `-` reads stdin. It has no terminal questions. Use structured file writes for JSON; do not interpolate user prose into shell code. Consumers need Node >=20.19; the release already contains compiled JavaScript and dependencies. Source checkout maintainers run npm install and npm run build first.
 
-Every request has `action`, `project` (existing absolute target project path), and, except for `recover`, a kebab-case `changeId`. Every mutation except start and recover requires `expectedVersion` from the latest state. All paths in state are project-relative except returned engine paths. Planning root is `<project>/planning`.
+Every request has `action`, `project` (existing absolute target project path), and a kebab-case `changeId` for change lifecycle actions. Project-level governance/storage actions listed above and recover omit changeId; they use their own confirmation/fingerprint contracts. Change mutations except start and recover require `expectedVersion` from the latest state. All paths in state are project-relative except returned engine paths. Planning root is `<project>/planning`.
 
 For `evaluate-quality`, `criteria` must contain every ID in [the stage rubrics](../../../docs/EVALUATION.md), with `{id,status,reason,evidence}`. Status is `PASS`, `WARN`, `BLOCK`, or `NA`; evidence is an array of exact excerpts from the current artifact (NA needs a reason). The controller verifies complete rubric coverage and literal excerpt presence, computes a score and SHA-256 artifact fingerprint. Re-run after edits. Reports are quality signals, not controller gates. For `trace-skill`, use the canonical Skill name or a path form such as `skills/spec-explore` or `/absolute/plugin/skills/spec-explore/SKILL.md`; each invocation must have exactly one `started` event followed by one `completed` or `failed` event.
 

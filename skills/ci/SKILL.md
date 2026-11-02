@@ -17,7 +17,7 @@ description: Push a verified feature branch to GitHub, create or update its PR, 
 2. 最终提交后重新运行配置的 full 验证、quality-gate，并记录 ai-provenance（aiGenerated、sessionId、summary）。报告绑定 HEAD/base/工作树/暂存区。不得把提交前报告直接用于提交后的 PR。
 3. action ci / phase prepare 生成可审阅的 reports/pr-body.md。检查标题、影响范围、会话摘要和报告是否可公开；这一步不联网。
 4. 用户明确授权后 phase publish，传 title、body 和 authorization 确认字段。适配器检查远端/默认分支/基线后推送精确 SHA 到功能分支，创建或复用相同 head/base 的 PR；AI 生成变更须有 ai-generated 标签。缺少仓库标签时报告问题，不擅自修改标签策略。实际身份与仓库权限由 GitHub/gh 处理。
-5. Review 与验证 JSON 通过 PR 正文上传，reportUrl 是真实 PR 链接；模板 CI 从正文提取匹配 HEAD/base 的报告，再上传 artifact。不是把本地路径冒充远端 artifact。正文超长即停止。
+5. Review 与验证 JSON 通过 PR 正文上传，reportUrl 是真实 PR 链接；项目自行实现 CI 消费协议：从正文提取并验证匹配 HEAD/base 的报告，再按项目配置上传 artifact；InStar 不提供自动生效的模板 CI。不是把本地路径冒充远端 artifact。正文超长即停止。
 6. phase status 读取确切 PR 的 CI 检查与 run；未完成返回 PENDING，缺少/取消/跳过/失败为 BLOCK。按报告链接定位失败 job/step。最多观察 10 分钟，每次间隔不超过 60 秒；到期交还状态，不无限轮询。
 
 对 L3 变更，publish/status 还必须读取 base 分支的 required status checks，并确认 `.instar-quality.json` 的 `ci.requiredChecks` 全部存在于服务端分支保护规则中；项目配置中的检查名称或本地审批字段不能替代远端分支保护和真实 Reviewer 身份。

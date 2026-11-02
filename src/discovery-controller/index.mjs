@@ -118,9 +118,9 @@ export async function run(input) {
       const currentHash = createHash('sha256').update(await read(context.project,file)).digest('hex');
       if (currentHash !== context.inventory[file].hash) throw Error(`Evidence source changed before capture: ${file}`);
     }
+    const discoveryId = randomUUID();
+    const reportPath = `planning/discovery/${discoveryId}.json`;
     return transaction(context.project,async()=>{
-      const discoveryId = randomUUID();
-      const reportPath = `planning/discovery/${discoveryId}.json`;
       for (const change of prepared.changes) {
         const destination = safe(context.project,change.path);
         const current = await exists(destination) ? hash(await fs.readFile(destination,'utf8')) : null;
@@ -132,6 +132,6 @@ export async function run(input) {
       delete report.documents;
       await putJson(context.project,reportPath,report);
       return {status:'PASS',project:context.project,reportPath,...report};
-    });
+    },{writePaths:[...prepared.changes.map(change=>change.path),reportPath]});
   });
 }

@@ -1,0 +1,34 @@
+{
+    "schemaVersion":  1,
+    "enabled":  false,
+    "capabilities":  [
+                         {
+                             "id":  "CAP-ORDER-QUERY",
+                             "name":  "Order query",
+                             "summary":  "Case-sensitive substring search of order names; preserves input order",
+                             "entry":  "src/orders/index.mjs",
+                             "sourceHash":  "616adaeec31c3015002e9ad2eebe4c765bea1e11e4536e621df2c0b92da2d1eb",
+                             "status":  "active",
+                             "visibility":  "public",
+                             "sourceFiles":  [
+                                                 "src/orders/search.mjs"
+                                             ],
+                             "contractFiles":  [
+                                                   "src/orders/index.mjs"
+                                               ],
+                             "sourceHashes":  {
+                                                  "src/orders/index.mjs":  "616adaeec31c3015002e9ad2eebe4c765bea1e11e4536e621df2c0b92da2d1eb",
+                                                  "src/orders/search.mjs":  "fef0b7c7dba4ac5c872c41ff851b69ad2e7e517d1529d32f38ce3a9d83f55e4c"
+                                              }
+                         },
+                         {
+                             "id":  "CAP-DATE",
+                             "name":  "Date key",
+                             "summary":  "UTC date key",
+                             "entry":  "src/date.mjs",
+                             "sourceHash":  "a32c9f412b273d6715a49ec788161403844fe4c02e57b2fefa0f153eb30a8f3c",
+                             "status":  "active",
+                             "visibility":  "public"
+                         }
+                     ]
+}

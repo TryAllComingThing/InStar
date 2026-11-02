@@ -3,6 +3,9 @@ import {changeDir,prd,approvalHash,assertApprovals,generationContext,taskItems,r
 import * as engine from '../openspec-min/entry.js';
 import {evaluate} from './evaluation.mjs';
 import {redactData,boundedText} from '../shared/redaction.mjs';
+import {baselineContext,adoptRules,validateRuleReferences,baselineCheck} from '../shared/project-baseline.mjs';
+import {reuseContext,validateReuseDecisions,validateReuseReview,validateReusePlan} from '../shared/code-reuse.mjs';
+import {workflowWritePaths} from './write-set.mjs';
 const statePath=id=>`planning/workflows/${identifier(id)}.json`;
 const requireStage=(s,...stages)=>{if(!stages.includes(s.stage)||s.status==='completed'||s.pendingApproval)throw Error(`Action unavailable in ${s.stage}/${s.status}`);};
 async function pending(root,s,kind){s.status='awaiting-approval';s.pendingApproval=kind;s.pendingReview={kind,hash:await approvalHash(root,s,kind)};}
@@ -61,6 +64,13 @@ function checkRecord(input){
 }
 export async function run(input){
  if(input.action==='list-skills')return {skills:await availableSkills()};
+ if(['recovery-status','prune-recovery'].includes(input.action)){const root=await projectRoot(input.project);const {recoveryStore}=await import('./recovery.mjs');return lock(root,()=>recoveryStore(root,input));}
+ if(input.action==='baseline-check')return baselineCheck(await projectRoot(input.project));
+ if(input.action==='reuse-context')return reuseContext(await projectRoot(input.project));
+ if(['baseline-context','baseline-adopt'].includes(input.action)){
+  const root=await projectRoot(input.project);
+  return input.action==='baseline-context'?baselineContext(root,input.paths||[]):lock(root,()=>adoptRules(root,input));
+ }
  const root=await projectRoot(input.project);const id=identifier(input.changeId);const file=statePath(id);const ref={root:safe(root,'planning'),changeId:id};
  if(input.action==='trace-skill')return lock(root,()=>recordSkillTrace(root,{...input,changeId:id}));
  if(input.action==='state'||input.action==='context'){
@@ -81,6 +91,7 @@ export async function run(input){
    if(input.action==='start'){
     if(await exists(safe(root,file))||await exists(changeDir(root,id))||await exists(safe(root,'planning/archive',id))||await exists(safe(root,`docs/prd/${id}.md`)))throw Error('Change already exists');
     s={schemaVersion:1,changeId:id,prdPath:`docs/prd/${id}.md`,stage:'prd',status:'in-progress',pendingApproval:null,pendingReview:null,approvals:{},taskEvidence:{},clarifications:[],version:0,history:[]};
+    if(input.affectedPaths!==undefined){if(!Array.isArray(input.affectedPaths)||input.affectedPaths.some(p=>typeof p!=='string'||!p||p.includes('..')||p.includes('\\')||p.startsWith('/')))throw Error('Invalid affectedPaths');s.affectedPaths=input.affectedPaths;}
     await atomic(root,s.prdPath,requireText(input.document,'document'));
    }else{
     s=await json(root,file);if(input.expectedVersion!==s.version)throw Error('Stale expectedVersion; read state again');
@@ -99,7 +110,8 @@ export async function run(input){
       for(const answer of input.answers){const q=(s.clarifications||[]).find(x=>x.id===answer.id);if(!q)throw Error('Unknown clarification id');if(q.answer)throw Error('Clarification already answered');q.answer=requireText(answer.answer,'answer');q.answeredAt=now();}
       if(s.clarifications.every(q=>q.answer))s.status='in-progress';break;
      }
-     case 'save-prd':requireStage(s,'prd');await atomic(root,s.prdPath,requireText(input.document,'document'));s.status='in-progress';break;
+     case 'save-prd':requireStage(s,'prd');if(input.affectedPaths!==undefined){if(!Array.isArray(input.affectedPaths)||input.affectedPaths.some(p=>typeof p!=='string'||!p||p.includes('..')||p.includes('\\')||p.startsWith('/')))throw Error('Invalid affectedPaths');s.affectedPaths=input.affectedPaths;}
+    await atomic(root,s.prdPath,requireText(input.document,'document'));s.status='in-progress';break;
      case 'submit-prd':requireStage(s,'prd');await pending(root,s,'prd');break;
      case 'approve':{
       const kind=s.pendingApproval;if(!kind||input.reviewHash!==s.pendingReview.hash||input.reviewHash!==await approvalHash(root,s,kind))throw Error('Review hash missing or stale');
@@ -117,6 +129,7 @@ export async function run(input){
       delete s.verification;delete s.qualityReview;delete s.approvals.acceptance;break;
      }
      case 'create-spec':case 'save-spec':{
+      validateRuleReferences(await baselineContext(root,s.affectedPaths||[]),input.ruleReferences);
       requireStage(s,'spec');await assertApprovals(root,s);const ctx=await generationContext(root,s);if(input.contextHash!==ctx.contextHash)throw Error('Generation context changed');const output=packageInput(input);
       if(input.action==='create-spec')await engine.createSpecChange({...ref,prd:await prd(root,s),generate:async()=>output});
       else{const dir=changeDir(root,id);if(!await exists(dir))throw Error('Create spec first');await atomic(dir,'proposal.md',output.proposal);await fs.rm(safe(dir,'specs'),{recursive:true,force:true});for(const [key,doc] of Object.entries(output.specs))await atomic(dir,`specs/${key}/spec.md`,doc);for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;s.taskEvidence={};}
@@ -128,6 +141,9 @@ export async function run(input){
       await pending(root,s,'spec');break;
      }
      case 'write-design':case 'write-tasks':{
+      if(input.action==='write-design'){const reuse=await reuseContext(root);validateReuseDecisions(reuse,input.reuseDecisions);s.designReuseHash=reuse.fingerprint;s.reuseDecisions=input.reuseDecisions||[];}
+      const baseline=await baselineContext(root,s.affectedPaths||[]);
+      if(input.action==='write-design'){validateRuleReferences(baseline,input.ruleReferences);s.designBaselineHash=baseline.fingerprint;}
       const stage=input.action==='write-design'?'design':'tasks';requireStage(s,stage);await assertApprovals(root,s,{spec:true});const ctx=await generationContext(root,s);if(input.contextHash!==ctx.contextHash)throw Error('Generation context changed');requireText(input.document,'document');
       if(stage==='design'){await engine.generateDesignDoc({...ref,specReviewed:true,generate:async()=>input.document});s.designConstraintsHash=hash(ctx.context.projectArchitecture.guidance);s.designStandardsHash=hash(ctx.context.projectArchitecture.standards);s.designInStarReferencesHash=ctx.context.instarReferences.fingerprint;s.stage='tasks';}
       else{if(taskItems(input.document).some(t=>t.done))throw Error('New tasks must be unchecked');await engine.generateTaskList({...ref,generate:async()=>input.document});s.stage='implementation';await pending(root,s,'implementation');}break;
@@ -143,7 +159,10 @@ export async function run(input){
       const qualityReview=input.report;
       if(!qualityReview||typeof qualityReview!=='object'||!['PASS','WARN','PASS_WITH_WAIVERS'].includes(qualityReview.status))throw Error('A current PASS, WARN or PASS_WITH_WAIVERS quality-gate report is required');
       if(qualityReview.kind!=='quality-gate'||qualityReview.stable!==true||typeof qualityReview.snapshot?.fingerprint!=='string'||!qualityReview.snapshot.fingerprint.trim())throw Error('Quality-gate report must be stable and include a snapshot fingerprint');
-      s.qualityReview={reportId:qualityReview.id||qualityReview.reportId||null,status:qualityReview.status,snapshotFingerprint:qualityReview.snapshot.fingerprint,sourceSnapshot:await sourceSnapshot(root),at:now()};
+      const reuse=await reuseContext(root);validateReuseReview(reuse,qualityReview.review?.reuseReview);await validateReusePlan(root,reuse,qualityReview.review?.reuseReview);
+      const {validateQualityReviewReport}=await import('../quality-controller/index.mjs');
+      const reviewedSource=await validateQualityReviewReport(root,qualityReview);
+      s.qualityReview={reportId:qualityReview.id||qualityReview.reportId||null,status:qualityReview.status,snapshotFingerprint:qualityReview.snapshot.fingerprint,sourceSnapshot:reviewedSource,at:now()};
       break;
      }
      case 'submit-verification':{
@@ -177,6 +196,6 @@ export async function run(input){
    await appendJsonl(root,'.workflow/traces.jsonl',{type:'workflow-action',changeId:id,action:input.action,version:s.version,stage:s.stage,status:s.status,at:now()});
    if(s.status==='completed')await putJson(root,`planning/archive/${id}/workflow.json`,s);
    return s;
-  });
+  },{writePaths:await workflowWritePaths(root,id,input.action)});
  });
 }

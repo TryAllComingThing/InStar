@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {mkdtemp,cp,mkdir,rm,readFile,writeFile,readdir,access,lstat,readlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {governedFlow} from '../test/helpers/governed-flow.mjs';
+import {runNpm} from '../src/shared/process-runner.mjs';
 import {spawnSync} from 'node:child_process';
 const source=fileURLToPath(new URL('../release/',import.meta.url));
 const sourceRoot=fileURLToPath(new URL('../',import.meta.url));
@@ -35,8 +37,10 @@ try {
  const provenance=JSON.parse(await readFile(path.join(plugin,'RELEASE-PROVENANCE.json'),'utf8'));
  assert.equal(provenance.packageName,'instar-plugin');assert.equal(provenance.packageVersion,manifest.version);
  assert.match(provenance.sourceCommit,/^[0-9a-f]{40}$/);assert.match(provenance.runtimeHash,/^[0-9a-f]{64}$/);assert.match(provenance.releasePluginHash,/^[0-9a-f]{64}$/);
+ assert.match(provenance.npmVersion,/^\d+\.\d+\.\d+/);assert.equal(typeof provenance.dirty,'boolean');assert.match(provenance.sourceContentHash,/^[0-9a-f]{64}$/);
+ assert.equal(provenance.npmVersion,runNpm(['--version'],{encoding:'utf8',timeout:15000}).stdout.trim());
  await assert.rejects(access(path.join(plugin,'assets/templates')),{code:'ENOENT'});
- assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,20);
+ assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,22);
  for(const file of ['.codex-plugin/plugin.json','RELEASE-PROVENANCE.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
  function call(input){
   const r=spawnSync(process.execPath,[path.join(plugin,'runtime/workflow-controller/cli.mjs'),'-'],{cwd:temp,input:JSON.stringify({project,...input}),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
@@ -93,5 +97,15 @@ try {
  assert.deepEqual(events.map(x=>x.type),['workflow-action','skill-invocation','quality-evaluation','skill-invocation','workflow-action']);
  assert.equal(call({action:'state',changeId}).version,pending.version);
  assert.match(await readFile(path.join(project,'docs/prd/release-smoke.md'),'utf8'),/订单筛选/);
- console.log('PASS: release marketplace, twenty skills, standalone spec discovery, workflow, bundled dependencies, relocated quality CLI and UTF-8 PRD review.');
+ const workflow=await import(pathToFileURL(path.join(plugin,'runtime/workflow-controller/index.mjs')));
+ const reuse=await import(pathToFileURL(path.join(plugin,'runtime/shared/code-reuse.mjs')));
+ const flow=await governedFlow(project,workflow.run,reuse);
+ assert.ok((await workflow.run({action:'recovery-status',project})).entries.length>0);
+ assert.equal(qualityCli(['verify','--project','project','--profile','full']).status,'PASS');
+ const current=qualityCli(['snapshot','--project','project']);
+ const gate=rawQuality({action:'quality-gate',project,review:{reviewer:'release-governed',fingerprint:current.fingerprint,ruleReferences:flow.ruleReferences,reuseReview:flow.reuseReview,checks:['correctness','maintainability','architecture','security','performance','naming'].map(id=>({id,status:'PASS',evidence:'Relocated governed-flow fixture'}))}});
+ assert.equal(gate.status,'PASS');await flow.call('submit-quality-review',{report:gate});
+ assert.equal(rawQuality({action:'ai-provenance',project,aiGenerated:false,sessionId:'governed-release',summary:'Relocated governance scenario'}).status,'PASS');
+ assert.equal(rawQuality({action:'pre-pr-check',project}).status,'PASS');
+ console.log('PASS: release marketplace, 22 skills, discovery, governed extension, approval-bound review, relocated quality CLI and UTF-8 PRD review.');
 } finally {await rm(temp,{recursive:true,force:true});}

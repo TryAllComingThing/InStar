@@ -11,7 +11,7 @@ test('friendly CLI parses quality commands and verify profiles',async()=>{
     assert.deepEqual(await parseFriendlyArgs(['snapshot','--project','.'],project),{action:'snapshot',project});
     assert.equal((await parseFriendlyArgs(['verify','--profile','commit'],project)).profile,'commit');
     assert.equal((await parseFriendlyArgs(['verify','--profile','full','--risk','L2'],project)).riskLevel,'L2');
-  } finally {await rm(project,{recursive:true,force:true});}
+  } finally {await rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
 });
 
 test('review CLI reads either a direct review object or a wrapped review object',async()=>{
@@ -24,7 +24,7 @@ test('review CLI reads either a direct review object or a wrapped review object'
     assert.equal((await parseFriendlyArgs(['review','--review-file','review.json','--risk','L2'],dir)).riskLevel,'L2');
     await writeFile(file,JSON.stringify(review));
     assert.deepEqual((await parseFriendlyArgs(['review','--review-file','review.json'],dir)).review,review);
-  } finally {await rm(dir,{recursive:true,force:true});}
+  } finally {await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
 });
 
 test('CI CLI requires a phase and explicit publish confirmation',async()=>{
@@ -36,7 +36,7 @@ test('CI CLI requires a phase and explicit publish confirmation',async()=>{
     await assert.rejects(parseFriendlyArgs(['ci','publish','--title','feat: demo'],dir),/requires --confirm/);
     const publish=await parseFriendlyArgs(['ci','publish','--title','feat: demo','--confirm'],dir);
     assert.equal(publish.authorization,'User explicitly confirmed via InStar CLI');
-  } finally {await rm(dir,{recursive:true,force:true});}
+  } finally {await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
 });
 
 test('friendly CLI rejects ignored flags, missing values, and conflicting PR bodies',async()=>{

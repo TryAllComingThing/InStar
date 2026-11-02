@@ -18,14 +18,14 @@ test('CLI reports usage and malformed JSON as JSON errors with nonzero exit',()=
 });
 test('CLI starts a workflow in an existing project',async t=>{
  const temp=await mkdtemp(path.join(tmpdir(),'instar-cli-'));
- t.after(()=>rm(temp,{recursive:true,force:true}));
+ t.after(()=>rm(temp,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
  const result=invoke(['-'],JSON.stringify({action:'start',project:temp,changeId:'cli-check',document:'# PRD\nCLI workflow.'}));
  assert.equal(result.status,0,result.stderr);
  assert.equal(JSON.parse(result.stdout).changeId,'cli-check');
 });
 test('shared CLI readers stop after the configured byte limit',async t=>{
  const temp=await mkdtemp(path.join(tmpdir(),'instar-bounded-'));
- t.after(()=>rm(temp,{recursive:true,force:true}));
+ t.after(()=>rm(temp,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
  const file=path.join(temp,'oversized.json');
  await writeFile(file,Buffer.alloc(MAX_JSON_INPUT_BYTES+1,0x20));
  await assert.rejects(readBoundedFile(file),/Input exceeds 8388608 byte limit/);

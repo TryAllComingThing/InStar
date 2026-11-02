@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scope": [
+    "."
+  ],
+  "coverage": {
+    "read": [
+      "AGENTS.md",
+      "TASK.md",
+      "docs/api.md",
+      "src/orders/handler.mjs",
+      "src/orders/index.mjs",
+      "test/orders.test.mjs"
+    ],
+    "unread": [],
+    "excluded": [],
+    "limitations": [
+      "Only the isolated directory was inspected; no production or HTTP service evidence."
+    ]
+  },
+  "domains": [
+    {
+      "name": "security-runtime",
+      "status": "observed",
+      "reason": "All visible inputs inspected; absent production guarantees remain unknown."
+    }
+  ],
+  "findings": [
+    {
+      "id": "SEC-001",
+      "domain": "security-runtime",
+      "status": "observed",
+      "statement": "query.limit crosses an external-input boundary without contract validation. A null or undefined query causes property-access failure. No networking, secrets, tenancy, timeouts, retries, cancellation, logs or deployment configuration is visible; runtime guarantees are unknown. UI is NA in this isolated project because no views or components exist.",
+      "scope": [
+        "src/orders/handler.mjs"
+      ],
+      "sources": [
+        {
+          "path": "src/orders/handler.mjs",
+          "startLine": 1,
+          "endLine": 1,
+          "excerpt": "export function listOrders(query){const limit=Number(query.limit??20);return {items:[],limit};}"
+        }
+      ],
+      "counterexamples": [],
+      "confidence": "high",
+      "rationale": "Visible source or explicit contract only; no claim of human approval.",
+      "verification": {
+        "method": "review and node:test",
+        "command": "node --test test/orders.test.mjs",
+        "result": "pass: 1 test; only default limit covered"
+      }
+    }
+  ]
+}

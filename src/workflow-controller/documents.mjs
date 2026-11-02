@@ -3,6 +3,8 @@ import {discoverSpecFiles} from '../openspec-min/src/utils/spec-discovery.js';
 import {instructions} from '../openspec-min/src/engine/schema/index.js';
 import {buildCodeFenceMask} from '../openspec-min/src/diff/parsers/code-fence.js';
 import {resolveTokenSources} from '../shared/token-sources.mjs';
+import {baselineContext} from '../shared/project-baseline.mjs';
+import {reuseContext} from '../shared/code-reuse.mjs';
 export async function specs(root){const result={};for(const item of await discoverSpecFiles(root))result[item.id]=await fs.readFile(item.specFile,'utf8');return result;}
 export const changeDir=(root,id)=>safe(root,'planning','changes',id);
 export async function prd(root,state){return read(root,state.prdPath);}
@@ -16,7 +18,7 @@ export function taskItems(document){const lines=document.split('\n'),mask=buildC
 export async function approvalHash(root,state,kind){
  if(kind==='prd')return hash(await prd(root,state));
  if(kind==='spec')return hash(await specBundle(root,state));
- if(kind==='implementation')return hash(await planBundle(root,state));
+ if(kind==='implementation')return hash({plan:await planBundle(root,state),baseline:(await baselineContext(root,state.affectedPaths||[])).fingerprint,reusePlan:state.reuseDecisions||[],designReuseHash:state.designReuseHash??null});
  if(kind==='acceptance')return hash({plan:await planBundle(root,state),tasks:await read(changeDir(root,state.changeId),'tasks.md'),verification:state.verification,taskEvidence:state.taskEvidence});
  throw Error('Unknown approval kind');
 }
@@ -44,6 +46,10 @@ export async function generationContext(root,state){
   if(state.stage==='tasks'&&state.designInStarReferencesHash!==context.instarReferences.fingerprint)throw Error('InStar reference guidance changed after technical design; reopen design and review it again');
   if(state.stage==='tasks')context.technicalDesign=await technicalDesign(root,changeDir(root,state.changeId));
  }else throw Error('Generation context is available only in spec, design or tasks stage');
+ context.projectBaseline=await baselineContext(root,state.affectedPaths||[]);
+ context.codeReuse=await reuseContext(root);
+ if(state.stage==='tasks'&&(state.designReuseHash??null)!==context.codeReuse.fingerprint)throw Error('Capability sources changed; reopen design');
+ if(state.stage==='tasks'&&(state.designBaselineHash??null)!==context.projectBaseline.fingerprint)throw Error('Project baseline changed; reopen design');
  return {stage:state.stage,context,contextHash:hash({project:root,changeId:state.changeId,version:state.version,context})};
 }
 async function instarReferences(files){

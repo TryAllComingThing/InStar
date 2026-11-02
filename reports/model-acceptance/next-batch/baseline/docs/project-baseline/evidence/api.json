@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "scope": [
+    "."
+  ],
+  "coverage": {
+    "read": [
+      "AGENTS.md",
+      "TASK.md",
+      "docs/api.md",
+      "src/orders/handler.mjs",
+      "src/orders/index.mjs",
+      "test/orders.test.mjs"
+    ],
+    "unread": [],
+    "excluded": [],
+    "limitations": [
+      "Only the isolated directory was inspected; no production or HTTP service evidence."
+    ]
+  },
+  "domains": [
+    {
+      "name": "api",
+      "status": "conflict",
+      "reason": "All visible inputs inspected; absent production guarantees remain unknown."
+    }
+  ],
+  "findings": [
+    {
+      "id": "API-001",
+      "domain": "api",
+      "status": "conflict",
+      "statement": "The authoritative API document specifies GET /orders returning {items, limit}, an integer limit from 1 to 100, and INVALID_LIMIT for invalid values. The implementation only converts with Number: direct calls accept 0, 101, 1.5 and NaN. This is a contract conflict. HTTP routing, status codes, authorization and service integration remain unknown. Proposed follow-up: define error mapping, then implement validation and tests; no implementation is changed here.",
+      "scope": [
+        "docs/api.md"
+      ],
+      "sources": [
+        {
+          "path": "docs/api.md",
+          "startLine": 2,
+          "endLine": 2,
+          "excerpt": "GET /orders returns {items, limit}. Limit must be an integer from 1 to 100; invalid values return INVALID_LIMIT."
+        },
+        {
+          "path": "src/orders/handler.mjs",
+          "startLine": 1,
+          "endLine": 1,
+          "excerpt": "export function listOrders(query){const limit=Number(query.limit??20);return {items:[],limit};}"
+        }
+      ],
+      "counterexamples": [
+        {
+          "path": "src/orders/handler.mjs",
+          "startLine": 1,
+          "endLine": 1,
+          "excerpt": "export function listOrders(query){const limit=Number(query.limit??20);return {items:[],limit};}"
+        }
+      ],
+      "confidence": "high",
+      "rationale": "Visible source or explicit contract only; no claim of human approval.",
+      "verification": {
+        "method": "review and node:test",
+        "command": "node --test test/orders.test.mjs",
+        "result": "pass: 1 test; only default limit covered"
+      }
+    }
+  ]
+}

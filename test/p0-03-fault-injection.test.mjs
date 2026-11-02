@@ -1,3 +1,4 @@
+import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
@@ -11,10 +12,10 @@ const cli=new URL('../runtime/workflow-controller/cli.mjs',import.meta.url);
 const confirmation={text:'Approved by FI fixture',source:'human FI test'};
 
 async function fixture(t,name){
- const project=await mkdtemp(path.join(os.tmpdir(),`instar-fi-${name}-`));t.after(()=>rm(project,{recursive:true,force:true}));return project;
+ const project=await mkdtemp(path.join(os.tmpdir(),`instar-fi-${name}-`));t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));return project;
 }
 function fresh(project,input){
- const result=spawnSync(process.execPath,[cli.pathname,'-'],{cwd:project,input:JSON.stringify({project,...input}),encoding:'utf8'});
+ const result=spawnSync(process.execPath,[fileURLToPath(cli),'-'],{cwd:project,input:JSON.stringify({project,...input}),encoding:'utf8'});
  return {result,value:result.stdout?JSON.parse(result.stdout):null,error:result.stderr?JSON.parse(result.stderr):null};
 }
 const questions={action:'request-clarification',questions:[{id:'roles',question:'Which roles?'},{id:'data',question:'Which data?'}]};
@@ -40,7 +41,7 @@ test('FI-03 approval state write failure rolls back atomically',async t=>{
  const project=await fixture(t,'fi03');let state;
  const call=async(action,extra={})=>{const result=await run({project,changeId:'fi03',action,expectedVersion:state?.version,...extra});if(result.version!==undefined)state=result;return result;};
  await call('start',{document:'# PRD\nSearch.'});await call('submit-prd');const before=JSON.parse(JSON.stringify(state));const original=workflowFs.rename;let injected=false;
- workflowFs.rename=async(from,to)=>{if(!injected&&to.endsWith('/planning/workflows/fi03.json')){injected=true;throw Error('Injected approval state write failure');}return original(from,to);};
+ workflowFs.rename=async(from,to)=>{if(!injected&&to.endsWith(path.join('planning','workflows','fi03.json'))){injected=true;throw Error('Injected approval state write failure');}return original(from,to);};
  try{await assert.rejects(call('approve',{reviewHash:state.pendingReview.hash,confirmation}),/Injected approval state write failure/);}finally{workflowFs.rename=original;}
  const recovered=await run({project,changeId:'fi03',action:'state'});assert.equal(recovered.version,before.version);assert.equal(recovered.pendingApproval,'prd');assert.deepEqual(recovered.approvals,before.approvals);assert.equal(await readFile(path.join(project,'.workflow/pending.json')).catch(e=>e.code),'ENOENT');
  const transactions=await (await import('node:fs/promises')).readdir(path.join(project,'.workflow/transactions'));assert.ok(transactions.length);let journal=null;for(const id of transactions){try{const candidate=JSON.parse(await readFile(path.join(project,'.workflow/transactions',id,'result.json')));if(candidate.status==='rolled-back')journal=candidate;}catch{}}assert.equal(journal?.status,'rolled-back');

@@ -62,3 +62,7 @@ L3 变更还必须满足项目 `riskPolicy.l3` 的人工 Reviewer 角色要求�
 项目配置或发现的设计文档中的 UI 约束由 `design-lint` 适配器检查。本 Skill 不内置项目设计规则。若 `.instar-quality.json` 配置 `tools.architecture`，运行该项目架构检查脚本并要求成功；未配置时明确标记为 INFO，不能声称静态架构检查已通过。AI Review 依据实际提供的 AGENTS、架构/设计文档和 standards 给出路径证据；缺少可选文档时说明来源缺失并依照代码现状审查。AI 评审由当前会话完成；先将完整 Review 交给 quality-gate，再由提交 Hook 在离线环境复核工具结果。
 
 若 `.instar-quality.json` 配置 `tools.security`，它必须指向项目 `package.json` 中的安全扫描脚本，并在 `frontend-verify full` 执行；脚本缺失、失败、超时或验证期间源码变化均阻断。未配置时 `doctor` 报 INFO，不声称扫描通过。项目若要求安全扫描，应在 CI 将对应实际 GitHub check 配入 `ci.requiredChecks`；不要把本地脚本存在等同于远端 required check。仅运行项目已选择的工具，不自动下载工具、不上传源码、不自动修复发现项。
+
+When projectBaseline or docs/project-baseline/rules.json exists, follow the [baseline rule protocol](../project-discover/references/baseline-registry.md). Read applicable domain documents on demand, cite rule IDs and provide ruleReferences for planning or Review submissions. Existing verification commands supply actual automated evidence; extracted guidance does not execute itself.
+
+For Code Reuse & Shared Capability Governance, follow [reuse discovery](../reuse-discover/SKILL.md) and its protocol. Search existing capabilities before adding implementations, preserve module boundaries, justify local-new or shared extraction, and review duplication and abstraction costs. Governance is optional and project-owned tests remain required evidence.

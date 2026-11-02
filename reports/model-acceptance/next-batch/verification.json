@@ -1,0 +1,457 @@
+{
+  "generatedAt": "2026-11-02T09:06:47.347Z",
+  "modelIdentity": "Independent Codex subagent invocations; exact model/version not exposed to evaluator",
+  "nodeVersion": "v22.22.0",
+  "status": "PASS",
+  "scope": "Deterministic artifact and source checks; semantic decisions evaluated separately in report.md, not human product acceptance",
+  "skillSnapshots": [
+    {
+      "skill": "project-discover",
+      "sha256": "dba7ae7a2970df5b96ef3e8ffa1019830f03d4ef7a5ec0c41fe83b4bf4c21353",
+      "timing": "Evaluation-time snapshot after corrective guidance updates; exact initial invocation snapshot was not captured"
+    },
+    {
+      "skill": "reuse-discover",
+      "sha256": "0e917cbe36434cb5a77bfab9049bcc5bb6503d8894085083f797f84c3990927e",
+      "timing": "Evaluation-time snapshot after corrective guidance updates; exact initial invocation snapshot was not captured"
+    }
+  ],
+  "checks": [
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "AGENTS.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "src/network/index.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "src/network/request.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "src/network/internal/headers.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "src/orders/list.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "src/billing/formatAmount.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "src/settlement/formatAmount.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "test/requests.test.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "reuse-core",
+      "file": "TASK.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "baseline",
+      "file": "AGENTS.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "baseline",
+      "file": "docs/api.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "baseline",
+      "file": "src/orders/handler.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "baseline",
+      "file": "src/orders/index.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "baseline",
+      "file": "test/orders.test.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "baseline",
+      "file": "TASK.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "incremental",
+      "file": "AGENTS.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "incremental",
+      "file": "src/orders/index.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "incremental",
+      "file": "src/orders/search.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "incremental",
+      "file": "src/date.mjs",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "incremental",
+      "file": "docs/project-baseline/capabilities/date.md",
+      "passed": true
+    },
+    {
+      "check": "original-source-preserved",
+      "project": "incremental",
+      "file": "TASK.md",
+      "passed": true
+    },
+    {
+      "check": "disabled-valid-index-with-current-hashes",
+      "project": "reuse-core",
+      "passed": true
+    },
+    {
+      "check": "disabled-valid-index-with-current-hashes",
+      "project": "incremental",
+      "passed": true
+    },
+    {
+      "check": "unrelated-capability-preserved",
+      "passed": true
+    },
+    {
+      "check": "readable-domain-output",
+      "domain": "architecture",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "ARCH-001",
+      "passed": true
+    },
+    {
+      "check": "readable-domain-output",
+      "domain": "domain",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "DOMAIN-001",
+      "passed": true
+    },
+    {
+      "check": "readable-domain-output",
+      "domain": "api",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "API-001",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "API-001",
+      "passed": true
+    },
+    {
+      "check": "readable-domain-output",
+      "domain": "database",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "DB-001",
+      "passed": true
+    },
+    {
+      "check": "readable-domain-output",
+      "domain": "coding",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "CODE-001",
+      "passed": true
+    },
+    {
+      "check": "readable-domain-output",
+      "domain": "security-runtime",
+      "passed": true
+    },
+    {
+      "check": "exact-evidence-excerpt",
+      "id": "SEC-001",
+      "passed": true
+    },
+    {
+      "check": "existing-fixture-test",
+      "project": "reuse-core",
+      "passed": true
+    },
+    {
+      "check": "existing-fixture-test",
+      "project": "baseline",
+      "passed": true
+    },
+    {
+      "check": "contract-conflict-reproduced",
+      "passed": true
+    }
+  ],
+  "testRuns": [
+    {
+      "project": "reuse-core",
+      "command": "node --test test/requests.test.mjs",
+      "exitCode": 0,
+      "output": "TAP version 13\n# Subtest: orders use public request contract\nok 1 - orders use public request contract\n  ---\n  duration_ms: 0.9489\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 89.4366\n",
+      "stderr": ""
+    },
+    {
+      "project": "baseline",
+      "command": "node --test test/orders.test.mjs",
+      "exitCode": 0,
+      "output": "TAP version 13\n# Subtest: default limit\nok 1 - default limit\n  ---\n  duration_ms: 0.5083\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 76.754\n",
+      "stderr": ""
+    },
+    {
+      "project": "baseline",
+      "command": "evaluator probe of invalid limits at public module entry",
+      "exitCode": 0,
+      "output": "[{\"input\":\"0\",\"actual\":\"0\"},{\"input\":\"101\",\"actual\":\"101\"},{\"input\":\"1.5\",\"actual\":\"1.5\"},{\"input\":\"abc\",\"actual\":\"NaN\"}]\n",
+      "stderr": ""
+    }
+  ],
+  "artifactHashes": [
+    {
+      "path": "baseline/AGENTS.md",
+      "sha256": "6f1da6cab65c935dde10fc165bf0b96522947d07b0b897a155b50ccb0f128c45"
+    },
+    {
+      "path": "baseline/docs/api.md",
+      "sha256": "be7af1126545504489e5e386425805658f2211e3ac0f9883b4ec073716eaa4a0"
+    },
+    {
+      "path": "baseline/docs/project-baseline/api.md",
+      "sha256": "e8f2b7603fb65f315a598f0f047a5dd5b453dd7a71c2df127e140c8e9dabe9ea"
+    },
+    {
+      "path": "baseline/docs/project-baseline/architecture.md",
+      "sha256": "11ab5724ed426b3e3b2f974418dfe5b9a5c9591c6ab68ca2d8a96cf19427f057"
+    },
+    {
+      "path": "baseline/docs/project-baseline/coding.md",
+      "sha256": "d38cfbb72e8c6e8efbe67923744f29a32030e37050a2fb11633a4311af639c5a"
+    },
+    {
+      "path": "baseline/docs/project-baseline/collection.md",
+      "sha256": "ebdfcae76bc5121a745293f19575649e3c3b1ae96c691555d8593b7b7dc69401"
+    },
+    {
+      "path": "baseline/docs/project-baseline/database.md",
+      "sha256": "4b1c68a9f8bbd8c6659b5dba29c923bfc9ec955a7015b62b18782af35bb6e012"
+    },
+    {
+      "path": "baseline/docs/project-baseline/domain.md",
+      "sha256": "b27821c19790d7f24933282848f8fdf149a88f804a1a7dd2b7a5e889ca2bc557"
+    },
+    {
+      "path": "baseline/docs/project-baseline/evidence/api.json",
+      "sha256": "0aba16634dcb5c580d22b3a246c432a70cda7d7f442de4bc3110e8b188a0d5ca"
+    },
+    {
+      "path": "baseline/docs/project-baseline/evidence/architecture.json",
+      "sha256": "9cb5c8c4cac8e8147e2db487c091cf9832ff218d24dd4ba682a497ec9ee15d35"
+    },
+    {
+      "path": "baseline/docs/project-baseline/evidence/coding.json",
+      "sha256": "a491da5f180b3d69a61632a1fbb1c217c14c9c6baa933392322dce1858e89f7e"
+    },
+    {
+      "path": "baseline/docs/project-baseline/evidence/database.json",
+      "sha256": "15f6f042ebcf3ab9822ac4a7aea6c00192c6d36cf7e9da497f771c9d5260d372"
+    },
+    {
+      "path": "baseline/docs/project-baseline/evidence/domain.json",
+      "sha256": "3d2de1a42da83da884d36c06381d08b18287597f4398c2b04591da081a6f7922"
+    },
+    {
+      "path": "baseline/docs/project-baseline/evidence/security-runtime.json",
+      "sha256": "fd8c3fadcfb5c973797192867470cad703dfcf3517aca8bd5f18f8e2952a46a4"
+    },
+    {
+      "path": "baseline/docs/project-baseline/INDEX.md",
+      "sha256": "775e44b4eb3a7515edfd002bca82847fea50ee1c504d223dc9b951aed75e5253"
+    },
+    {
+      "path": "baseline/docs/project-baseline/security-runtime.md",
+      "sha256": "b7d6208a31059d0fd82781cb893a595605f302843e36880b6e47caea4f80d713"
+    },
+    {
+      "path": "baseline/src/orders/handler.mjs",
+      "sha256": "5b8693500745ab42e342f91b9d85ea50b3ccc78bfdc05c1a7dae1cc3df58712b"
+    },
+    {
+      "path": "baseline/src/orders/index.mjs",
+      "sha256": "877fc86884b076471b687d8e8018731c8efbd02737ecf167a6aee2d95658ca21"
+    },
+    {
+      "path": "baseline/TASK.md",
+      "sha256": "5a3d98086730a0244649e0ff95f3c426f271cd558f3bb66a44d86c4b774391d9"
+    },
+    {
+      "path": "baseline/test/orders.test.mjs",
+      "sha256": "c41b398e9d5ebfc155f47f11e473f919c66b3f72636d33c8cff9c2b538e9aee2"
+    },
+    {
+      "path": "incremental/AGENTS.md",
+      "sha256": "45b46cc5051359c92a1c42f299b197ffd691d9f6c332ffda74380e57cca0c40c"
+    },
+    {
+      "path": "incremental/docs/project-baseline/capabilities/date.md",
+      "sha256": "d2c44db79d1594416c92919ba205f3fdd55bfdca398af091f27223427f02c628"
+    },
+    {
+      "path": "incremental/docs/project-baseline/capabilities/index.json",
+      "sha256": "eba5b23ff355b1d3c23674c7302149c567a5a58a1f34a41ff42eaf16ef39f046"
+    },
+    {
+      "path": "incremental/docs/project-baseline/capabilities/INDEX.md",
+      "sha256": "697805ab7546f7bb12c5be9bee8a43b60cdf76e46b490548030035ca36e481a6"
+    },
+    {
+      "path": "incremental/docs/project-baseline/capabilities/orders.md",
+      "sha256": "035a5f170bfb4a9fee7ca23fc6f48e7da36c0357bbe9732393b2c549c50e4b6c"
+    },
+    {
+      "path": "incremental/src/date.mjs",
+      "sha256": "a32c9f412b273d6715a49ec788161403844fe4c02e57b2fefa0f153eb30a8f3c"
+    },
+    {
+      "path": "incremental/src/orders/index.mjs",
+      "sha256": "616adaeec31c3015002e9ad2eebe4c765bea1e11e4536e621df2c0b92da2d1eb"
+    },
+    {
+      "path": "incremental/src/orders/search.mjs",
+      "sha256": "fef0b7c7dba4ac5c872c41ff851b69ad2e7e517d1529d32f38ce3a9d83f55e4c"
+    },
+    {
+      "path": "incremental/TASK.md",
+      "sha256": "cb92b74c88618bc3e7b94c6861e7e1ffee629f9da4dc7605bc80752c8640ac4e"
+    },
+    {
+      "path": "initial-failures.json",
+      "sha256": "9cc876a6603fe6e9e2d9345619d281cdc3129edd6d9c58a66b9d5156226dde8f"
+    },
+    {
+      "path": "report.md",
+      "sha256": "24e875d0dfeff0965357d7f3893968cc36ea91e82558603094ffd78ea512045f"
+    },
+    {
+      "path": "reuse-core/AGENTS.md",
+      "sha256": "9d43488dfacdd0057f08def14a3d5071d8ae070aebc6797f8518d244b809d3c4"
+    },
+    {
+      "path": "reuse-core/docs/project-baseline/capabilities/amounts.md",
+      "sha256": "8cd0d86d2ee70c6d0c191bfd23294fbf60696d7ea767983380bb5739bc3dc86d"
+    },
+    {
+      "path": "reuse-core/docs/project-baseline/capabilities/index.json",
+      "sha256": "1a247686b8619c6d026ce0fb22c5774b564dc622d50cae80f03c9d295d58ac1d"
+    },
+    {
+      "path": "reuse-core/docs/project-baseline/capabilities/INDEX.md",
+      "sha256": "d7288cab853ac0652ae423460ec07b9e7308d0ce1ffcace893f56c4ab8a22e39"
+    },
+    {
+      "path": "reuse-core/docs/project-baseline/capabilities/network.md",
+      "sha256": "2d2de1a5943b2618d424b6e53ed34dac48f16fc4d62d3798c25eb5e014525b78"
+    },
+    {
+      "path": "reuse-core/docs/project-baseline/capabilities/orders.md",
+      "sha256": "ec9c28fa5b6aca6f9b259313d9f0a815e57fbc3caeb0f223e2df0c077170511a"
+    },
+    {
+      "path": "reuse-core/reuse-review.md",
+      "sha256": "d477a1c1ce30b996285891d312ee1e731ff02c6c8fff538045335ae5141cfb60"
+    },
+    {
+      "path": "reuse-core/src/billing/formatAmount.mjs",
+      "sha256": "22215d58a62959aa1b92f4006a4d6057951eb70fa611b37aaa76ce6e2426d55b"
+    },
+    {
+      "path": "reuse-core/src/network/index.mjs",
+      "sha256": "fbe4afd429eead5cb707ef421903a6f8d9cedbc5058a7a980453991309b1ffa6"
+    },
+    {
+      "path": "reuse-core/src/network/internal/headers.mjs",
+      "sha256": "bf57fa0f9603e23dab68323113770e43e058fe31b00eea854273eef16d75f4a5"
+    },
+    {
+      "path": "reuse-core/src/network/request.mjs",
+      "sha256": "7af87742bf473425f754e872a334b8ac617f7f2b7d57111d14123820b45259b5"
+    },
+    {
+      "path": "reuse-core/src/orders/list.mjs",
+      "sha256": "77488182fe4168dff404b3347e8e5e54b54a3a72125e1df3886f9c1322bccfcd"
+    },
+    {
+      "path": "reuse-core/src/settlement/formatAmount.mjs",
+      "sha256": "aa31b8ee26816021d5011aa0067224c1d3b811305c6e148d4950f7be438e3da7"
+    },
+    {
+      "path": "reuse-core/TASK.md",
+      "sha256": "14845d264bceb550525bc3ea74a36ff1a371b98aa85ff373babfbab2df8b8722"
+    },
+    {
+      "path": "reuse-core/technical-design.md",
+      "sha256": "88abbce4e86866bb8fc34d2cbec5144ff9b484e66f7eef734f15470c8e1a4029"
+    },
+    {
+      "path": "reuse-core/test/requests.test.mjs",
+      "sha256": "ee4494e9648c9ad0c558ef41a844480c26af029958caa26767f7690cc2792475"
+    },
+    {
+      "path": "source-manifest.json",
+      "sha256": "f2fe083e7525149d06e6ca4e9c77459e6b917a5c9231b11a714017217fa47943"
+    }
+  ]
+}

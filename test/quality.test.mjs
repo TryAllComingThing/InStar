@@ -1,3 +1,8 @@
+import {symlinkAvailable} from './symlink-support.mjs';
+import {governedFlow} from './helpers/governed-flow.mjs';
+import {run as workflowRun} from '../runtime/workflow-controller/index.mjs';
+import * as reuseApi from '../runtime/shared/code-reuse.mjs';
+import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,mkdir,rm,symlink,access,readdir} from 'node:fs/promises';
@@ -20,7 +25,7 @@ function qualityPolicyFor(commit,full){
  }};
 }
 async function fixture(t) {
- const project=await mkdtemp(path.join(os.tmpdir(),'instar-quality-'));t.after(()=>rm(project,{recursive:true,force:true}));
+ const project=await mkdtemp(path.join(os.tmpdir(),'instar-quality-'));t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
  const git=(...args)=>{const r=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout;};
  git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','InStar test');
  const commitChecks=['lint','typecheck','dependencies'],fullChecks=['lint','typecheck','test','build','dependencies','vite-build'];
@@ -35,6 +40,19 @@ async function fixture(t) {
  const review=async()=>({reviewer:'test-fixture',fingerprint:(await call('snapshot')).fingerprint,checks:reviewItems.map(id=>({id,status:'PASS',evidence:'Isolated orchestration fixture, not a real product review'}))});
  return {project,git,pkg,call,review};
 }
+test('enabled baseline and reuse flow extends, reviews and passes pre-PR',async t=>{
+ const f=await fixture(t),flow=await governedFlow(f.project,workflowRun,reuseApi);
+ assert.equal((await f.call('local-verify')).status,'PASS');
+ const review={...await f.review(),ruleReferences:flow.ruleReferences,reuseReview:flow.reuseReview};
+ for(const warned of [{...review,ruleReferences:review.ruleReferences.map(r=>({...r,status:'WARN'}))},{...review,reuseReview:{...review.reuseReview,checks:review.reuseReview.checks.map((r,i)=>i?r:{...r,status:'WARN'})}},{...review,checks:review.checks.map((r,i)=>i?r:{...r,status:'WARN'})}]){
+  assert.equal((await f.call('quality-gate',{review:warned})).status,'WARN');assert.equal(JSON.parse(await readFile(path.join(f.project,'reports/unified-quality.json'),'utf8')).status,'WARN');
+ }
+ await assert.rejects(f.call('quality-gate',{review:{...review,reuseReview:{...review.reuseReview,planHash:'old'}}}),/stale/);
+ const gate=await f.call('quality-gate',{review});assert.equal(gate.status,'PASS');await flow.call('submit-quality-review',{report:gate});
+ await f.call('ai-provenance',{aiGenerated:false,sessionId:'governed-flow',summary:'Governed extension test'});
+ assert.equal((await f.call('pre-pr-check')).status,'PASS');
+});
+
 test('full pipeline accepts current evidence and blocks changed code or staging',async t=>{
  const f=await fixture(t);assert.equal((await f.call('local-verify')).status,'PASS');assert.equal((await f.call('quality-gate',{review:await f.review()})).status,'PASS');
  await f.call('ai-provenance',{aiGenerated:true,sessionId:'test',summary:'Fixture validation'});
@@ -45,7 +63,7 @@ test('full pipeline accepts current evidence and blocks changed code or staging'
  await assert.rejects(f.call('pre-pr-check'),/stale/);
 });
 test('zero-config discovery does not create project configuration and keeps strict gates unavailable',async t=>{
- const project=await mkdtemp(path.join(os.tmpdir(),'instar-zero-config-'));t.after(()=>rm(project,{recursive:true,force:true}));
+ const project=await mkdtemp(path.join(os.tmpdir(),'instar-zero-config-'));t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
  const git=(...args)=>{const result=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);return result.stdout;};
  git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','InStar test');
  await writeFile(path.join(project,'package.json'),JSON.stringify({dependencies:{vue:'3.5.0'},scripts:{test:'node -e "process.exit(0)"'}}));
@@ -256,10 +274,12 @@ test('schema 3 blocks missing executables and symlink working directories',async
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};config.qualityPolicy=qualityPolicyFor(['check'],['check']);
  config.tools.checks={check:{command:'instar-test-command-that-does-not-exist',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  let result=await f.call('engineering-verify',{profile:'commit'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].error,'ENOENT');assert.equal(result.checks[0].result,'SPAWN_ERROR');
+ await t.test('symlink cwd is rejected',async t=>{if(!await symlinkAvailable(t))return;
  await mkdir(path.join(f.project,'actual-cwd'));await symlink(path.join(f.project,'actual-cwd'),path.join(f.project,'linked-cwd'));
  config.tools.checks.check={command:process.execPath,args:['-e','process.exit(0)'],cwd:'linked-cwd'};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/Symlink forbidden/);
  result=JSON.parse(await readFile(path.join(f.project,'reports/engineering-verify-commit.json'),'utf8'));assert.equal(result.status,'BLOCK');
+ });
 });
 test('verification evidence is sealed and re-verification invalidates prior review',async t=>{
  const f=await fixture(t);await f.call('local-verify');await f.call('quality-gate',{review:await f.review()});await f.call('ai-provenance',{aiGenerated:false,sessionId:'evidence',summary:'Evidence chain test'});assert.equal((await f.call('pre-pr-check')).status,'PASS');
@@ -279,8 +299,10 @@ test('T12-A/B/C missing or symlinked evidence is rejected',async t=>{
  const rawPath=path.join(f.project,'reports/frontend-verify-full.json'),unifiedPath=path.join(f.project,'reports/unified-quality.json');
  const raw=JSON.parse(await readFile(rawPath,'utf8'));await rm(rawPath);await assert.rejects(f.call('pre-pr-check'),/Missing verification report/);
  await f.call('local-verify');await rm(unifiedPath);await assert.rejects(f.call('pre-pr-check'),/Missing unified quality report/);
- await f.call('local-verify');await f.call('quality-gate',{review:await f.review()});const restored=JSON.parse(await readFile(rawPath,'utf8'));const unified=JSON.parse(await readFile(unifiedPath,'utf8'));const outside=await mkdtemp(path.join(os.tmpdir(),'instar-evidence-'));t.after(()=>rm(outside,{recursive:true,force:true}));const link='reports/evidence-link.json';
+ await f.call('local-verify');await f.call('quality-gate',{review:await f.review()});const restored=JSON.parse(await readFile(rawPath,'utf8'));const unified=JSON.parse(await readFile(unifiedPath,'utf8'));const outside=await mkdtemp(path.join(os.tmpdir(),'instar-evidence-'));t.after(()=>rm(outside,{recursive:true,force:true,maxRetries:20,retryDelay:100}));const link='reports/evidence-link.json';
+ await t.test('linked evidence',async t=>{if(!await symlinkAvailable(t))return;
  restored.checks=restored.checks.map(check=>({...check,evidencePath:link}));unified.profiles.full.checks=restored.checks;await writeFile(rawPath,JSON.stringify(reseal(restored)));await writeFile(unifiedPath,JSON.stringify(reseal(unified)));await symlink(path.join(outside,'missing.json'),path.join(f.project,link));await assert.rejects(f.call('pre-pr-check'),/Symlink|integrity|evidence/);
+ });
 });
 test('T13-A/B/C review and provenance evidence cannot be reused',async t=>{
  const f=await fixture(t);await f.call('local-verify');await assert.rejects(f.call('pre-pr-check'),/quality-gate|Review/);
@@ -300,7 +322,7 @@ test('T15 timeout and spawn failures are BLOCK with infrastructure results',asyn
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};config.qualityPolicy=qualityPolicyFor(['check'],['check']);config.tools.checks={check:{command:'missing-t15-command',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));let result=await f.call('engineering-verify',{profile:'full'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].result,'SPAWN_ERROR');config.tools.checks.check={command:process.execPath,args:['-e','setTimeout(()=>{},5000)'],timeoutMs:50};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));result=await f.call('engineering-verify',{profile:'full'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].result,'TIMEOUT');
 });
 test('quality CLI returns non-zero for FAIL as well as BLOCK',async t=>{
- const f=await fixture(t);f.pkg.scripts.lint='node -e "process.exit(2)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));const failed=spawnSync(process.execPath,[qualityCli.pathname,'-'],{input:JSON.stringify({project:f.project,action:'frontend-verify',profile:'commit'}),encoding:'utf8'});assert.equal(failed.status,1);assert.equal(JSON.parse(failed.stdout).status,'FAIL');
+ const f=await fixture(t);f.pkg.scripts.lint='node -e "process.exit(2)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));const failed=spawnSync(process.execPath,[fileURLToPath(qualityCli),'-'],{input:JSON.stringify({project:f.project,action:'frontend-verify',profile:'commit'}),encoding:'utf8'});assert.equal(failed.status,1);assert.equal(JSON.parse(failed.stdout).status,'FAIL');
 });
 test('T16 same-snapshot re-verification invalidates old review evidence',async t=>{
  const f=await fixture(t);await preparePrEvidence(f);assert.equal((await f.call('pre-pr-check')).status,'PASS');await f.call('local-verify');await assert.rejects(f.call('pre-pr-check'),/Review evidence missing|failed|stale/);
@@ -328,9 +350,11 @@ test('session audit records supplied facts without inventing project context; sy
  const c=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));c.context={sessionState:'.instar/session/PROJECT_STATE.md',lessons:'.instar/session/LESSONS.md'};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(c));
  const optedIn=await f.call('session-close',{summary:'Explicitly configured state',lessons:'Evidence: fixture behavior'});assert.equal(optedIn.contextUpdated.length,2);
  assert.match(await readFile(path.join(f.project,'.instar/session/PROJECT_STATE.md'),'utf8'),/Explicitly configured state/);assert.match(await readFile(path.join(f.project,'.instar/session/LESSONS.md'),'utf8'),/Evidence: fixture behavior/);
- const outside=await mkdtemp(path.join(os.tmpdir(),'instar-outside-'));t.after(()=>rm(outside,{recursive:true,force:true}));
- await rm(path.join(f.project,'reports'),{recursive:true,force:true});await symlink(outside,path.join(f.project,'reports'));
+ const outside=await mkdtemp(path.join(os.tmpdir(),'instar-outside-'));t.after(()=>rm(outside,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
+ await t.test('linked reports',async t=>{if(!await symlinkAvailable(t))return;
+ await rm(path.join(f.project,'reports'),{recursive:true,force:true,maxRetries:20,retryDelay:100});await symlink(outside,path.join(f.project,'reports'));
  await assert.rejects(f.call('local-verify'),/Symlink/);
+ });
 });
 test('project architecture and design documents are optional, configurable fingerprint inputs',async t=>{
  const f=await fixture(t);let report=await f.call('doctor');assert.equal(report.checks.find(c=>c.id==='context:architecture').status,'INFO');assert.equal(report.checks.find(c=>c.id==='context:design').status,'INFO');
@@ -344,10 +368,14 @@ test('Token sources share secure path validation across doctor and quality snaps
  config.context={tokens:'src/styles/tokens.css'};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  let doctor=await f.call('doctor');assert.equal(doctor.checks.find(c=>c.id==='context:tokens').status,'BLOCK');
  await assert.rejects(f.call('snapshot'),/Invalid project Token source: src\/styles\/tokens\.css \(MISSING\)/);
- await mkdir(path.join(f.project,'src/styles'),{recursive:true});const external=path.join(f.project,'tokens-real.css');await writeFile(external,':root { --color-primary: blue; }');await symlink(external,path.join(f.project,'src/styles/tokens.css'));
+ await mkdir(path.join(f.project,'src/styles'),{recursive:true});const external=path.join(f.project,'tokens-real.css');await writeFile(external,':root { --color-primary: blue; }');
+ await t.test('symlink Token is rejected',async t=>{if(!await symlinkAvailable(t))return;
+ await symlink(external,path.join(f.project,'src/styles/tokens.css'));
  doctor=await f.call('doctor');assert.equal(doctor.checks.find(c=>c.id==='context:tokens').status,'BLOCK');assert.equal(doctor.checks.find(c=>c.id==='context:tokens').paths[0].status,'UNSAFE');
  await assert.rejects(f.call('snapshot'),/Invalid project Token source: src\/styles\/tokens\.css \(UNSAFE\)/);
- await rm(path.join(f.project,'src/styles/tokens.css'));await writeFile(path.join(f.project,'src/styles/tokens.css'),':root { --color-primary: blue; }');
+ await rm(path.join(f.project,'src/styles/tokens.css'));
+ });
+ await writeFile(path.join(f.project,'src/styles/tokens.css'),':root { --color-primary: blue; }');
  doctor=await f.call('doctor');assert.equal(doctor.checks.find(c=>c.id==='context:tokens').status,'PASS');
  const before=(await f.call('snapshot')).fingerprint;await writeFile(path.join(f.project,'src/styles/tokens.css'),':root { --color-primary: navy; }');const after=(await f.call('snapshot')).fingerprint;assert.notEqual(after,before);
 });
@@ -360,17 +388,21 @@ test('legacy organization policy settings do not affect local quality workflow',
 });
 test('commit profile is insufficient for PR; hooks deny missing evidence and allow unrelated commands',async t=>{
  const f=await fixture(t);
- const invoke=command=>{const r=spawnSync(process.execPath,[hook.pathname],{input:JSON.stringify({cwd:f.project,hook_event_name:'PreToolUse',tool_input:{command}}),encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout?JSON.parse(r.stdout):null;};
+ const invoke=command=>{const r=spawnSync(process.execPath,[fileURLToPath(hook)],{input:JSON.stringify({cwd:f.project,hook_event_name:'PreToolUse',tool_input:{command}}),encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout?JSON.parse(r.stdout):null;};
  assert.equal(invoke('git commit -m test').hookSpecificOutput.permissionDecision,'deny');assert.equal(invoke('git status'),null);
  await f.call('local-verify',{profile:'commit'});await f.call('quality-gate',{review:await f.review()});
  assert.equal(invoke('git commit -m test'),null);
  assert.equal(invoke('gh pr create --title test').hookSpecificOutput.permissionDecision,'deny');
  assert.equal(invoke('cd /tmp && git commit -m test').hookSpecificOutput.permissionDecision,'deny');
  assert.equal(invoke('git -C /tmp commit -m test').hookSpecificOutput.permissionDecision,'deny');
+ await f.call('local-verify',{profile:'full'});await f.call('quality-gate',{review:await f.review()});await f.call('ai-provenance',{aiGenerated:false,sessionId:'hook-valid',summary:'Valid PR evidence'});
+ assert.equal((await f.call('pre-pr-check')).status,'PASS');
+ assert.equal(invoke('git -C ../other commit -m test').hookSpecificOutput.permissionDecision,'deny');
+ assert.equal(invoke('gh --repo other/repo pr create').hookSpecificOutput.permissionDecision,'deny');
 });
 test('SessionEnd is inert without an explicit session summary and finalizes one when pending',async t=>{
  const f=await fixture(t);
- const invoke=payload=>{const r=spawnSync(process.execPath,[hook.pathname],{input:JSON.stringify(payload),encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout;};
+ const invoke=payload=>{const r=spawnSync(process.execPath,[fileURLToPath(hook)],{input:JSON.stringify(payload),encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout;};
  const before=await readdir(path.join(f.project,'logs'));assert.equal(invoke({cwd:f.project,hook_event_name:'SessionEnd',session_id:'empty-session'}),'');assert.deepEqual(await readdir(path.join(f.project,'logs')),before);
  await f.call('session-summary',{summary:'Explicit summary',lessons:'Observed evidence',sessionId:'summary-session'});
  assert.equal(invoke({cwd:f.project,hook_event_name:'SessionEnd',session_id:'summary-session'}),'');

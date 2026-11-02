@@ -3,8 +3,11 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {safe,identifier} from '../openspec-min/src/store/index.js';
 export {fs,path,safe,identifier};
+const transactionContext=new AsyncLocalStorage();
+function assertDeclaredWrite(root,relative){const context=transactionContext.getStore();if(context&&context.root===root&&!relative.startsWith('.workflow/')&&!context.writePaths.some(p=>relative===p||relative.startsWith(p+'/')))throw Error(`Write outside transaction write set: ${relative}`);}
 export const pluginRoot=path.resolve(fileURLToPath(new URL('../../',import.meta.url)));
 export const now=()=>new Date().toISOString();
 export function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(`${label} must be a nonempty string`);return v;}
@@ -13,8 +16,8 @@ export async function exists(p){try{await fs.lstat(p);return true;}catch(e){if(e
 export async function read(root,...parts){return fs.readFile(safe(root,...parts),'utf8');}
 export async function json(root,...parts){return JSON.parse(await read(root,...parts));}
 async function ensureSafeParent(root,relative){const parts=relative.split('/').slice(0,-1);let current=root;for(const part of parts){current=safe(current,part);try{const stat=await fs.lstat(current);if(stat.isSymbolicLink()||!stat.isDirectory())throw Error(`Unsafe output path: ${relative}`);}catch(error){if(error.code!=='ENOENT')throw error;await fs.mkdir(current);}}}
-export async function atomic(root,relative,text){const dest=safe(root,relative);await ensureSafeParent(root,relative);const tmp=safe(root,`${relative}.${randomUUID()}.tmp`);try{await fs.writeFile(tmp,text,{flag:'wx'});await fs.rename(tmp,dest);}finally{await fs.rm(tmp,{force:true});}}
-export async function appendJsonl(root,relative,value){const dest=safe(root,relative);await ensureSafeParent(root,relative);try{const stat=await fs.lstat(dest);if(stat.isSymbolicLink()||!stat.isFile())throw Error(`Unsafe output path: ${relative}`);}catch(error){if(error.code!=='ENOENT')throw error;}await fs.appendFile(dest,JSON.stringify(value)+'\n',{encoding:'utf8',flag:'a'});}
+export async function atomic(root,relative,text){assertDeclaredWrite(root,relative);const dest=safe(root,relative);await ensureSafeParent(root,relative);const tmp=safe(root,`${relative}.${randomUUID()}.tmp`);try{await fs.writeFile(tmp,text,{flag:'wx'});await fs.rename(tmp,dest);}finally{await fs.rm(tmp,{force:true});}}
+export async function appendJsonl(root,relative,value){assertDeclaredWrite(root,relative);const dest=safe(root,relative);await ensureSafeParent(root,relative);try{const stat=await fs.lstat(dest);if(stat.isSymbolicLink()||!stat.isFile())throw Error(`Unsafe output path: ${relative}`);}catch(error){if(error.code!=='ENOENT')throw error;}await fs.appendFile(dest,JSON.stringify(value)+'\n',{encoding:'utf8',flag:'a'});}
 export async function putJson(root,relative,data){await atomic(root,relative,JSON.stringify(data,null,2)+'\n');}
 export async function projectRoot(input){
  if(!path.isAbsolute(requireText(input,'project')))throw Error('project must be an explicit absolute path');
@@ -60,16 +63,30 @@ export async function lock(root,action){
  finally{await handle.close();await fs.unlink(file);}
 }
 const trees=['planning','docs/prd'];
-export async function transaction(root,action){
+export async function transaction(root,action,options={}){
  const journal='.workflow/pending.json';if(await exists(safe(root,journal)))throw Error('Interrupted transaction exists; inspect it and use recover before continuing');
+ const {normalizeWritePaths,assertTarget,missingParents}=await import('./write-set.mjs');
+ const writePaths=normalizeWritePaths(options.writePaths||trees);
+ const {backupBudget}=await import('./recovery.mjs');await backupBudget(root,writePaths);
  const id=randomUUID();const backup=`.workflow/transactions/${id}`;const present={};
- for(const tree of trees){await assertTree(root,tree);present[tree]=await exists(safe(root,tree));if(present[tree])await fs.cp(safe(root,tree),safe(root,backup,'before',tree),{recursive:true});}
- const record={id,at:now(),present,backup};await putJson(root,journal,record);
- try{const result=await action();await putJson(root,`${backup}/result.json`,{...record,status:'committed',at:now()});await fs.unlink(safe(root,journal));return result;}
+ const absentParents=await missingParents(root,writePaths);
+ await ensureSafeParent(root,`${backup}/before/placeholder`);
+ for(const tree of writePaths){await assertTarget(root,tree);present[tree]=await exists(safe(root,tree));if(present[tree]){await ensureSafeParent(root,`${backup}/before/${tree}`);await fs.cp(safe(root,tree),safe(root,backup,'before',tree),{recursive:true});}}
+ const record={schemaVersion:2,id,at:now(),writePaths,missingParents:absentParents,present,backup};await putJson(root,journal,record);
+ try{const result=await transactionContext.run({root,writePaths},action);await putJson(root,`${backup}/result.json`,{...record,status:'committed',at:now()});await fs.unlink(safe(root,journal));return result;}
  catch(error){try{await restore(root,record);await putJson(root,`${backup}/result.json`,{...record,status:'rolled-back',error:error.message});await fs.unlink(safe(root,journal));}catch(rollback){throw new AggregateError([error,rollback],'Rollback failed; pending journal preserved for recovery');}throw error;}
 }
 export async function restore(root,record){
  if(!/^[a-f0-9-]{36}$/.test(record.id)||record.backup!==`.workflow/transactions/${record.id}`)throw Error('Invalid recovery journal');
+ if(record.schemaVersion!==undefined&&![1,2].includes(record.schemaVersion))throw Error('Unsupported recovery journal version');
+ if(record.schemaVersion===2){
+  const {normalizeWritePaths,assertTarget}=await import('./write-set.mjs');const paths=normalizeWritePaths(record.writePaths);
+  if(JSON.stringify(paths)!==JSON.stringify(record.writePaths)||!Array.isArray(record.missingParents)||record.missingParents.some(p=>typeof p!=='string'||!paths.some(file=>file.startsWith(p+'/'))||p.split('/').some(part=>!part||part==='.'||part==='..')))throw Error('Invalid scoped recovery journal');
+  for(const file of paths){if(typeof record.present[file]!=='boolean')throw Error('Invalid recovery snapshot');await assertTarget(root,file);if(record.present[file]){await assertTarget(root,`${record.backup}/before/${file}`);if(!await exists(safe(root,record.backup,'before',file)))throw Error('Recovery snapshot missing');}}
+  for(const file of paths){await fs.rm(safe(root,file),{recursive:true,force:true});if(record.present[file]){await ensureSafeParent(root,file);await fs.cp(safe(root,record.backup,'before',file),safe(root,file),{recursive:true});}}
+  for(const dir of record.missingParents){await assertTarget(root,dir);try{await fs.rmdir(safe(root,dir));}catch(e){if(!['ENOENT','ENOTEMPTY','EEXIST'].includes(e.code))throw e;}}
+  return;
+ }
  for(const tree of trees){if(typeof record.present?.[tree]!=='boolean')throw Error('Invalid recovery snapshot');await assertTree(root,tree);if(record.present[tree]){await assertTree(root,`${record.backup}/before/${tree}`);if(!await exists(safe(root,record.backup,'before',tree)))throw Error('Recovery snapshot missing');}}
  for(const tree of trees){await fs.rm(safe(root,tree),{recursive:true,force:true});if(record.present[tree])await fs.cp(safe(root,record.backup,'before',tree),safe(root,tree),{recursive:true});}
 }

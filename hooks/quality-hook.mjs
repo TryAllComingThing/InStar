@@ -12,10 +12,11 @@ try {
     // tool calls have effectively zero InStar quality-hook work.
     const command=String(event.tool_input?.command ?? event.tool_input?.cmd ?? '').trim();
     const commitIntent=/\bgit\b[\s\S]*\bcommit\b/.test(command);
-    const prIntent=/\bgh\s+pr\s+create\b/.test(command);
+    const prIntent=/\bgh\b[\s\S]*\bpr\s+create\b/.test(command);
     if(!commitIntent && !prIntent) process.exit(0);
     const commit=/^git\s+commit\b/.test(command);
     const pr=/^gh\s+pr\s+create\b/.test(command);
+    if(!commit&&!pr)throw Error('Use a standalone git commit or gh pr create; repository overrides and prefixed commands are not supported');
     if(/[;&|\n`<>]|\$\(|--repo\b|\s-R\b/.test(command)) throw Error('Run a standalone git commit or gh pr create in the configured project root after quality verification');
     if(!path.isAbsolute(event.cwd || '')) throw Error('Hook cwd missing');
     const originalCwd=event.tool_input?.workdir || event.cwd;
