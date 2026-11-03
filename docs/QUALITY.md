@@ -139,12 +139,16 @@ schema 3 禁止使用旧的 `scripts` 和 npm 工具适配字段，必须显式�
 | `base` / `baseRef` | 基线提交与引用 |
 | `tree` | Git `write-tree` 结果 |
 | `files` | 文件模式与内容 SHA-256；被删除文件标记为 `deleted` |
-| `guidance` | 适用 `AGENTS.md`、规范与策略文件的哈希 |
+| `guidance` | 适用 `AGENTS.md`、规范与策略文件的哈希；AGENTS 受文件数/单文件/总字节预算约束并记录截断与省略元数据 |
 | `changed` | 相对 base 的变更路径 |
 | `fingerprint` | 上述内容的组合 SHA-256 |
 | `configurationSource` | `project` 或 `auto-detected` |
 
 `reports/`、`logs/`、`.workflow/`、`planning/workflows/` 等运行时状态不会进入质量快照；但 `.instar-quality.json`、`package.json`、架构/设计文档、Token 和基线会进入。
+
+工作流源码快照另含 `treeHash` 与逐文件 `manifest`。`node_modules`、虚拟环境、`dist`/`build`、`__pycache__`、pytest/ruff/mypy 缓存、`*.egg-info` 和 `.DS_Store` 等会在任意深度排除；确实被 Git 跟踪的构建目录源码仍会保留。符号链接只记录链接目标哈希，不跟随读取；显式 `verification.inputs` 仍拒绝符号链接。
+
+旧报告缺少 `manifest` 时会被明确标记为 legacy，不能静默放行。快照不匹配时，错误会输出旧/新 `treeHash` 和变化文件分类，便于直接定位实际源码变化；构建和测试产生的依赖/缓存不会反过来使报告失效。
 
 任何源码、配置、Git index、治理文件或基线变化都会使旧 `fingerprint` 失效。
 
@@ -165,6 +169,8 @@ node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 | `frontend-verify` | 运行 Vue/npm 兼容验证 | 验证报告 |
 | `engineering-verify` | 运行 schema 3 项目检查 | 验证报告 |
 | `local-verify` | 兼容别名，走同一验证路径 | 验证报告 |
+| `quality-review-init` | 生成当前快照绑定的待完成 Review 模板 | 模板路径、指纹和 `WARN` 项 |
+| `quality-review-repair` | 补齐缺失 Review 项并刷新模板指纹 | 新增项、移除项和待确认项 |
 | `quality-gate` | 校验 Review 并执行可选工具适配器 | 稳定的质量门禁报告 |
 | `ai-provenance` | 记录 AI 生成标记与会话摘要 | `ai-provenance` 报告 |
 | `pre-commit-check` | 提交前的验证、Review、门禁组合检查 | 通过或阻断 |
@@ -191,11 +197,15 @@ node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 - schema 3 项目：实际执行 `engineering-verify`，即使命令名叫 `verify`。
 - 需要明确区分报告类型时，直接使用 JSON action `engineering-verify` 或 `frontend-verify`。
 
+`full` 验证会在没有项目安全扫描器时自动运行本地内置 secret scan，只检查变更源码中的高置信凭据模式，排除依赖、构建、运行态和二进制文件；报告只保存路径、行号和规则，不保存凭据原文。若配置了 `tools.security` 或 schema 3 的安全检查，则优先使用项目扫描器。
+
+前端项目可配置 `scripts.browser` 或沿用 `scripts.e2e`；schema 3 可使用 `browser`、`browser-acceptance`、`e2e` 等检查 id。报告中的 `browserAcceptance` 只会在命令真实执行并通过时显示 `VERIFIED`。未配置返回 `NOT_CONFIGURED`，后端返回 `NOT_APPLICABLE`，不能把源码阅读当作浏览器验收。
+
 ## 6. 验证 profile 与 Q-01 到 Q-07
 
 ### 6.1 默认策略槽位
 
-策略类别是项目的**声明槽位**，项目通过 `checkId` 把槽位映射到实际检查。推荐语义如下：
+策略类别是项目的**声明槽位**，项目通过 `checkId` 或 `checkIds` 把槽位映射到实际检查。推荐语义如下：
 
 | 类别 | 推荐覆盖 |
 | --- | --- |
@@ -212,6 +222,8 @@ node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 - `commit` 和 `full` 都必须至少声明一个 `Q-07`。
 - `full` 必须显式覆盖全部 `Q-01` 到 `Q-07`。
 - 同一 profile 内类别不能重复。
+- `checkId` 是兼容的单检查写法；`checkIds` 是数组，同一类别必须所有列出的检查均通过或各自获得豁免。
+- 同一检查 id 可以被多个类别复用；豁免仍按 `category + checkId` 分别绑定，不能跨类别自动扩散。
 - `evidence-report` 由控制器根据快照是否稳定生成，项目通常不需要在 `tools.checks` 中重复定义。
 - `qualityPolicy` 不存在时，验证不能通过严格门禁。
 
@@ -234,7 +246,7 @@ node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 - `compensatingControl`。
 - `risk`。
 
-豁免只影响策略覆盖结果，不修改原始命令执行结果；验证报告会保留 `rawStatus`，状态变为 `PASS_WITH_WAIVERS`。过期、作用域不匹配或 `Q-07` 豁免都会被拒绝。
+豁免只影响策略覆盖结果，不修改原始命令执行结果；验证报告会保留 `rawStatus`，状态变为 `PASS_WITH_WAIVERS`。使用 `checkIds` 时为每个实际检查分别配置豁免。过期、作用域不匹配或 `Q-07` 豁免都会被拒绝。
 
 ## 7. 风险等级
 
@@ -274,13 +286,14 @@ Review 是质量门禁的核心输入。必须包含 `reviewer`、当前 `finger
 
 ### 8.1 检查项组成
 
-`reviewItemsFor` 根据 `review.language` 与 `review.framework` 生成：
+`reviewItemsFor` 根据 `review.language` 与 `review.framework` 生成。两者均兼容字符串或数组；数组会合并去重，便于 Vue + Python/Java/Go 等跨栈变更获得完整清单：
 
 | 项目类型 | 检查项数量 | 组成 |
 | --- | --- | --- |
 | 未知（未配置语言/框架） | 6 | `correctness`、`maintainability`、`architecture`、`security`、`performance`、`naming` |
 | Vue | 17 | 6 个通用项 + 11 个 Vue 专项项 |
 | Python / Java / Go | 14 | 6 个通用项 + 8 个后端专项项 |
+| Vue + Python/Java/Go | 25 | 6 个通用项 + 11 个 Vue 专项项 + 8 个后端专项项 |
 | React | 6 | 通用项；除非 `review.extraChecks` 追加 |
 
 Vue 专项项包括：`types`、`component-boundaries`、`design`、`watch-cleanup`、`v-for-key`、`reactive-destructure`、`props`、`computed-purity`、`unmount-cleanup`、`async-component`、`lazy-route`。
@@ -336,7 +349,23 @@ L2/L3 的每个检查项必须使用对象证据：
 - `not-verified` 只能配 `WARN` 或 `BLOCK`；`not-applicable` 只能配 `NA`。
 - 证据文件会以禁止符号链接的方式读取。
 
-### 8.4 基线引用与复用审查
+### 8.4 Review 模板与修复
+
+先用 `review init` 生成当前快照的完整待完成模板，默认写入被快照排除的 `reports/review.json`：
+
+```sh
+node <plugin>/bin/instar.mjs review init --project . --reviewer team-member
+```
+
+模板项使用 `WARN` + `not-verified`，reviewer 可用 `<reviewer>` 占位，二者都必须由实际 Review 替换；模板本身不是通过证据。源码或配置变化后使用：
+
+```sh
+node <plugin>/bin/instar.mjs review repair --project . --review-file reports/review.json
+```
+
+`repair` 只补齐缺失项、移除不再适用的旧栈项并刷新模板指纹。已有证据文本会保留；指纹变化时旧 `PASS` 会降为 `WARN`，结构化证据若仍绑定旧指纹则继续阻止门禁，直到重新核实。输出只能位于工作区内的运行时排除路径，路径逃逸和符号链接会被拒绝。
+
+### 8.5 基线引用与复用审查
 
 当项目存在 `docs/project-baseline/rules.json` 时，Review 需要 `ruleReferences`：
 
@@ -362,6 +391,9 @@ L2/L3 的每个检查项必须使用对象证据：
 | `reports/quality-gate.json` | 稳定的 Review 与适配器结果 |
 | `reports/unified-quality.json` | 跨 profile、Review、策略和 releaseReady 的统一视图 |
 | `reports/unified-quality.md` | 统一报告的人类可读摘要 |
+| `reports/review-dossier.json` | 同一快照下验证与 Review 的报告 ID、检查哈希和证据引用；不复制证据正文 |
+| `reports/manifest.json` | 报告正文的唯一指针索引：`id + path + hash + status + snapshotFingerprint`；用于去重和追溯，不替代报告校验 |
+| `reports/verification-cache-<profile>.json` | 绑定 snapshot、配置、检查集和工具版本的稳定验证缓存 |
 | `reports/ai-provenance.json` | AI 生成标记、会话摘要与快照 |
 | `reports/pre-pr-check.json` | PR 前联合检查 |
 | `reports/commit.json` / `reports/commit-waiver.json` | 提交结果或豁免记录 |
@@ -385,6 +417,14 @@ L2/L3 的每个检查项必须使用对象证据：
 - full profile 状态为 `PASS` 或 `PASS_WITH_WAIVERS`。
 - Review 状态为 `PASS` 或 `WARN`。
 - 所有证据属于同一快照。
+
+报告同时给出 `readiness`：`ready`、`partial` 或 `blocked`，并列出 `reasons` 与 `missingEvidence`。`releaseReady` 严格等于 `readiness.status === "ready"`，不接受未完成的 profile、缺失或失败的 Review，也不把 `partial` 当作可发布。
+
+`unified-quality.json` 还通过 `dossierRef` 指向 `reports/review-dossier.json`。dossier 只为每个 verification profile 记录 `reportId`、`checksHash` 与 `reports/<kind>.json#/checks/<id>` 引用，为 Review 记录 `reportId`、checklist/tool checks 哈希以及 `path#Lx` 源码位置。门禁会重新计算 dossier 内容哈希，并与当前 snapshot、Review 报告和统一报告中的 profile 交叉校验；dossier 或源报告任一不一致都会阻断。它减少重复读取和手工复制，但不是独立通过结论，也不能替代报告自身的完整性校验。
+
+### 9.4 验证缓存
+
+验证缓存键包含 profile、风险级别、实际检查集、源码 snapshot、完整配置哈希和质量引擎版本。只有稳定且为 `PASS`、`WARN` 或 `PASS_WITH_WAIVERS` 的结果才写入缓存；源码、配置、检查集或工具版本变化会自动失效。缓存命中时报告返回 `cache:{hit:true,evidenceReportId,key}`，并从缓存中的已签封报告原子恢复原始证据文件；不会因缓存省略证据完整性校验，也不会保留旧 Review。
 
 ## 10. CI / GitHub 协议
 
@@ -447,7 +487,7 @@ Hook 是本地反馈门禁，不主动联网、不调用模型，不能替代 CI
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | `Missing verification report` | 未运行 full/commit 对应验证 | 先执行匹配 profile 的 `verify` |
-| `Quality review report is stale` | 源码、配置或基线在 Review 后改变 | 重新 `snapshot`、检查、Review、`quality-gate` |
+| `Quality review report is stale` | 源码、配置或基线在 Review 后改变；错误会列出变化文件 | 确认列出的源码变化后重新 Review、`quality-gate`，再用 `reportPath` 绑定新报告 |
 | `Review is stale` | Review 指纹不是当前快照 | 使用新指纹重交 Review |
 | `Mandatory qualityPolicy missing` | 旧版验证或无严格策略 | 增加 `qualityPolicy` 并重新验证 |
 | `Q-07 evidence integrity must be configured` | full 策略未覆盖 Q-07 | 为 Q-07 映射 `evidence-report` |
@@ -456,12 +496,17 @@ Hook 是本地反馈门禁，不主动联网、不调用模型，不能替代 CI
 | `Interrupted transaction exists` | 工作流/发现事务未清理 | 读取 `.workflow/pending.json`，使用 `recover` |
 | `SPAWN_ERROR` / `TIMEOUT` | 命令不可执行或超时 | 修正 `tools.checks` 或超时，检查宿主环境 |
 | `Review evidence does not match current source` | 摘录与当前文件不一致 | 重新读取文件，修正行号或摘录 |
+| `Review file already exists` | 已存在旧模板 | 使用 `review repair`，或明确 `review init --force` |
+| `excluded runtime path` | Review 模板会改变自身快照 | 使用 `reports/review.json` 等运行时排除路径 |
+| `Potential credentials found` | 内置 secret scan 发现高置信凭据 | 轮换并移除凭据，再重新验证；不要只删除报告 |
 
 报告失败时，控制器会尽量把对应最新报告改为 `BLOCK`，避免旧的 `PASS` 被误读。恢复事务必须校验事务 ID，不应手工删除活跃锁或随意编辑 `pending.json`。
 
 ## 13. 能力边界
 
 - 项目配置可执行任意本地命令；环境过滤和 npm 离线参数**不是** OS 级网络或权限隔离。
+- 内置 secret scan 只覆盖变更源码中的高置信模式，不等同于完整 SAST、依赖扫描或远端 secret scanning。
+- 未配置浏览器验收命令时，验证报告只标记 `NOT_CONFIGURED`，不生成浏览器通过证据。
 - 控制器不能证明项目配置覆盖了全部风险，也不能证明测试断言有效。
 - Review 结构校验不等于人工代码评审。
 - `reportHash`/HMAC 只证明一致性和密钥持有关系，不证明报告作者身份。

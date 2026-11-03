@@ -25,6 +25,9 @@ test('semantic evaluation reads nested capability specs and invalidates their fi
  const criteria=['prd-traceability','normative-requirements','behavior-scenarios','baseline-delta','architecture-impact'].map(id=>({id,status:'PASS',reason:'Nested spec reviewed',evidence:['The system SHALL search orders.']}));
  const first=await f.call('evaluate-quality',{stage:'spec',evaluator:'fixture',criteria});await fs.appendFile(path.join(dir,'spec.md'),'\nNested change.');
  const next=await f.call('evaluate-quality',{stage:'spec',evaluator:'fixture',criteria});assert.notEqual(first.fingerprint,next.fingerprint);
+ const manifest=JSON.parse(await readFile(path.join(f.project,'reports/manifest.json'),'utf8'));
+ const semantic=manifest.reports.filter(item=>item.kind==='semantic-quality'&&item.path==='reports/semantic-quality/add-search/spec.json');
+ assert.equal(semantic.length,1);assert.equal(semantic[0].status,next.status);assert.equal(semantic[0].snapshotFingerprint,null);assert.match(semantic[0].hash,/^[a-f0-9]{64}$/);
 });
 async function toImplementation(f){await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();}
 async function currentReview(f){
@@ -41,6 +44,15 @@ test('workflow rejects a stale or modified quality report before binding source'
  await assert.rejects(f.call('submit-quality-review',{report:old}),/stale/);
  const fresh=await currentReview(f);await assert.rejects(f.call('submit-quality-review',{report:{...fresh,projectRoot:'other'}}),/integrity/);
  await f.call('submit-quality-review',{report:fresh});
+});
+
+test('submit-quality-review reads a bounded workspace report and rejects path escape',async t=>{
+ const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'Fixture'});await f.call('submit-implementation');
+ const review=await currentReview(f);await mkdir(path.join(f.project,'reports'),{recursive:true});
+ await writeFile(path.join(f.project,'reports/review-input.json'),JSON.stringify(review));
+ await assert.rejects(f.call('submit-quality-review',{reportPath:'../outside.json'}),/workspace-relative/);
+ await f.call('submit-quality-review',{reportPath:'reports/review-input.json'});
+ assert.equal(f.state.qualityReview.reportId,review.id);assert.equal(f.state.qualityReview.status,review.status);
 });
 
 test('enabled reuse permits planned extension and binds review to approved decisions',async t=>{

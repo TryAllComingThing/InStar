@@ -1,11 +1,12 @@
 import path from 'node:path';
 import {readBoundedFile,assertBoundedText} from '../shared/bounded-input.mjs';
 
-const usage = 'Usage: instar <doctor|snapshot|verify|review|ci> [options]';
+const usage = 'Usage: instar <status|next|help|doctor|snapshot|verify|review|ci> [options]';
 
 export async function parseFriendlyArgs(args, cwd = process.cwd()) {
   const [command, ...tokens] = args;
-  const actions = {doctor:'doctor',snapshot:'snapshot',verify:'frontend-verify',review:'quality-gate',ci:'ci'};
+  const actions = {status:'workspace-status',next:'workspace-next',help:'help',doctor:'doctor',snapshot:'snapshot',verify:'frontend-verify',review:'quality-gate',ci:'ci'};
+  const reviewActions = {init:'quality-review-init',repair:'quality-review-repair'};
   if (!actions[command]) return null;
   const input = {action:actions[command],project:path.resolve(cwd)};
   let phase;
@@ -15,24 +16,38 @@ export async function parseFriendlyArgs(args, cwd = process.cwd()) {
     const token=tokens[i];
     if (!token.startsWith('--')) {
       if (command==='ci' && !phase && ['prepare','publish','status'].includes(token)) { phase=token; continue; }
+      if (command==='review' && !phase && reviewActions[token]) { phase=token; continue; }
       throw Error(`Unexpected argument: ${token}. ${usage}`);
     }
-    if (['--confirm'].includes(token)) { flags.add(token); continue; }
-    if (!['--project','--profile','--risk','--phase','--review-file','--title','--body','--body-file'].includes(token)) throw Error(`Unknown option: ${token}`);
+    if (['--confirm','--force'].includes(token)) { flags.add(token); continue; }
+    if (!['--project','--change','--profile','--risk','--phase','--review-file','--output','--reviewer','--title','--body','--body-file'].includes(token)) throw Error(`Unknown option: ${token}`);
     if (i+1>=tokens.length || tokens[i+1].startsWith('--')) throw Error(`Option requires a value: ${token}`);
     values.set(token,tokens[++i]);
   }
-  const allowedValues={doctor:['--project'],snapshot:['--project'],verify:['--project','--profile','--risk'],review:['--project','--review-file','--risk'],ci:['--project','--phase','--title','--body','--body-file']};
-  const allowedFlags={doctor:[],snapshot:[],verify:[],review:[],ci:['--confirm']};
+  const reviewMode=command==='review'&&reviewActions[phase]?phase:null;
+  const allowedValues={status:['--project','--change'],next:['--project','--change'],help:['--project'],doctor:['--project'],snapshot:['--project'],verify:['--project','--profile','--risk'],review:reviewMode==='init'?['--project','--output','--reviewer','--risk']:reviewMode==='repair'?['--project','--review-file','--reviewer','--risk']:['--project','--review-file','--risk'],ci:['--project','--phase','--title','--body','--body-file']};
+  const allowedFlags={status:[],next:[],help:[],doctor:[],snapshot:[],verify:[],review:reviewMode==='init'?['--force']:[],ci:['--confirm']};
   for(const option of values.keys())if(!allowedValues[command].includes(option))throw Error(`${option} is not supported by ${command}`);
   for(const flag of flags)if(!allowedFlags[command].includes(flag))throw Error(`${flag} is not supported by ${command}`);
   if (values.has('--project')) input.project=path.resolve(cwd,values.get('--project'));
+  if (values.has('--change')) input.changeId=values.get('--change');
   if (command==='verify') {
     input.profile=values.get('--profile') || 'full';
     if (!['commit','full'].includes(input.profile)) throw Error('profile must be commit or full');
     if (values.has('--risk')) input.riskLevel=values.get('--risk');
   }
-  if (command==='review') {
+  if (command==='review'&&reviewMode) {
+    input.action=reviewActions[reviewMode];
+    if(values.has('--reviewer'))input.reviewer=assertBoundedText(values.get('--reviewer'),'--reviewer');
+    if(values.has('--risk'))input.riskLevel=values.get('--risk');
+    if(reviewMode==='init')input.outputPath=values.get('--output')||'reports/review.json';
+    else {
+      const reviewFile=values.get('--review-file');
+      if(!reviewFile)throw Error('review repair requires --review-file <review.json>');
+      input.reviewFile=reviewFile;
+    }
+    if(flags.has('--force')&&reviewMode==='init')input.force=true;
+  } else if (command==='review') {
     const reviewFile=values.get('--review-file');
     if (!reviewFile) throw Error('review requires --review-file <review.json>');
     const parsed=JSON.parse(await readBoundedFile(path.resolve(cwd,reviewFile)));

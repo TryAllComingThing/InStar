@@ -177,8 +177,8 @@ node --test test/*.test.mjs src/openspec-min/test/*.test.mjs
 | `npm run check` | 构建漂移、Skill、链接、清单、导出和模板检查 | 每次提交前 |
 | `npm test` | build + check + 全部 Node 测试 | 常规提交和合并前 |
 | `npm run test:cross-stack` | build + Python/Vue 跨栈冒烟 | 修改质量控制器、路由、Review 或验证逻辑后 |
-| `npm run release` | `npm test` + 生成 `release/` + 发布包冒烟 | 发布或需要验证打包隔离时 |
-| `npm run test:release` | build + check + 仅发布包冒烟 | `release/` 已存在时复验发布包 |
+| `npm run release` | `npm test` + 生成 `release/` + check + 发布包冒烟 | 发布或需要验证打包隔离时 |
+| `npm run test:release` | 自动 build + 重新生成 `release/` + check + 发布包冒烟 | 需要从当前源码复验发布包时 |
 
 `npm run release` 需要 Git 仓库和可解析的 `HEAD`，因为 `RELEASE-PROVENANCE.json` 记录提交、树和源码哈希。工作区未提交时 `dirty: true` 是正常记录，不是构建失败。
 
@@ -328,7 +328,7 @@ npm run release
 
 1. `npm test`。
 2. `scripts/release.mjs`：复制插件文件到 `release/plugins/instar`，生成 `release/.agents/plugins/marketplace.json` 和 `RELEASE-PROVENANCE.json`。
-3. `npm run test:release`：重建并检查源码运行时，再运行发布包冒烟。
+3. `scripts/check.mjs` 与 `scripts/smoke-release.mjs`：检查源码/运行时一致性，再验证发布包隔离与冒烟流程。
 
 发布包包含 `runtime/`、`skills/`、`standards/`、`docs/`、`hooks/`、`commands/`、`assets/`、`bin/`、README、许可证和第三方声明。它不包含根 `node_modules`。
 
@@ -364,7 +364,7 @@ CODEX_HOME="$tmp_home" codex plugin list
 npm run test:release
 ```
 
-前提是 `release/` 已由 `npm run release` 生成，并且当前源码仍是生成该发布包时的源码。发布包与源码不一致会按设计失败。
+该命令会先执行 `sync-release`，把当前源码构建到 `runtime/` 并重新生成 `release/`，再运行 check 和发布包冒烟；不会复用旧发布包。
 
 ## 9. 完成标准
 

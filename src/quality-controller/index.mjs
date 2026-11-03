@@ -1,6 +1,8 @@
 import {runNpm,validExecutable} from '../shared/process-runner.mjs';
 import {isRuntimeState} from '../shared/project-files.mjs';
-import {sourceSnapshot} from '../workflow-controller/files.mjs';
+import {pluginRoot,sourceSnapshot} from '../workflow-controller/files.mjs';
+import {describeSnapshotDrift,isExcludedSourcePath,snapshotIdentity} from '../shared/source-snapshot.mjs';
+import {helpInfo,inspectWorkflow} from '../shared/workflow-status.mjs';
 import {promises as fs,constants as fsConstants} from 'node:fs';
 import path from 'node:path';
 import {createHash,createHmac,randomUUID} from 'node:crypto';
@@ -11,6 +13,10 @@ import {redactData,redactText,boundedText} from '../shared/redaction.mjs';
 import {evaluateQualityPolicy,validateQualityPolicy} from './policy.mjs';
 import {baselineContext,validateRuleReferences} from '../shared/project-baseline.mjs';
 import {reuseContext,validateReuseReview,validateReusePlan} from '../shared/code-reuse.mjs';
+import {riskLevels,riskRank,normalizeRiskLevel,effectiveRiskLevel} from '../shared/risk.mjs';
+import {REVIEW_DOSSIER_PATH,buildReviewDossier,dossierRef,validateReviewDossier} from '../shared/review-dossier.mjs';
+import {updateReportManifest} from '../shared/report-manifest.mjs';
+export {riskLevels};
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
@@ -34,48 +40,17 @@ export const reviewItems = ['correctness','maintainability','architecture','secu
 const universalReviewItems=['correctness','maintainability','architecture','security','performance','naming'];
 const vueReviewItems=reviewItems.filter(id=>!universalReviewItems.includes(id));
 const backendReviewItems=['api-contract','input-validation','authorization','error-handling','data-consistency','transactions','concurrency','observability'];
+const reviewValues = value => value===undefined || value===null ? [] : Array.isArray(value) ? value : [value];
 export function reviewItemsFor(c){
- const language=(c.review?.language||'').toLowerCase(),framework=(c.review?.framework||'').toLowerCase();
- if(!language && !framework) return universalReviewItems; // fail closed on unknown stack: never assume Vue
- const vue=framework==='vue', backend=['python','java','go'].includes(language);
+ const languages=reviewValues(c.review?.language).map(value=>String(value).toLowerCase()).filter(Boolean);
+ const frameworks=reviewValues(c.review?.framework).map(value=>String(value).toLowerCase()).filter(Boolean);
+ if(!languages.length && !frameworks.length) return universalReviewItems; // fail closed on unknown stack: never assume Vue
+ const vue=frameworks.includes('vue'), backend=languages.some(language=>['python','java','go'].includes(language));
  return [...new Set([...universalReviewItems,...(vue?vueReviewItems:[]),...(backend?backendReviewItems:[]),...(c.review?.extraChecks||[])])];
 }
 export const qualityTools = ['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint'];
-export const riskLevels = ['L0','L1','L2','L3'];
 const verifyProfiles = {commit:['lint','typecheck','dependencies'],full:['lint','typecheck','test','build','dependencies','vite-build']};
-const riskRank = level => riskLevels.indexOf(level);
-const builtInRiskRules = [
- {riskLevel:'L3',patterns:['.github/workflows/**','**/auth/**','**/authentication/**','**/authorization/**','**/migrations/**','**/migration/**','**/payments/**','**/payment/**','**/infrastructure/**','**/infra/**','**/terraform/**']},
- {riskLevel:'L2',patterns:['**/api/**','**/routes/**','**/database/**','**/db/**','**/permissions/**']},
-];
-function normalizeRiskLevel(value='L1') {
-  if (typeof value !== 'string' || !riskLevels.includes(value)) throw Error('riskLevel must be L0, L1, L2 or L3');
-  return value;
-}
 function highRisk(level) { return riskRank(level) >= riskRank('L2'); }
-function globRegex(pattern) {
- let escaped='';
- for(let index=0;index<pattern.length;index++){
-  const char=pattern[index],next=pattern[index+1];
-  if(char==='*'&&next==='*'&&pattern[index+2]==='/'){escaped+='(?:.*/)?';index+=2;continue;}
-  if(char==='/'&&next==='*'&&pattern[index+2]==='*'){escaped+='(?:/.*)?';index+=2;continue;}
-  if(char==='*'){escaped+='[^/]*';continue;}
-  if(char==='?'){escaped+='[^/]';continue;}
-  escaped+=('.+^${}()|[]\\'.includes(char)?`\\${char}`:char);
- }
- return new RegExp(`^${escaped}$`);
-}
-function pathMatches(pattern,name) { return globRegex(pattern.replaceAll('\\','/')).test(name.replaceAll('\\','/')); }
-function riskRules(c) { return [...builtInRiskRules,...(c.riskPolicy?.rules||[])]; }
-function inferredRiskLevel(c,changed=[]) {
- let level='L1';
- for(const rule of riskRules(c)) if(rule.patterns.some(pattern=>changed.some(name=>pathMatches(pattern,name))) && riskRank(rule.riskLevel)>riskRank(level)) level=rule.riskLevel;
- return level;
-}
-function effectiveRiskLevel(c,requested='L1',changed=[]) {
- const declared=normalizeRiskLevel(requested), inferred=inferredRiskLevel(c,changed);
- return riskRank(inferred)>riskRank(declared)?inferred:declared;
-}
 function l3Policy(c) {
  const policy=c.riskPolicy?.l3;
  if(!policy || !Array.isArray(policy.requiredReviewRoles) || !policy.requiredReviewRoles.length) throw Error('L3 risk policy requires requiredReviewRoles');
@@ -92,8 +67,62 @@ function validateL3Review(review,c) {
 }
 function checksForProfile(c,profile){
  if(c.verification?.profiles?.[profile]) return c.verification.profiles[profile];
- const base=[...verifyProfiles[profile],...(profile==='full'&&c.tools?.security?['security-scan']:[]),...(profile==='full'&&c.scripts?.e2e?['e2e']:[]),...(profile==='full'&&c.scripts?.visual?['visual']:[])];
+ const base=[...verifyProfiles[profile],...(profile==='full'&&c.tools?.security?['security-scan']:[]),...(profile==='full'&&c.scripts?.e2e?['e2e']:[]),...(profile==='full'&&c.scripts?.browser?['browser-acceptance']:[]),...(profile==='full'&&c.scripts?.visual?['visual']:[])];
  return base;
+}
+const browserCheckIds=new Set(['e2e','ui-e2e','browser','browser-acceptance','browser-e2e','playwright']);
+const securityCheckIds=new Set(['security','security-scan','secret-scan','secret-scanning','secrets','sast']);
+const isBrowserCheck = id => browserCheckIds.has(String(id).toLowerCase());
+const isSecurityCheck = id => securityCheckIds.has(String(id).toLowerCase());
+function hasFrontendSurface(c){
+ const languages=reviewValues(c?.review?.language).map(value=>String(value).toLowerCase());
+ const frameworks=reviewValues(c?.review?.framework).map(value=>String(value).toLowerCase());
+ return frameworks.some(value=>['vue','react'].includes(value))||languages.some(value=>['typescript','javascript'].includes(value));
+}
+function browserAcceptanceFor(c,profile,expectedChecks,checks){
+ if(!hasFrontendSurface(c))return {status:'NOT_APPLICABLE',applicable:false,reason:'No frontend language or UI framework is configured'};
+ if(profile!=='full')return {status:'NOT_RUN',applicable:true,reason:'Browser acceptance runs only in the full verification profile'};
+ const configured=expectedChecks.filter(isBrowserCheck),executed=checks.filter(check=>isBrowserCheck(check.id));
+ if(!configured.length)return {status:'NOT_CONFIGURED',applicable:true,reason:'No project-owned browser acceptance check is configured; source-only inspection is not browser evidence'};
+ if(!executed.length)return {status:'NOT_RUN',applicable:true,checkIds:configured,reason:'Configured browser acceptance check was not reached because an earlier verification check failed'};
+ const failed=executed.filter(check=>check.status!=='PASS');
+ if(failed.length)return {status:'FAILED',applicable:true,checkIds:failed.map(check=>check.id),reason:'Configured browser acceptance failed'};
+ return {status:'VERIFIED',applicable:true,checkIds:executed.map(check=>check.id),reason:'Project-owned browser acceptance command completed successfully'};
+}
+const builtInSecretPatterns=[
+ ['private-key',/-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
+ ['github-token',/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/],
+ ['aws-access-key',/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/],
+ ['openai-key',/\bsk-(?:proj-)?[A-Za-z0-9_-]{24,}\b/],
+ ['slack-token',/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/],
+ ['google-api-key',/\bAIza[0-9A-Za-z_-]{35}\b/],
+ ['stripe-live-key',/\bsk_live_[0-9A-Za-z]{16,}\b/],
+ ['credentialed-database-url',/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s:@/]+:[^\s@/]{4,}@/i]
+];
+async function builtinSecretScan(root,snapshot){
+ const start=Date.now(),findings=[];let checkedFiles=0,skippedFiles=0,truncated=false;
+ const candidates=[...new Set(snapshot.changed||[])].filter(name=>!isExcludedSourcePath(name)).sort();
+ for(const name of candidates){
+  let file,stat;
+  try{file=await safe(root,name);stat=await fs.lstat(file);}
+  catch(error){if(error.code==='ENOENT'){skippedFiles++;continue;}return {id:'secret-scan',mode:'builtin',status:'BLOCK',result:'SPAWN_ERROR',error:error.code||'SCAN_READ_FAILED',exitCode:null,signal:null,durationMs:Date.now()-start,outputHash:digest(''),reason:'Built-in secret scan could not inspect a changed path safely'};}
+  if(!stat.isFile()||stat.isSymbolicLink()||stat.size>2*1024*1024){skippedFiles++;continue;}
+  let content;
+  try{content=await readRegularFile(root,name);}catch(error){return {id:'secret-scan',mode:'builtin',status:'BLOCK',result:'SPAWN_ERROR',error:error.code||'SCAN_READ_FAILED',exitCode:null,signal:null,durationMs:Date.now()-start,outputHash:digest(''),reason:'Built-in secret scan could not read a changed source file'};}
+  if(content.includes('\0')){skippedFiles++;continue;}
+  checkedFiles++;
+  for(const [lineIndex,line] of content.split(/\r?\n/).entries()){
+   for(const [rule,pattern] of builtInSecretPatterns){
+    if(!pattern.test(line))continue;
+    if(findings.length>=100){truncated=true;break;}
+    findings.push({path:name,line:lineIndex+1,rule});
+   }
+   if(truncated)break;
+  }
+  if(truncated)break;
+ }
+ const status=findings.length?'BLOCK':'PASS';
+ return {id:'secret-scan',mode:'builtin',status,result:status==='PASS'?'EXECUTED_PASS':'EXECUTED_FAILED',exitCode:status==='PASS'?0:1,signal:null,error:null,durationMs:Date.now()-start,outputHash:digest(JSON.stringify(findings)),checkedFiles,skippedFiles,findings,truncated,reason:status==='PASS'?'Built-in high-confidence secret scan completed':'Potential credentials found in changed source; rotate and remove them, then rerun verification. Findings contain locations only, not secret values.'};
 }
 const generated = name => isRuntimeState(name) || /(^|\/)(reports|logs|node_modules|dist|coverage|\.git)(\/|$)/.test(name);
 const sensitive = name => /(^|\/)(\.ssh|\.aws)(\/|$)|(^|\/)\.env(?:\.|$)/.test(name);
@@ -133,12 +162,13 @@ async function autoConfig(root) {
   const python=pythonFiles.some(Boolean);
   let baseRef='main';
   try { baseRef=git(root,['branch','--show-current'])||'main'; } catch {}
+  const languages=[...(python?['python']:[]),...(vue?['typescript']:[])];
   return {
     configurationSource:'auto-detected',
     baseRef,
     context:{},
-    review:python?{language:'python',framework:'none'}:vue?{language:'typescript',framework:'vue'}:{language:'',framework:'none'},
-    detectedStack:python?'python':vue?'vue':packageJson?'javascript':'unknown'
+    review:languages.length?{language:languages.length===1?languages[0]:languages,framework:vue?'vue':'none'}:{language:'',framework:'none'},
+    detectedStack:python&&vue?'full-stack':python?'python':vue?'vue':packageJson?'javascript':'unknown'
   };
 }
 async function config(root) {
@@ -169,7 +199,10 @@ async function config(root) {
   }
   if(c.qualityPolicy!==undefined)validateQualityPolicy(c.qualityPolicy);
   if(c.evidenceTrust!==undefined&&(!c.evidenceTrust||typeof c.evidenceTrust!=='object'||Array.isArray(c.evidenceTrust)||typeof c.evidenceTrust.hmacEnv!=='string'||!/^INSTAR_[A-Z0-9_]{1,60}$/.test(c.evidenceTrust.hmacEnv)))throw Error('evidenceTrust.hmacEnv must name an INSTAR_* environment variable');
-  if(c.review!==undefined){if(!c.review||typeof c.review!=='object'||Array.isArray(c.review)||!['vue','react','none'].includes(c.review.framework||'none')||!['typescript','javascript','python','java','go'].includes(c.review.language||'typescript')|| (c.review.extraChecks!==undefined&&(!Array.isArray(c.review.extraChecks)||c.review.extraChecks.some(x=>typeof x!=='string'||!/^[a-z][a-z0-9-]{1,39}$/.test(x)))))throw Error('Invalid review configuration');}
+  if(c.review!==undefined){
+    const validValues=(value,allowed)=>reviewValues(value).length>0&&reviewValues(value).every(item=>typeof item==='string'&&allowed.includes(item.toLowerCase()))&&new Set(reviewValues(value).map(item=>item.toLowerCase())).size===reviewValues(value).length;
+    if(!c.review||typeof c.review!=='object'||Array.isArray(c.review)||!validValues(c.review.framework===undefined?'none':c.review.framework,['vue','react','none'])||!validValues(c.review.language===undefined?'typescript':c.review.language,['typescript','javascript','python','java','go'])|| (c.review.extraChecks!==undefined&&(!Array.isArray(c.review.extraChecks)||c.review.extraChecks.some(x=>typeof x!=='string'||!/^[a-z][a-z0-9-]{1,39}$/.test(x)))))throw Error('Invalid review configuration');
+  }
   return c;
 }
 async function projectContextFiles(root,c={}){
@@ -192,8 +225,8 @@ async function guidanceFingerprint(root) {
     const dir=relative?await safe(root,relative):root;let entries;
     try{entries=await fs.readdir(dir,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
     for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
-      if(['.git','node_modules','dist','build','coverage','.workflow','.next','.nuxt','vendor'].includes(entry.name))continue;
       const file=relative?`${relative}/${entry.name}`:entry.name;scanned++;
+      if(isExcludedSourcePath(file))continue;
       if(entry.isSymbolicLink()){if(entry.name==='AGENTS.md'||file==='standards')throw Error(`Symlink policy source is not allowed: ${file}`);continue;}
       if(entry.name==='AGENTS.md'||(file.startsWith('standards/')&&entry.isFile()&&/\.(md|mdx|json|ya?ml)$/i.test(entry.name)))names.add(file);
       if(entry.isDirectory()&&(!entry.name.startsWith('.')||entry.name==='.context'))await walk(file,depth+1);
@@ -218,6 +251,8 @@ export async function snapshot(root) {
   const tree = git(root, ['write-tree']);
   const base = git(root, ['rev-parse','--verify',`${c.baseRef}^{commit}`]);
   const namesSet = new Set(git(root, ['ls-files','-z','--cached','--others','--exclude-standard']).split('\0').filter(Boolean));
+  const trackedNames = new Set(git(root, ['ls-files','-z']).split('\0').filter(Boolean));
+  const ignoredSource = name => !trackedNames.has(name) && isExcludedSourcePath(name);
   let inputBytes=0,inputCount=0,inputDirectoryCount=0;
   async function addInput(name,depth=0){
     if(depth>64)throw Error('Configured verification inputs exceed maximum directory depth of 64');
@@ -239,13 +274,17 @@ export async function snapshot(root) {
   }
   for(const input of c.verification?.inputs||[])await addInput(input);
   const names = [...namesSet].sort();
-  const changed = [...new Set([...git(root, ['diff','--name-only','-z',base,'--']).split('\0'), ...git(root, ['ls-files','-z','--others','--exclude-standard']).split('\0')].filter(Boolean))].sort().filter(n=>!generated(n));
+  const changed = [...new Set([...git(root, ['diff','--name-only','-z',base,'--']).split('\0'), ...git(root, ['ls-files','-z','--others','--exclude-standard']).split('\0')].filter(Boolean))].sort().filter(n=>!ignoredSource(n));
   if (changed.some(sensitive)) throw Error('Sensitive path changed; review outside quality automation');
   const files = [];
-  for (const name of names.filter(n=>!generated(n) && !sensitive(n))) {
+  for (const name of names.filter(n=>!ignoredSource(n) && !sensitive(n))) {
     const file = await safe(root, name);
-    try { const stat = await fs.stat(file); if (!stat.isFile()) throw Error(`Unsupported file: ${name}`); files.push([name, stat.mode, digest(await fs.readFile(file))]); }
-    catch (e) { if(e.code !== 'ENOENT') throw e; files.push([name,'deleted']); }
+    try {
+      const stat=await fs.lstat(file);
+      if(stat.isSymbolicLink())files.push([name,'symlink',digest(await fs.readlink(file))]);
+      else if(stat.isFile())files.push([name,stat.mode,digest(await fs.readFile(file))]);
+      else throw Error(`Unsupported file: ${name}`);
+    } catch (e) { if(e.code !== 'ENOENT') throw e; files.push([name,'deleted']); }
   }
   // Include ignored governance files as well; they change review policy.
   for (const name of ['.instar-quality.json','package.json',...['AGENTS.md','.context/AGENTS.md',context.architecture,context.design].filter(Boolean),...context.tokens]) {
@@ -255,7 +294,7 @@ export async function snapshot(root) {
   files.push(['project-baseline',baseline.fingerprint]);
   files.push(['code-reuse',(await reuseContext(root)).fingerprint]);
   const guidance=await guidanceFingerprint(root);
-  return {tree,fingerprint:digest(JSON.stringify({head,base,files,guidance,index:git(root,['ls-files','--stage','-z']).split('\0').filter(entry=>entry && !generated(entry.slice(entry.indexOf('\t')+1)))})),head,base,baseRef:c.baseRef,changed,configurationSource:c.configurationSource||'project'};
+  return {tree,fingerprint:digest(JSON.stringify({head,base,files,guidance,index:git(root,['ls-files','--stage','-z']).split('\0').filter(entry=>entry && !ignoredSource(entry.slice(entry.indexOf('\t')+1)))})),head,base,baseRef:c.baseRef,changed,configurationSource:c.configurationSource||'project'};
 }
 async function save(root, kind, data, key=null) {
   const report = sealReport({schemaVersion:1,kind,id:randomUUID(),at:now(),...redactData(data)},key);
@@ -266,6 +305,7 @@ async function save(root, kind, data, key=null) {
     {name:`reports/${kind}.json`,text},
   ];
   await writeReportTransaction(root,files);
+  await updateReportManifest(root,{id:report.id,kind,path:`reports/${kind}-${report.id}.json`,hash:digest(text),status:report.status,snapshotFingerprint:report.snapshot?.fingerprint||null,at:report.at});
   return report;
 }
 async function writeReportTransaction(root,files){
@@ -317,11 +357,38 @@ async function runConfiguredCheck(root,c,id,spec,evidencePath=null){
  return {id,command:spec.command,args,status,result,exitCode,signal,error,durationMs:Date.now()-start,outputHash:digest((r.stdout||'')+(r.stderr||'')),evidencePath,reason:status==='PASS'?'Completed':result==='SPAWN_ERROR'?'Command could not be executed':'Command failed; rerun locally for diagnostics (raw output is not persisted)'};
 }
 function stackFor(c){
- const language=(c?.review?.language||'').toLowerCase();
- return language==='typescript'?['typescript','javascript']:language?[language]:[];
+ return [...new Set(reviewValues(c?.review?.language).map(value=>String(value).toLowerCase()).filter(Boolean).flatMap(language=>language==='typescript'?['typescript','javascript']:[language]))];
 }
 function persistedChecks(checks){
  return checks.map(({args,...check})=>({...check,argsCount:Array.isArray(args)?args.length:0,argsHash:Array.isArray(args)?digest(JSON.stringify(args)):null}));
+}
+async function qualityEngineVersion(){
+ try{const pkg=JSON.parse(await fs.readFile(path.join(pluginRoot,'package.json'),'utf8'));return `${pkg.version||'unknown'}:node-${process.versions.node}`;}
+ catch{return `unknown:node-${process.versions.node}`;}
+}
+function verificationCacheFile(profile){return `reports/verification-cache-${profile}.json`;}
+async function readVerificationCache(root,{profile,key,snapshotFingerprint}){
+ try{
+  const entry=await json(root,verificationCacheFile(profile));
+  if(entry?.schemaVersion!==1||entry.key!==key||entry.profile!==profile||entry.snapshotFingerprint!==snapshotFingerprint||!entry.report)return null;
+  validateReportIntegrity(entry.report,evidenceKey(await config(root)),false);
+  if(entry.report.id!==entry.evidenceReportId||entry.report.snapshot?.fingerprint!==snapshotFingerprint)return null;
+  if(JSON.stringify(entry.reportChecks)!==JSON.stringify(entry.report.checks))return null;
+  return entry;
+ }catch{return null;}
+}
+async function writeVerificationCache(root,{key,profile,snapshotFingerprint,riskLevel,configurationFingerprint,toolVersion,checkIds,report,reportChecks,policy}){
+ const entry={schemaVersion:1,key,profile,snapshotFingerprint,riskLevel,configurationFingerprint,toolVersion,checkIds,evidenceReportId:report.id,report,reportChecks,policy,at:now()};
+ await write(root,verificationCacheFile(profile),JSON.stringify(entry,null,2)+'\n');
+}
+function readinessFor({status,profiles,reviewResult}){
+ const full=profiles.full,reasons=[],missingEvidence=[];
+ const hardFailure=['FAIL','BLOCK'].includes(status)||['FAIL','BLOCK'].includes(full?.status)||['FAIL','BLOCK'].includes(reviewResult?.status);
+ if(['FAIL','BLOCK'].includes(status))reasons.push(`aggregate status is ${status}`);
+ if(!full)missingEvidence.push('full verification profile');else if(!['PASS','PASS_WITH_WAIVERS'].includes(full.status))missingEvidence.push(`full profile is ${full.status}`);
+ if(!reviewResult)missingEvidence.push('current quality review');else if(!['PASS','WARN'].includes(reviewResult.status))missingEvidence.push(`quality review is ${reviewResult.status}`);
+ const ready=!hardFailure&&Boolean(full&&['PASS','PASS_WITH_WAIVERS'].includes(full.status)&&reviewResult&&['PASS','WARN'].includes(reviewResult.status));
+ return {status:hardFailure?'blocked':ready?'ready':'partial',reasons,missingEvidence:[...new Set(missingEvidence)],profile:full?'full':Object.keys(profiles)[0]||'none',riskLevel:full?.riskLevel||reviewResult?.riskLevel||'L1'};
 }
 async function saveUnifiedQualityReport(root,{profile,verification,policy,review,config:c={}}) {
   const file='reports/unified-quality.json';
@@ -336,13 +403,23 @@ async function saveUnifiedQualityReport(root,{profile,verification,policy,review
   const profiles={...(existing.profiles||{})};
   if(profile)profiles[profile]={status:verification.status,riskLevel:verification.riskLevel||'L1',verificationReportId:verification.id,checks:verification.reportChecks||persistedChecks(verification.checks),mandatory:policy?.mandatory||[],waivers:policy?.waivers||[]};
   const reviewResult=profile?null:(review?{status:review.status,riskLevel:review.riskLevel||'L1',checks:review.checks,reviewReportId:review.id,snapshot:review.snapshot}:existing.review||null);
+  let reviewSource=review?.review?review:null;
+  if(!reviewSource&&current&&await exists(root,'reports/quality-gate.json')){
+    try{const candidate=await json(root,'reports/quality-gate.json');if(candidate?.snapshot?.fingerprint===current&&candidate.review)reviewSource=candidate;}catch{}
+  }
+  const dossier=current?buildReviewDossier({snapshotFingerprint:current,profiles,reviewReport:reviewSource,reviewSummary:reviewResult||existing.review||null}):null;
   const statuses=[...Object.values(profiles).map(p=>p.status),reviewResult?.status].filter(Boolean);
   const status=statuses.includes('FAIL')?'FAIL':statuses.includes('BLOCK')||statuses.includes('BLOCKED')?'BLOCK':statuses.includes('PASS_WITH_WAIVERS')?'PASS_WITH_WAIVERS':statuses.includes('WARN')?'WARN':statuses.length&&statuses.every(x=>x==='PASS')?'PASS':'BLOCK';
-  const report=sealReport({schemaVersion:2,kind:'unified-quality',reportId:randomUUID(),generatedAt:now(),project:{id:path.basename(root),stack:stackFor(c)},configurationSource:c.configurationSource||'project',source:{head:sourceSnapshot?.head||null,baseRef:sourceSnapshot?.baseRef||c.baseRef||null,snapshotFingerprint:current},snapshotFingerprint:current,policy:policy?{schemaVersion:policy.schemaVersion,profile}:existing.policy||null,status,releaseReady:!!reviewResult&&!!profiles.full&&['PASS','PASS_WITH_WAIVERS'].includes(profiles.full.status)&&['PASS','WARN'].includes(reviewResult.status),profiles,review:reviewResult},evidenceKey(c));
-  await write(root,file,JSON.stringify(report,null,2)+'\n');
-  const lines=['# InStar Unified Quality Report','',`Status: ${report.status}`,`Release ready: ${report.releaseReady}`,`Project: ${report.project.id}`,`Stack: ${report.project.stack.join(', ')||'unknown'}`,`HEAD: ${report.source.head}`,`Base: ${report.source.baseRef}`,`Snapshot: ${current}`,'','## Verification profiles'];
-  for(const [name,data] of Object.entries(profiles)){lines.push(`### ${name} — ${data.status}`);if(data.verificationReportId)lines.push(`Evidence report: ${data.verificationReportId}`);for(const item of data.checks||[])lines.push(`- ${item.id}: ${item.status} (${item.result||'UNKNOWN'}); command: ${item.command||'n/a'}; evidence: ${item.evidencePath||'n/a'}`);for(const item of data.mandatory||[])lines.push(`- ${item.category} / ${item.checkId}: ${item.status} (raw: ${item.rawStatus||item.status})`);for(const w of data.waivers||[])lines.push(`- WAIVER ${w.category}: ${w.reason}; approved by ${w.approvedBy}; expires ${w.expiresAt}`);}
+  const readiness=readinessFor({status,profiles,reviewResult});
+  const report=sealReport({schemaVersion:2,kind:'unified-quality',reportId:randomUUID(),generatedAt:now(),project:{id:path.basename(root),stack:stackFor(c)},configurationSource:c.configurationSource||'project',source:{head:sourceSnapshot?.head||null,baseRef:sourceSnapshot?.baseRef||c.baseRef||null,snapshotFingerprint:current},snapshotFingerprint:current,policy:policy?{schemaVersion:policy.schemaVersion,profile}:existing.policy||null,status,readiness,releaseReady:readiness.status==='ready',profiles,review:reviewResult,dossierRef:dossier?dossierRef(dossier):null},evidenceKey(c));
+  const reportText=JSON.stringify(report,null,2)+'\n';
+  await write(root,file,reportText);
+  if(dossier)await write(root,REVIEW_DOSSIER_PATH,JSON.stringify(dossier,null,2)+'\n');
+  await updateReportManifest(root,{id:report.reportId,kind:'unified-quality',path:file,hash:digest(reportText),status:report.status,snapshotFingerprint:report.snapshotFingerprint||null,at:report.generatedAt});
+  const lines=['# InStar Unified Quality Report','',`Status: ${report.status}`,`Readiness: ${report.readiness.status}`,`Release ready: ${report.releaseReady}`,...(report.readiness.missingEvidence.length?[`Missing evidence: ${report.readiness.missingEvidence.join('; ')}`]:[]),`Project: ${report.project.id}`,`Stack: ${report.project.stack.join(', ')||'unknown'}`,`HEAD: ${report.source.head}`,`Base: ${report.source.baseRef}`,`Snapshot: ${current}`,'','## Verification profiles'];
+  for(const [name,data] of Object.entries(profiles)){lines.push(`### ${name} — ${data.status}`);if(data.verificationReportId)lines.push(`Evidence report: ${data.verificationReportId}`);for(const item of data.checks||[])lines.push(`- ${item.id}: ${item.status} (${item.result||'UNKNOWN'}); command: ${item.command||'n/a'}; evidence: ${item.evidencePath||'n/a'}`);for(const item of data.mandatory||[]){const ids=item.checkIds||[item.checkId];lines.push(`- ${item.category} / ${ids.join(' + ')}: ${item.status} (raw: ${item.rawStatus||item.status})`);}for(const w of data.waivers||[])lines.push(`- WAIVER ${w.category}/${w.checkId}: ${w.reason}; approved by ${w.approvedBy}; expires ${w.expiresAt}`);}
   lines.push('','## Review',reviewResult?`Status: ${reviewResult.status}`:'NOT_RUN','');
+  if(dossier)lines.push('',`## Evidence dossier\n${dossier.path} (${dossier.dossierId})`);
   await write(root,'reports/unified-quality.md',lines.join('\n'));
   return report;
 }
@@ -352,25 +429,51 @@ async function verify(root, profile, requestedRisk='L1') {
   if (highRisk(riskLevel) && profile!=='full') throw Error(`${riskLevel} changes require the full verification profile`);
   if(c.configurationSource==='auto-detected'){
     const kind=c.detectedStack==='python'?'engineering':'frontend';
-    const result=await save(root,`${kind}-verify-${profile}`,{snapshot:before,riskLevel,status:'WARN',checks:[],stable:true,qualityPolicy:{status:'NOT_CONFIGURED',note:'No .instar-quality.json found; no project-owned verification commands were executed'},coverage:{basis:'auto-detected',profile,riskLevel,checkIds:[],note:'Automatic discovery is informational only; configure project checks for reproducible verification'},configurationSource:'auto-detected',detectedStack:c.detectedStack,limitations:['No project-owned verification commands were executed','This result cannot satisfy pre-pr-check or serve as remote CI evidence']},evidenceKey(c));
+    const result=await save(root,`${kind}-verify-${profile}`,{snapshot:before,riskLevel,status:'WARN',checks:[],browserAcceptance:browserAcceptanceFor(c,profile,checksForProfile(c,profile),[]),secretScan:{status:'NOT_CONFIGURED',mode:'not-run',reason:'No project configuration exists; automatic verification was not executed'},stable:true,qualityPolicy:{status:'NOT_CONFIGURED',note:'No .instar-quality.json found; no project-owned verification commands were executed'},coverage:{basis:'auto-detected',profile,riskLevel,checkIds:[],note:'Automatic discovery is informational only; configure project checks for reproducible verification'},configurationSource:'auto-detected',detectedStack:c.detectedStack,limitations:['No project-owned verification commands were executed','This result cannot satisfy pre-pr-check or serve as remote CI evidence']},evidenceKey(c));
     result.checks=[];result.reportChecks=[];
     await saveUnifiedQualityReport(root,{profile,verification:result,policy:null,review:null,config:c});
     return result;
   }
   const checks = [];
   const kind=c.verification?.profiles?.[profile]?`engineering-verify-${profile}`:`frontend-verify-${profile}`;
-  for (const id of checksForProfile(c,profile)) {
+  const expectedChecks=checksForProfile(c,profile);
+  const automaticSecretScan=profile==='full'&&!expectedChecks.some(isSecurityCheck);
+  const executionChecks=automaticSecretScan?[...expectedChecks,'secret-scan']:expectedChecks;
+  const toolVersion=await qualityEngineVersion(),configurationFingerprint=digest(JSON.stringify(c));
+  const cacheKey=digest(JSON.stringify({profile,riskLevel,checkIds:executionChecks,snapshotFingerprint:before.fingerprint,configurationFingerprint,toolVersion}));
+  const cached=await readVerificationCache(root,{profile,key:cacheKey,snapshotFingerprint:before.fingerprint});
+  if(cached){
+   const report=structuredClone(cached.report);
+   report.reportChecks=structuredClone(cached.reportChecks);
+   const evidenceText=JSON.stringify(cached.report,null,2)+'\n';
+   await writeReportTransaction(root,[
+    {name:`reports/${kind}.json`,text:evidenceText},
+    {name:`reports/${kind}-${cached.report.id}.json`,text:evidenceText},
+    {name:`logs/${kind}-${cached.report.id}.md`,text:`# ${kind}\n\nTime: ${cached.report.at}\nStatus: ${cached.report.status}\nReport: reports/${kind}-${cached.report.id}.json\nFingerprint: ${cached.report.snapshot?.fingerprint || 'not applicable'}\n`}
+   ]);
+   report.cache={hit:true,evidenceReportId:cached.evidenceReportId,key:cacheKey};
+   await saveUnifiedQualityReport(root,{profile,verification:report,policy:cached.policy||null,review:null,config:c});
+   return report;
+  }
+  for (const id of executionChecks) {
+    if(automaticSecretScan&&id==='secret-scan'){const check=await builtinSecretScan(root,before);checks.push(check);if(check.status!=='PASS')break;continue;}
     if(c.verification?.profiles?.[profile]){const check=await runConfiguredCheck(root,c,id,c.tools.checks[id],`reports/${kind}.json`);checks.push(check);if(check.status!=='PASS')break;continue;}
-    const script=id==='security-scan'?c.tools.security:c.scripts?.[id] || (['dependencies','vite-build'].includes(id) ? c.tools?.[id] : id);
+    const script=id==='security-scan'?c.tools.security:id==='browser-acceptance'?c.scripts?.browser:c.scripts?.[id] || (['dependencies','vite-build'].includes(id) ? c.tools?.[id] : id);
     const check = {id,...await runScript(root,c,script)}; checks.push(check);
     if (check.status !== 'PASS') break;
   }
   const after = await snapshot(root), stable = before.fingerprint === after.fingerprint;
   const policy=c.qualityPolicy?evaluateQualityPolicy(c.qualityPolicy,profile,[...checks,{id:'evidence-report',status:stable?'PASS':'BLOCK'}],before):null;
-  const checkIds=checksForProfile(c,profile);
+  const checkIds=executionChecks;
   const coverage=c.verification
     ? {basis:'project-configured-checks',profile,riskLevel,checkIds,note:'configured checks coverage does not independently prove complete project coverage'}
     : {basis:'mandatory-policy',profile,checkIds};
+  const browserAcceptance=browserAcceptanceFor(c,profile,expectedChecks,checks);
+  const configuredSecurity=expectedChecks.filter(isSecurityCheck).map(id=>checks.find(check=>check.id===id)).filter(Boolean);
+  const builtInSecurity=checks.find(check=>check.id==='secret-scan'&&check.mode==='builtin');
+  const secretScan=automaticSecretScan
+    ? builtInSecurity?{status:builtInSecurity.status==='PASS'?'VERIFIED':'FAILED',mode:'builtin',checkedFiles:builtInSecurity.checkedFiles,findings:builtInSecurity.findings||[]}:{status:'NOT_RUN',mode:'builtin',reason:'Built-in secret scan was not reached because an earlier verification check failed'}
+    : configuredSecurity.length?{status:configuredSecurity.every(check=>check.status==='PASS')?'VERIFIED':'FAILED',mode:'project-configured',checkIds:configuredSecurity.map(check=>check.id)}:{status:profile==='full'?'NOT_RUN':'NOT_CONFIGURED',mode:'not-run',reason:profile==='full'?'No configured security check was reached':'Secret scanning runs only in the full verification profile'};
   const waivedChecks = new Set(
     policy?.waivers?.map(item => item.checkId) || []
   );
@@ -393,18 +496,25 @@ async function verify(root, profile, requestedRisk='L1') {
     'PASS_WITH_WAIVERS'
   ]);
 
+  const automaticBlocked=builtInSecurity&&builtInSecurity.status!=='PASS';
+  const executedFailure=checks.some(check=>check.status!=='PASS'&&!waivedChecks.has(check.id));
   const status =
-    !stable || !policy || infrastructureBlocked
+    !stable || !policy || infrastructureBlocked || automaticBlocked
       ? 'BLOCK'
+      : executedFailure
+        ? 'FAIL'
       : allowedPolicyStatuses.has(policy.status)
         ? policy.status
         : 'BLOCK';
   const evidenceChecks=checks.map(check=>({...check,evidencePath:`reports/${kind}.json`}));
   const reportChecks=persistedChecks(evidenceChecks);
-  const result=await save(root,kind,{snapshot:before,riskLevel,status,checks:reportChecks,stable,qualityPolicy:policy||{status:'NOT_CONFIGURED',note:'Mandatory quality policy missing; legacy verification cannot pass'},coverage},evidenceKey(c));
+  const result=await save(root,kind,{snapshot:before,riskLevel,status,checks:reportChecks,browserAcceptance,secretScan,stable,qualityPolicy:policy||{status:'NOT_CONFIGURED',note:'Mandatory quality policy missing; legacy verification cannot pass'},coverage},evidenceKey(c));
+  const persistedReport=structuredClone(result);
   result.checks=evidenceChecks;
   result.reportChecks=reportChecks;
+  if(stable&&['PASS','WARN','PASS_WITH_WAIVERS'].includes(result.status))await writeVerificationCache(root,{key:cacheKey,profile,snapshotFingerprint:before.fingerprint,riskLevel,configurationFingerprint,toolVersion,checkIds:executionChecks,report:persistedReport,reportChecks,policy});
   await saveUnifiedQualityReport(root,{profile,verification:result,policy,review:null,config:c});
+  result.cache={hit:false,evidenceReportId:result.id,key:cacheKey};
   return result;
 }
 async function validateReview(review,items=reviewItems,root=null,riskLevel='L1') {
@@ -434,6 +544,59 @@ async function validateReview(review,items=reviewItems,root=null,riskLevel='L1')
     if (startLine>lines.length || endLine>lines.length || lines.slice(startLine-1,endLine).join('\n').includes(evidence.excerpt)===false) throw Error(`Review evidence does not match current source: ${id}`);
   }
 }
+const pendingReviewCheck = (id,fingerprint)=>({id,status:'WARN',evidence:{type:'not-verified',note:'Review not completed; replace this placeholder with actual evidence for the current snapshot.',snapshotFingerprint:fingerprint}});
+function validateReviewFilePath(value,label){
+ const file=requireText(value,label);
+ if(path.isAbsolute(file)||file.split(/[\\/]/).includes('..')||!file.toLowerCase().endsWith('.json'))throw Error(`${label} must be a workspace-relative JSON path`);
+ if(!isRuntimeState(file)&&!isExcludedSourcePath(file))throw Error(`${label} must be under an excluded runtime path such as reports/ so writing the template cannot invalidate its own snapshot`);
+ return file;
+}
+async function reviewTemplate(root,input,repair=false){
+ const c=await config(root),current=await snapshot(root);
+ const file=validateReviewFilePath(repair?input.reviewFile:input.outputPath||'reports/review.json',repair?'reviewFile':'outputPath');
+ if(!repair&&await exists(root,file)&&input.force!==true)throw Error('Review file already exists; use review repair or pass review init --force explicitly');
+ let parsed={},wrapped=false;
+ if(repair){
+  const text=await readRegularFile(root,file);
+  if(Buffer.byteLength(text)>8*1024*1024)throw Error('Review file exceeds 8 MiB');
+  parsed=JSON.parse(text);
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('Review file must contain a JSON object');
+  if(Object.hasOwn(parsed,'review')){
+   if(!parsed.review||typeof parsed.review!=='object'||Array.isArray(parsed.review))throw Error('Review wrapper property must be a JSON object');
+   wrapped=true;
+  }
+ }
+ const existing=wrapped?parsed.review:parsed;
+ if(existing&&(typeof existing!=='object'||Array.isArray(existing)))throw Error('Review object must be a JSON object');
+ const previous=existing||{},previousChecks=Array.isArray(previous.checks)?previous.checks:[];
+ if(previousChecks.some(item=>!item||typeof item!=='object'||typeof item.id!=='string'||!item.id))throw Error('Existing review checks must be objects with string ids');
+ if(new Set(previousChecks.map(item=>item.id)).size!==previousChecks.length)throw Error('Existing review contains duplicate check ids');
+ const expected=reviewItemsFor(c),previousById=new Map(previousChecks.map(item=>[item.id,item]));
+ const added=[],removed=previousChecks.map(item=>item.id).filter(id=>!expected.includes(id));
+ const fingerprintChanged=previous.fingerprint!==current.fingerprint;
+ const checks=expected.map(id=>{
+  const item=previousById.get(id);
+  if(!item){added.push(id);return pendingReviewCheck(id,current.fingerprint);}
+  const next=structuredClone(item);
+  const evidence=next.evidence;
+  if(!['PASS','BLOCK','WARN','INFO','NA'].includes(next.status)||evidence===undefined||evidence===null||(typeof evidence==='string'&&!evidence.trim())){added.push(id);return pendingReviewCheck(id,current.fingerprint);}
+  if(evidence&&typeof evidence==='object'&&!Array.isArray(evidence)&&['not-verified','not-applicable'].includes(evidence.type))evidence.snapshotFingerprint=current.fingerprint;
+  if(fingerprintChanged&&next.status==='PASS'){next.status='WARN';next.repairNote='Prior PASS preserved as evidence; re-confirm it against the current snapshot before restoring PASS.';}
+  return next;
+ });
+ const reviewer=input.reviewer?boundedText(requireText(input.reviewer,'reviewer'),256):typeof previous.reviewer==='string'&&previous.reviewer.trim()?previous.reviewer:'<reviewer>';
+ const review={...previous,reviewer,fingerprint:current.fingerprint,checks};
+ if(input.riskLevel!==undefined)review.riskLevel=normalizeRiskLevel(input.riskLevel);
+ const output=repair&&wrapped?{...parsed,review}:review;
+ const text=redactText(JSON.stringify(output,null,2)+'\n');
+ await write(root,file,text,!repair&&input.force!==true);
+ return {
+  status:repair?'REPAIRED':'INITIALIZED',path:file,fingerprint:current.fingerprint,reviewer,
+  checkCount:checks.length,added,removed,fingerprintUpdated:Boolean(fingerprintChanged),
+  pending:checks.filter(item=>item.status==='WARN').map(item=>item.id),
+  note:'Template output is not a quality approval. Replace not-verified evidence and complete the Review before quality-gate.'
+ };
+}
 async function quality(root, review, requestedRisk=null) {
   const c = await config(root);
   const before = await snapshot(root);
@@ -460,7 +623,8 @@ async function quality(root, review, requestedRisk=null) {
   const blocked = !stable || checks.some(c=>c.status==='BLOCK') || review.checks.some(c=>c.status==='BLOCK');
   const reuseWarnings=review.reuseReview?.checks?.some(c=>c.status==='WARN');
   const ruleWarnings=review.ruleReferences?.some(c=>c.status==='WARN');
-  const result=await save(root,'quality-gate',{projectRoot:root,workflowSourceSnapshot:await sourceSnapshot(root),snapshot:before,riskLevel,status:blocked?'BLOCK':review.checks.some(c=>c.status==='WARN')||reuseWarnings||ruleWarnings?'WARN':'PASS',checks,review,stable},evidenceKey(c));
+  const workflowSourceSnapshot=await sourceSnapshot(root);
+  const result=await save(root,'quality-gate',{projectRoot:root,workflowSourceSnapshot,snapshot:before,riskLevel,status:blocked?'BLOCK':review.checks.some(c=>c.status==='WARN')||reuseWarnings||ruleWarnings?'WARN':'PASS',checks,review,stable},evidenceKey(c));
   await saveUnifiedQualityReport(root,{profile:null,verification:null,policy:null,review:result,config:c});
   return result;
 }
@@ -475,9 +639,12 @@ async function readRegularFile(root,relative){
 export async function validateQualityReviewReport(root,report){
  const c=await config(root);validateReportIntegrity(report,evidenceKey(c),Boolean(evidenceKey(c)));
  if(report.projectRoot!==root||!report.stable||report.kind!=='quality-gate'||!['PASS','WARN','PASS_WITH_WAIVERS'].includes(report.status))throw Error('Quality review report project or status mismatch');
- if(report.snapshot?.fingerprint!==(await snapshot(root)).fingerprint)throw Error('Quality review report is stale');
- if(JSON.stringify(report.workflowSourceSnapshot)!==JSON.stringify(await sourceSnapshot(root)))throw Error('Quality review source snapshot is stale');
- return report.workflowSourceSnapshot;
+ const current=await snapshot(root);
+ if(report.snapshot?.fingerprint!==current.fingerprint)throw Error('Quality review report is stale; the repository snapshot changed. Re-run quality-gate against the current tree');
+ const currentSource=await sourceSnapshot(root),previousSource=report.workflowSourceSnapshot;
+ if(!previousSource||!Array.isArray(previousSource.manifest)||!snapshotIdentity(previousSource))throw Error(`Quality review source report is legacy and cannot be verified safely. ${describeSnapshotDrift(previousSource,currentSource)} Re-run quality-gate and submit the new reports/quality-gate.json`);
+ if(snapshotIdentity(previousSource)!==snapshotIdentity(currentSource))throw Error(`Quality review source snapshot is stale. ${describeSnapshotDrift(previousSource,currentSource)} Re-run quality-gate and submit the new reports/quality-gate.json; generated dependency, build and cache directories are excluded automatically`);
+ return currentSource;
 }
 export async function validateEvidenceChain(root, verification, unified, profile, key=null) {
   if (!verification?.id || !verification?.snapshot) throw Error('Invalid verification evidence');
@@ -512,6 +679,8 @@ async function gate(root, profile) {
   await validateEvidenceChain(root,local,unified,profile,key);
   validateReportIntegrity(review,key,Boolean(key));
   if(!unified.review || unified.review.reviewReportId!==review.id || unified.review.status!==review.status || unified.review.snapshot?.fingerprint!==review.snapshot?.fingerprint || JSON.stringify(unified.review.checks)!==JSON.stringify(review.checks)) throw Error('Review evidence missing, failed or stale');
+  if(!unified.dossierRef)throw Error('Review dossier reference missing; regenerate the unified quality report');
+  await validateReviewDossier(root,unified.dossierRef,{snapshotFingerprint:current.fingerprint,profiles:unified.profiles,reviewReport:review,reviewSummary:unified.review});
   for (const r of [local,review]) if (!r.stable || !['PASS','WARN','PASS_WITH_WAIVERS'].includes(r.status) || r.snapshot?.fingerprint !== current.fingerprint) throw Error('Missing, failed or stale quality evidence; rerun the configured verification and quality-gate');
   if (!['frontend-verify','engineering-verify'].includes(local.kind?.replace(/-(commit|full)$/,'')) || !['PASS','PASS_WITH_WAIVERS'].includes(local.status)) throw Error('Wrong verification profile');
   const required = checksForProfile(c,profile);
@@ -550,6 +719,12 @@ async function doctor(root) {
   }
   checks.push(c.tools?.architecture?{id:'architecture',...await runScript(root,c,c.tools.architecture)}:{id:'architecture',status:'INFO',reason:'Optional project architecture adapter is not configured'});
   checks.push(c.tools?.security?{id:'security-scan',...await runScript(root,c,c.tools.security)}:{id:'security-scan',status:'INFO',reason:'Optional project security scanner is not configured'});
+  const fullProfileChecks=checksForProfile(c,'full');
+  const configuredBrowserCheck=fullProfileChecks.find(isBrowserCheck);
+  if(configuredBrowserCheck)checks.push(c.verification?.profiles?.full?{id:'browser-acceptance',checkId:configuredBrowserCheck,status:c.tools.checks?.[configuredBrowserCheck]?'PASS':'BLOCK',reason:c.tools.checks?.[configuredBrowserCheck]?'Browser acceptance command is configured for full verification':'Configured browser acceptance command is missing'}:{id:'browser-acceptance',script:c.scripts?.browser||c.scripts?.e2e,status:'INFO',reason:'Browser acceptance command is configured; doctor does not execute it. Full verification will record the real result'});
+  else checks.push({id:'browser-acceptance',status:'INFO',reason:'No project-owned browser acceptance command is configured; source inspection is not browser evidence'});
+  const configuredSecurityCheck=fullProfileChecks.find(isSecurityCheck);
+  if(!configuredSecurityCheck)checks.push({id:'secret-scan',mode:'builtin',status:'INFO',reason:'No project security scanner is configured for full verification; the controller will run a local high-confidence scan of changed source without network access'});
   const pkg=await json(root,'package.json').catch(()=>({scripts:{}}));
   if(c.scripts?.visual){
     if(!pkg.scripts?.[c.scripts.visual])checks.push({id:'visual',status:'BLOCK',reason:'Configured visual script is missing'});
@@ -639,6 +814,8 @@ async function dispatch(root, input) {
   if (input.action === 'snapshot') return snapshot(root);
   if (['frontend-verify','local-verify','engineering-verify'].includes(input.action)) return verify(root,input.profile || 'full',input.riskLevel || 'L1');
   if (input.action === 'quality-gate') return quality(root,input.review,input.riskLevel);
+  if (input.action === 'quality-review-init') return reviewTemplate(root,input,false);
+  if (input.action === 'quality-review-repair') return reviewTemplate(root,input,true);
   if (input.action === 'pre-commit-check') return commitCheck(root);
   if (input.action === 'pre-pr-check') return save(root,'pre-pr-check',await prePr(root));
   if (input.action === 'doctor') return doctor(root);
@@ -646,10 +823,12 @@ async function dispatch(root, input) {
 }
 export async function run(input) {
   if (!input || typeof input.project !== 'string' || !path.isAbsolute(input.project)) throw Error('project must be an absolute path');
+  const plugin = await fs.realpath(fileURLToPath(new URL('../../',import.meta.url)));
+  if(input.action==='help') return helpInfo(plugin);
   const root = await fs.realpath(input.project);
   if (!(await fs.stat(root)).isDirectory()) throw Error('project must be a directory');
-  const plugin = await fs.realpath(fileURLToPath(new URL('../../',import.meta.url)));
   if(root===plugin || root.startsWith(plugin+path.sep)) throw Error('Target project must not be inside the plugin installation');
+  if(input.action==='workspace-status'||input.action==='workspace-next') return inspectWorkflow(root,{changeId:input.changeId||null});
   if(input.action==='snapshot') return snapshot(root);
   if(input.action==='doctor' && !(await exists(root,'.instar-quality.json'))) return doctor(root);
   let handle, lock;

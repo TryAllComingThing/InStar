@@ -2,7 +2,7 @@
 
 InStar 是一个 Codex 软件交付插件，支持前后端协同的需求、Spec、设计、任务与验证流程。前端 Vue 质量门禁是当前成熟的专项能力；后端可复用 API、数据库、安全和多语言规范，并通过 `engineering-verify` 配置项目自己的检查命令。插件只负责编排，不实现 ESLint、测试、安全扫描或 CI 引擎。
 
-Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约定发现的架构/设计文档与可选 `standards/`，并将规则纳入生成上下文。插件内 `standards/` 按通用、语言、API、数据库分层；Skill 根据代码和任务按需加载，不把建议强加给项目。架构规范由项目维护；InStar 不强制采用特定架构模式。
+Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约定发现的架构/设计文档与可选 `standards/`，并将规则纳入生成上下文。`AGENTS.md` 按“根目录 → 变更专属 → 与 affectedPaths 最近的目录”加载，最多 40 个文件、单文件 12 KiB、合计 48 KiB；超限时返回 `guidanceBudget` 的截断/省略元数据。插件内 `standards/` 按通用、语言、API、数据库分层；Skill 通过 `standards/index.json` 先选择最多 6 张紧凑规则卡（内联上限 6144 字节），规则卡返回真实章节 `sections`（锚点、起止行、字节数、哈希）与 `ruleRefs`，仅在规则有歧义或需要完整示例时打开对应章节，不把建议强加给项目。`skills/index.json` 先按阶段和触发条件路由 Skill，`skills/references.json` 作为二级引用索引提供摘要、适用阶段与 `loadWhen`；选中的入口返回 `entryBytes`、可加载引用和 `detailLoaded:false`，避免先加载全部 Skill 正文或全部参考文件。架构规范由项目维护；InStar 不强制采用特定架构模式。
 
 ## 文档索引
 
@@ -20,9 +20,11 @@ Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约
 
 `extract-design-md` 从现有前端代码整理完整的视觉设计说明，涵盖色彩、字体、间距、组件、布局和响应式行为，并按请求写入项目根目录 `DESIGN.md`。它保留源码中的原始值和项目命名，区分观察事实与设计解释，不修改应用样式。
 
-需求流程必须经过 PRD 人工确认，再进入 Spec；Spec 变更会重新验证并等待确认；生成技术设计和任务后，用户需明确批准完整实施计划才能开始实现。实现后先由 `quality-gate` 产生稳定的当前快照评审，再提交工程验证；最终验收仍需单独确认。工作流记录支持 `trace-skill` 的 canonical 名称和路径形式，并通过 `list-skills` 返回可用 Skill。InStar 不创建 `.instar-quality.json`。
+需求流程必须经过 PRD 人工确认，再进入 Spec；Spec 变更会重新验证并等待确认；生成技术设计和任务后，用户需明确批准完整实施计划才能开始实现。实现后先由 `quality-gate` 产生稳定的当前快照评审，再提交工程验证；最终验收仍需单独确认。工作流记录支持 `trace-skill` 的 canonical 名称和路径形式，通过 `list-skills` 返回可用 Skill，并用 `route-skills` 先取得紧凑路由结果。InStar 不创建 `.instar-quality.json`。
 
 工作流控制器会将成功的状态变更写入目标项目 `.workflow/traces.jsonl`；requirements-workflow 按指引登记 specialist Skill 的开始/结束。`quality-evaluation` 为 PRD、Spec、技术设计和任务输出带原文证据及指纹的语义评测报告。评测和 Skill 轨迹是本地可编辑的辅助证据，不替代人工审批或证明模型实际执行。
+
+新变更可声明 `lane` 和精确的 `affectedPaths`。省略 lane 时控制器按内置与项目 `riskPolicy.rules` 推断：L0/L1 小范围可用 `fast`，L2 至少 `standard`，L3 使用 `regulated`；显式 lane 不能低于风险下限。fast lane 记录 30–38 分钟目标、28M token 上限，并限制模型响应、工具调用、浏览器动作、质量门禁和四次必需阶段语义评测；超出预算时 `status`/`next` 给出警告但不绕过门禁。时间预算基于终态 Skill 的 `durationMs`，并单独展示 `activeMs`、`waitMs` 和日历 `elapsedMs`。任务完成使用一次 `complete-tasks` 批量提交证据，terminal `trace-skill` 可附带代理或宿主报告的 `metrics`。这些是控制器记录的预算和代理数据，不是对外部实际耗时、token 计费或人力的保证。
 
 ### 从现有源码生成 Spec
 
@@ -103,6 +105,9 @@ codex plugin add instar@instar-local
 发布包提供无需记忆 JSON 的快捷入口：
 
 ```sh
+node <plugin>/bin/instar.mjs help
+node <plugin>/bin/instar.mjs status --project .
+node <plugin>/bin/instar.mjs next --project .
 node <plugin>/bin/instar.mjs doctor
 node <plugin>/bin/instar.mjs snapshot --project .
 node <plugin>/bin/instar.mjs verify --profile full
@@ -131,6 +136,7 @@ InStar 可以将工作流阶段、人工审批、项目检查结果和 PR/CI 状
 
 - `verify` 通过：表示项目配置的检查命令成功，不表示代码正确或没有漏洞。
 - `quality-gate` 通过：表示 AI 辅助 Review 的结构和适用检查结果满足流程要求，不替代人工代码评审。
+- `review-dossier.json`：只索引同一快照下验证与 Review 的报告 ID、检查哈希和证据位置；门禁会与源报告交叉校验，dossier 本身不是通过结论。
 - 风险等级：控制器会根据内置敏感路径和项目 `riskPolicy.rules` 自动提升风险，不能把已识别的高风险变更降级为 L1；L3 需要人工角色，远端 required checks 仅在项目接入 CI/GitHub 时启用。
 - 安全检查通过：只有在项目配置的真实扫描工具成功运行，并且对应 CI Check 受保护时才可这样描述；未配置的扫描器不能视为通过。
 - `spec-discover` 产物：描述源码观察到的当前行为，不等于业务方批准的目标需求。

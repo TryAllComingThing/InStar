@@ -9,6 +9,8 @@ Map applicable requirements and scenarios to implementation evidence and tests. 
 
 Run checks proportionate to the change: configured types/static checks, relevant unit/component tests, production build, and critical browser journeys. Inspect applicable loading, empty, error, responsive, keyboard and focus behavior. Record commands, observed results and relevant screenshots or paths. Do not claim a browser check when only source inspection was possible.
 
+For a stable snapshot, run one consolidated verification. Batch the critical browser journeys into a single planned suite, keep the fast-lane ceiling to 24 browser actions, and stop at the first concrete failure instead of probing every control or repeating a passing journey. After a fix, rerun the failed journey and only the checks it invalidates. A verification report with `cache.hit: true` is valid reused evidence for the same snapshot, configuration, check set and tool version; do not rerun those commands merely to produce another report.
+
 Report blocking defects with reproduction steps and concrete source references. Distinguish warnings from confirmed failures. Mark unavailable checks Not verified with a reason, not passing. Product corrections can continue within the user's authorized scope; requirement/design changes return to the planning workflow.
 
 Summarize verified behavior and remaining limits for human acceptance. Never set `accepted: true` from your own assessment. After real acceptance the caller can use the promotion adapter described in the [workflow guide](../requirements-workflow/references/controller.md).

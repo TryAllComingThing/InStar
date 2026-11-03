@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "policy": "Reference bodies are deferred. Use this secondary index to choose the smallest applicable reference, then open only its path.",
+  "references": [
+    {
+      "path": "skills/requirements-workflow/references/controller.md",
+      "kind": "contract",
+      "stages": ["prd", "spec", "design", "tasks", "implementation", "verification", "acceptance"],
+      "summary": "Workflow actions, state transitions, required inputs and handoff contracts.",
+      "loadWhen": "Load when invoking workflow-controller or checking an action contract.",
+      "authority": "canonical",
+      "risk": "high"
+    },
+    {
+      "path": "skills/spec-explore/references/exploration-playbook.md",
+      "kind": "method",
+      "stages": ["prd", "spec"],
+      "summary": "Question-driven exploration sequence and decision capture.",
+      "loadWhen": "Load for open-ended discovery or option comparison.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/spec-explore/references/architecture-discovery.md",
+      "kind": "method",
+      "stages": ["prd", "spec"],
+      "summary": "Evidence collection for existing architecture, boundaries and integrations.",
+      "loadWhen": "Load when the project architecture is unfamiliar or ambiguous.",
+      "authority": "supporting",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/spec-explore/references/planning-discovery.md",
+      "kind": "method",
+      "stages": ["prd"],
+      "summary": "Discovery of existing planning artifacts, dependencies and prior decisions.",
+      "loadWhen": "Load before a new PRD when planning context may already exist.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/spec-propose/references/authoring.md",
+      "kind": "method",
+      "stages": ["spec"],
+      "summary": "Delta-spec authoring shape, traceability and scenario rules.",
+      "loadWhen": "Load when the Skill entry does not cover the required spec detail.",
+      "authority": "supporting",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/spec-propose/references/ported-method.md",
+      "kind": "method",
+      "stages": ["spec"],
+      "summary": "Ported upstream proposal workflow details and edge cases.",
+      "loadWhen": "Load only for upstream compatibility or ambiguous proposal behavior.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/spec-verify/references/ported-method.md",
+      "kind": "method",
+      "stages": ["spec"],
+      "summary": "Ported document-gate method and validation edge cases.",
+      "loadWhen": "Load only when the gate contract needs deeper interpretation.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/spec-design/references/authoring.md",
+      "kind": "method",
+      "stages": ["design"],
+      "summary": "Technical-design sections, decisions, file plan and risk guidance.",
+      "loadWhen": "Load when selecting design structure or resolving project constraints.",
+      "authority": "supporting",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/spec-design/references/ported-method.md",
+      "kind": "method",
+      "stages": ["design"],
+      "summary": "Ported design workflow details and upstream edge cases.",
+      "loadWhen": "Load only for upstream compatibility or ambiguous design behavior.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/spec-tasks/references/authoring.md",
+      "kind": "method",
+      "stages": ["tasks"],
+      "summary": "Task sizing, dependency order and acceptance-evidence patterns.",
+      "loadWhen": "Load when task decomposition rules are not already sufficient.",
+      "authority": "supporting",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/spec-tasks/references/ported-method.md",
+      "kind": "method",
+      "stages": ["tasks"],
+      "summary": "Ported task workflow details and validation edge cases.",
+      "loadWhen": "Load only for upstream compatibility or ambiguous task behavior.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/reuse-discover/references/protocol.md",
+      "kind": "protocol",
+      "stages": ["design", "implementation"],
+      "summary": "Reuse candidate comparison and decision protocol.",
+      "loadWhen": "Load when a reuse decision requires the full protocol.",
+      "authority": "canonical",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/extract-design-md/references/vue.md",
+      "kind": "stack",
+      "stages": ["prd", "design"],
+      "summary": "Vue component, CSS and design-token extraction hints.",
+      "loadWhen": "Load only when the frontend stack is Vue.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/extract-design-md/references/plain-css.md",
+      "kind": "stack",
+      "stages": ["prd", "design"],
+      "summary": "Plain CSS structure and design-token extraction hints.",
+      "loadWhen": "Load only when styling is plain CSS without a component framework.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/extract-design-md/references/react-tailwind.md",
+      "kind": "stack",
+      "stages": ["prd", "design"],
+      "summary": "React and Tailwind component and token extraction hints.",
+      "loadWhen": "Load only when the frontend stack is React with Tailwind.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/quality-gate/references/review-matrix.md",
+      "kind": "checklist",
+      "stages": ["verification"],
+      "summary": "Risk-tier review checks and technology-specific review matrix.",
+      "loadWhen": "Load when preparing or auditing a quality review.",
+      "authority": "canonical",
+      "risk": "high"
+    },
+    {
+      "path": "skills/quality-gate/references/evidence-and-boundaries.md",
+      "kind": "contract",
+      "stages": ["verification"],
+      "summary": "Evidence validity, snapshot binding and review boundaries.",
+      "loadWhen": "Load when a review needs evidence or boundary interpretation.",
+      "authority": "canonical",
+      "risk": "high"
+    },
+    {
+      "path": "skills/project-discover/references/discovery.md",
+      "kind": "method",
+      "stages": ["prd", "spec", "design"],
+      "summary": "Read-only project discovery scopes and evidence rules.",
+      "loadWhen": "Load when capturing project architecture or engineering constraints.",
+      "authority": "supporting",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/project-discover/references/deliverables.md",
+      "kind": "contract",
+      "stages": ["prd", "spec", "design"],
+      "summary": "Baseline deliverables, registry files and output layout.",
+      "loadWhen": "Load when writing or validating discovery deliverables.",
+      "authority": "canonical",
+      "risk": "medium"
+    },
+    {
+      "path": "skills/project-discover/references/baseline-registry.md",
+      "kind": "protocol",
+      "stages": ["prd", "spec", "design"],
+      "summary": "Baseline registry integration, adoption and freshness contract.",
+      "loadWhen": "Load when rules.json exists or baseline integration is required.",
+      "authority": "canonical",
+      "risk": "high"
+    },
+    {
+      "path": "skills/spec-discover/references/protocol.md",
+      "kind": "protocol",
+      "stages": ["spec"],
+      "summary": "Current-state spec discovery, review and capture protocol.",
+      "loadWhen": "Load when generating or updating baseline specs.",
+      "authority": "canonical",
+      "risk": "high"
+    },
+    {
+      "path": "skills/spec-discover/references/ported-method.md",
+      "kind": "method",
+      "stages": ["spec"],
+      "summary": "Ported upstream spec-discovery edge cases and sequencing.",
+      "loadWhen": "Load only for upstream compatibility or ambiguous discovery behavior.",
+      "authority": "supporting",
+      "risk": "low"
+    },
+    {
+      "path": "skills/spec-discover/references/upstream-explore.ts",
+      "kind": "archive",
+      "stages": ["spec"],
+      "summary": "Upstream exploration source retained for audit and edge-case lookup.",
+      "loadWhen": "Load only when auditing upstream behavior or missing protocol detail.",
+      "authority": "archive",
+      "risk": "low"
+    }
+  ]
+}

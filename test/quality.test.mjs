@@ -10,7 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {run,reviewItems} from '../runtime/quality-controller/index.mjs';
+import {run,reviewItems,validateQualityReviewReport} from '../runtime/quality-controller/index.mjs';
 import {redactData} from '../runtime/shared/redaction.mjs';
 const hook=new URL('../hooks/quality-hook.mjs',import.meta.url);
 const qualityCli=new URL('../runtime/quality-controller/cli.mjs',import.meta.url);
@@ -208,8 +208,9 @@ test('schema 3 engineering verification runs project commands without npm coupli
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  const result=await f.call('engineering-verify',{profile:'full'});
  assert.equal(result.kind,'engineering-verify-full');assert.equal(result.status,'PASS');
- assert.deepEqual(result.checks.map(check=>check.id),['go-vet','go-test']);
+ assert.deepEqual(result.checks.map(check=>check.id),['go-vet','go-test','secret-scan']);
  assert.equal(typeof result.checks[0].outputHash,'string');
+ assert.equal(result.secretScan.mode,'builtin');assert.equal(result.secretScan.status,'VERIFIED');
  assert.equal(result.coverage.basis,'project-configured-checks');assert.match(result.coverage.note,/does not independently prove/);
  assert.equal((await f.call('quality-gate',{review:await f.review()})).status,'PASS');
  await f.call('ai-provenance',{aiGenerated:false,sessionId:'backend-fixture',summary:'Configured backend command profile verified'});
@@ -433,4 +434,21 @@ test('CI check assessment blocks missing, pending and failed required checks',as
  assert.equal(assessChecks([{name:'Frontend checks',bucket:'pass',state:'SUCCESS'}],['Frontend checks','Security scan']).status,'BLOCK');
  assert.equal(assessChecks([{name:'Frontend checks',bucket:'pass',state:'SUCCESS'},{name:'Security scan',bucket:'pending',state:'IN_PROGRESS'}],['Frontend checks','Security scan']).status,'PENDING');
  assert.equal(assessChecks([{name:'Frontend checks',bucket:'pass',state:'SUCCESS'},{name:'Security scan',bucket:'fail',state:'FAILURE'}],['Frontend checks','Security scan']).status,'BLOCK');
+});
+
+test('nested dependencies, generated outputs and caches do not invalidate a bound quality review',async t=>{
+ const f=await fixture(t);const gate=await f.call('quality-gate',{review:await f.review()});assert.equal(gate.status,'PASS');
+ const report=JSON.parse(await readFile(path.join(f.project,'reports/quality-gate.json'),'utf8'));
+ await mkdir(path.join(f.project,'.venv/bin'),{recursive:true});
+ await writeFile(path.join(f.project,'.venv/bin/tool'),'dependency');
+ if(await symlinkAvailable(t))await symlink(process.execPath,path.join(f.project,'.venv/bin/python'));
+ await mkdir(path.join(f.project,'dist'),{recursive:true});
+ await writeFile(path.join(f.project,'dist/generated.js'),'build output');
+ await mkdir(path.join(f.project,'src/__pycache__'),{recursive:true});
+ await writeFile(path.join(f.project,'src/__pycache__/module.pyc'),'cache');
+ await writeFile(path.join(f.project,'.DS_Store'),'metadata');
+ const validated=await validateQualityReviewReport(report.projectRoot,report);
+ assert.equal(validated.treeHash,gate.workflowSourceSnapshot.treeHash);
+ const {workflowSourceSnapshot,...legacyContent}=report,legacy=reseal(legacyContent);
+ await assert.rejects(validateQualityReviewReport(report.projectRoot,legacy),/legacy/);
 });

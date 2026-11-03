@@ -6,12 +6,42 @@ import {redactData,boundedText} from '../shared/redaction.mjs';
 import {baselineContext,adoptRules,validateRuleReferences,baselineCheck} from '../shared/project-baseline.mjs';
 import {reuseContext,validateReuseDecisions,validateReuseReview,validateReusePlan} from '../shared/code-reuse.mjs';
 import {workflowWritePaths} from './write-set.mjs';
+import {describeSnapshotDrift,snapshotIdentity} from '../shared/source-snapshot.mjs';
+import {initialEfficiency,laneAtLeast,normalizeLane,recommendedLane,summarizeEfficiency,validateMetrics} from '../shared/efficiency.mjs';
+import {selectSkills} from '../shared/skills-index.mjs';
+import {constants as fsConstants} from 'node:fs';
+import path from 'node:path';
 const statePath=id=>`planning/workflows/${identifier(id)}.json`;
 const requireStage=(s,...stages)=>{if(!stages.includes(s.stage)||s.status==='completed'||s.pendingApproval)throw Error(`Action unavailable in ${s.stage}/${s.status}`);};
+async function projectRiskPolicy(root){
+ if(!await exists(safe(root,'.instar-quality.json')))return null;
+ let config;
+ try{config=await json(root,'.instar-quality.json');}catch(error){throw Error(`Unable to read .instar-quality.json for risk-aware lane selection: ${error.message}`);}
+ if(config?.riskPolicy===undefined)return null;
+ if(!config.riskPolicy||typeof config.riskPolicy!=='object'||Array.isArray(config.riskPolicy))throw Error('Invalid riskPolicy configuration');
+ return config.riskPolicy;
+}
 async function pending(root,s,kind){s.status='awaiting-approval';s.pendingApproval=kind;s.pendingReview={kind,hash:await approvalHash(root,s,kind)};}
 function clearPending(s){s.pendingApproval=null;s.pendingReview=null;s.status='in-progress';}
 function packageInput(input){requireText(input.proposal,'proposal');if(!input.specs||typeof input.specs!=='object'||Array.isArray(input.specs)||!Object.keys(input.specs).length)throw Error('specs must be a nonempty mapping');for(const [id,doc] of Object.entries(input.specs)){identifier(id,true);requireText(doc,'spec');}return {proposal:input.proposal,specs:input.specs};}
+function affectedPaths(value=[]){if(!Array.isArray(value)||value.length>50||value.some(p=>typeof p!=='string'||!p||p.includes('..')||p.includes('\\')||p.startsWith('/')))throw Error('Invalid affectedPaths');return value;}
 async function completed(root,s){const items=taskItems(await read(changeDir(root,s.changeId),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');}
+async function completeTasks(root,s,inputTasks){
+ requireStage(s,'implementation');await assertApprovals(root,s,{spec:true,implementation:true});
+ if(!Array.isArray(inputTasks)||!inputTasks.length||inputTasks.length>100)throw Error('tasks must contain 1-100 completion records');
+ const dir=changeDir(root,s.changeId),doc=await read(dir,'tasks.md'),items=taskItems(doc),byId=new Map(items.map(item=>[item.id,item])),seen=new Set(),completions=[];
+ for(const input of inputTasks){
+  if(!input||typeof input!=='object'||Array.isArray(input))throw Error('Each task completion must be an object');
+  const taskId=requireText(input.taskId,'taskId'),evidence=requireText(input.evidence,'evidence');
+  if(seen.has(taskId))throw Error(`Duplicate completed task: ${taskId}`);seen.add(taskId);
+  const item=byId.get(taskId);if(!item||item.done)throw Error(`Task missing or already complete: ${taskId}`);
+  completions.push({taskId,evidence,line:item.line});
+ }
+ const lines=doc.split('\n');for(const item of completions)lines[item.line]=lines[item.line].replace('- [ ]','- [x]');
+ await atomic(dir,'tasks.md',lines.join('\n'));
+ for(const item of completions)s.taskEvidence[item.taskId]={evidence:item.evidence,at:now()};
+ return completions.length;
+}
 async function gate(ref){const result=await engine.runSpecVerifyGate(ref);if(!result.valid)throw Error(result.issues.join('\n'));return result;}
 function normalizeSkillName(value){
  const raw=requireText(value,'skill').replaceAll('\\','/');
@@ -48,6 +78,7 @@ async function recordSkillTrace(root,input){
  if(input.event==='started'&&same.length)throw Error(`Skill invocation already exists: ${invocationId}`);
  if(['completed','failed'].includes(input.event)&&(!same.some(record=>record.event==='started')||same.some(record=>['completed','failed'].includes(record.event))))throw Error(`Skill invocation must have exactly one open lifecycle: ${invocationId}`);
  const record={type:'skill-invocation',changeId:input.changeId,skill,event:input.event,invocationId,summary,stage:input.stage||null,at:now()};
+ if(input.metrics!==undefined)record.metrics=validateMetrics(input.metrics);
  if(input.outcome!==undefined){
   if(!['string','number','boolean'].includes(typeof input.outcome)&&(!input.outcome||typeof input.outcome!=='object'||Array.isArray(input.outcome)))throw Error('outcome must be a string, number, boolean or object');
   const serialized=JSON.stringify(input.outcome);if(Buffer.byteLength(serialized)>4096)throw Error('outcome exceeds 4096 byte limit');record.outcome=redactData(input.outcome);
@@ -62,8 +93,31 @@ function checkRecord(input){
  if(!allowed.includes(input.outcome))throw Error(`Invalid check outcome for ${input.name}; expected ${allowed.join(' or ')}`);
  return {...input,applicable};
 }
+function assertCurrentSnapshot(previous,current,label){
+ const before=snapshotIdentity(previous),after=snapshotIdentity(current);
+ if(!before||before!==after)throw Error((label==='Verification evidence'?'Source tree changed after verification; ':'')+label+' is stale. '+describeSnapshotDrift(previous,current)+' Recovery: run quality-gate against the current tree, bind the new reports/quality-gate.json with submit-quality-review, then submit verification evidence again.');
+}
+async function readWorkspaceJson(root,relative,label){
+ if(typeof relative!=='string'||!relative.trim()||path.isAbsolute(relative)||relative.split(/[\\/]/).includes('..'))throw Error(label+' must be a workspace-relative JSON path');
+ const file=safe(root,relative),stat=await fs.lstat(file);
+ if(stat.isSymbolicLink()||!stat.isFile())throw Error(label+' must be a regular workspace file');
+ if(stat.size>16*1024*1024)throw Error(label+' exceeds the 16 MiB report limit');
+ const real=await fs.realpath(file);
+ if(real!==root&&!real.startsWith(root+path.sep))throw Error(label+' must stay inside the workspace');
+ let handle,text;
+ try{
+  handle=await fs.open(file,fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
+  const opened=await handle.stat();
+  if(!opened.isFile())throw Error(label+' must be a regular workspace file');
+  if(opened.size>16*1024*1024)throw Error(label+' exceeds the 16 MiB report limit');
+  text=await handle.readFile('utf8');
+ }catch(error){if(String(error.message).startsWith(label))throw error;throw Error(`Unable to read ${label}: ${error.message}`);}
+ finally{if(handle)await handle.close();}
+ try{return JSON.parse(text);}catch(error){throw Error(label+' is not valid JSON: '+error.message);}
+}
 export async function run(input){
  if(input.action==='list-skills')return {skills:await availableSkills()};
+ if(input.action==='route-skills')return selectSkills({context:input.context||'',stage:input.stage||null});
  if(['recovery-status','prune-recovery'].includes(input.action)){const root=await projectRoot(input.project);const {recoveryStore}=await import('./recovery.mjs');return lock(root,()=>recoveryStore(root,input));}
  if(input.action==='baseline-check')return baselineCheck(await projectRoot(input.project));
  if(input.action==='reuse-context')return reuseContext(await projectRoot(input.project));
@@ -75,7 +129,8 @@ export async function run(input){
  if(input.action==='trace-skill')return lock(root,()=>recordSkillTrace(root,{...input,changeId:id}));
  if(input.action==='state'||input.action==='context'){
   if(await exists(safe(root,'.workflow/pending.json')))throw Error('Recovery required before reading workflow');
-  const s=await json(root,file);return input.action==='state'?s:{state:s,...await generationContext(root,s)};
+  const s=await json(root,file),efficiencySummary=summarizeEfficiency({state:s,traces:await traceRecords(root)});
+  return input.action==='state'?{...s,efficiencySummary}:{state:s,efficiencySummary,...await generationContext(root,s,{knownContextHash:input.knownContextHash})};
  }
  return lock(root,async()=>{
   if(input.action==='evaluate-quality'){
@@ -90,8 +145,9 @@ export async function run(input){
    let s;
    if(input.action==='start'){
     if(await exists(safe(root,file))||await exists(changeDir(root,id))||await exists(safe(root,'planning/archive',id))||await exists(safe(root,`docs/prd/${id}.md`)))throw Error('Change already exists');
-    s={schemaVersion:1,changeId:id,prdPath:`docs/prd/${id}.md`,stage:'prd',status:'in-progress',pendingApproval:null,pendingReview:null,approvals:{},taskEvidence:{},clarifications:[],version:0,history:[]};
-    if(input.affectedPaths!==undefined){if(!Array.isArray(input.affectedPaths)||input.affectedPaths.some(p=>typeof p!=='string'||!p||p.includes('..')||p.includes('\\')||p.startsWith('/')))throw Error('Invalid affectedPaths');s.affectedPaths=input.affectedPaths;}
+    const paths=input.affectedPaths===undefined?[]:affectedPaths(input.affectedPaths),minimumLane=recommendedLane({affectedPaths:paths,riskPolicy:await projectRiskPolicy(root)}),lane=normalizeLane(input.lane??minimumLane);
+    if(!laneAtLeast(lane,minimumLane))throw Error(`lane ${lane} is below the risk-aware minimum ${minimumLane}; choose ${minimumLane} or a stricter lane`);
+    s={schemaVersion:1,changeId:id,prdPath:`docs/prd/${id}.md`,stage:'prd',status:'in-progress',pendingApproval:null,pendingReview:null,approvals:{},taskEvidence:{},clarifications:[],version:0,history:[],affectedPaths:paths,efficiency:initialEfficiency({lane,affectedPaths:paths,minimumLane,startedAt:now()})};
     await atomic(root,s.prdPath,requireText(input.document,'document'));
    }else{
     s=await json(root,file);if(input.expectedVersion!==s.version)throw Error('Stale expectedVersion; read state again');
@@ -110,7 +166,7 @@ export async function run(input){
       for(const answer of input.answers){const q=(s.clarifications||[]).find(x=>x.id===answer.id);if(!q)throw Error('Unknown clarification id');if(q.answer)throw Error('Clarification already answered');q.answer=requireText(answer.answer,'answer');q.answeredAt=now();}
       if(s.clarifications.every(q=>q.answer))s.status='in-progress';break;
      }
-     case 'save-prd':requireStage(s,'prd');if(input.affectedPaths!==undefined){if(!Array.isArray(input.affectedPaths)||input.affectedPaths.some(p=>typeof p!=='string'||!p||p.includes('..')||p.includes('\\')||p.startsWith('/')))throw Error('Invalid affectedPaths');s.affectedPaths=input.affectedPaths;}
+     case 'save-prd':requireStage(s,'prd');if(input.affectedPaths!==undefined)s.affectedPaths=affectedPaths(input.affectedPaths);
     await atomic(root,s.prdPath,requireText(input.document,'document'));s.status='in-progress';break;
      case 'submit-prd':requireStage(s,'prd');await pending(root,s,'prd');break;
      case 'approve':{
@@ -145,18 +201,18 @@ export async function run(input){
       const baseline=await baselineContext(root,s.affectedPaths||[]);
       if(input.action==='write-design'){validateRuleReferences(baseline,input.ruleReferences);s.designBaselineHash=baseline.fingerprint;}
       const stage=input.action==='write-design'?'design':'tasks';requireStage(s,stage);await assertApprovals(root,s,{spec:true});const ctx=await generationContext(root,s);if(input.contextHash!==ctx.contextHash)throw Error('Generation context changed');requireText(input.document,'document');
-      if(stage==='design'){await engine.generateDesignDoc({...ref,specReviewed:true,generate:async()=>input.document});s.designConstraintsHash=hash(ctx.context.projectArchitecture.guidance);s.designStandardsHash=hash(ctx.context.projectArchitecture.standards);s.designInStarReferencesHash=ctx.context.instarReferences.fingerprint;s.stage='tasks';}
+      if(stage==='design'){await engine.generateDesignDoc({...ref,specReviewed:true,generate:async()=>input.document});s.designConstraintsHash=ctx.context.projectArchitecture.guidanceFingerprint;s.designStandardsHash=hash(ctx.context.projectArchitecture.standards);s.designInStarReferencesHash=ctx.context.instarReferences.fingerprint;s.stage='tasks';}
       else{if(taskItems(input.document).some(t=>t.done))throw Error('New tasks must be unchecked');await engine.generateTaskList({...ref,generate:async()=>input.document});s.stage='implementation';await pending(root,s,'implementation');}break;
      }
-     case 'complete-task':{
-      requireStage(s,'implementation');await assertApprovals(root,s,{spec:true,implementation:true});requireText(input.evidence,'evidence');const dir=changeDir(root,id),doc=await read(dir,'tasks.md');const task=taskItems(doc).find(x=>x.id===input.taskId);if(!task||task.done)throw Error('Task missing or already complete');const lines=doc.split('\n');lines[task.line]=lines[task.line].replace('- [ ]','- [x]');await atomic(dir,'tasks.md',lines.join('\n'));s.taskEvidence[task.id]={evidence:input.evidence,at:now()};break;
-     }
+     case 'complete-task':{await completeTasks(root,s,[{taskId:input.taskId,evidence:input.evidence}]);break;}
+     case 'complete-tasks':{await completeTasks(root,s,input.tasks);break;}
      case 'submit-implementation':{
       requireStage(s,'implementation');await assertApprovals(root,s,{spec:true,implementation:true});const items=taskItems(await read(changeDir(root,id),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');s.stage='verification';s.status='in-progress';break;
      }
      case 'submit-quality-review':{
       requireStage(s,'verification');await assertApprovals(root,s,{spec:true,implementation:true});
-      const qualityReview=input.report;
+      const reportPath=input.reportPath||input.fromReport;
+      const qualityReview=input.report||(reportPath?await readWorkspaceJson(root,reportPath,'review report'):null);
       if(!qualityReview||typeof qualityReview!=='object'||!['PASS','WARN','PASS_WITH_WAIVERS'].includes(qualityReview.status))throw Error('A current PASS, WARN or PASS_WITH_WAIVERS quality-gate report is required');
       if(qualityReview.kind!=='quality-gate'||qualityReview.stable!==true||typeof qualityReview.snapshot?.fingerprint!=='string'||!qualityReview.snapshot.fingerprint.trim())throw Error('Quality-gate report must be stable and include a snapshot fingerprint');
       const reuse=await reuseContext(root);validateReuseReview(reuse,qualityReview.review?.reuseReview);await validateReusePlan(root,reuse,qualityReview.review?.reuseReview);
@@ -171,13 +227,15 @@ export async function run(input){
       const checks=input.checks.map(checkRecord);
       if(!checks.some(check=>check.applicable))throw Error('At least one applicable verification check is required');
       if(!s.qualityReview)throw Error('Current quality-gate review is required before verification');
-      if(hash(s.qualityReview.sourceSnapshot)!==hash(await sourceSnapshot(root)))throw Error('Quality-gate review is stale; run quality-gate again');
+      const currentSource=await sourceSnapshot(root);
+      assertCurrentSnapshot(s.qualityReview.sourceSnapshot,currentSource,'Quality-gate review');
       s.verification={report:review,checks,at:now()};
-      s.verification.sourceSnapshot=await sourceSnapshot(root);
+      s.verification.sourceSnapshot=currentSource;
       if(review.issues.some(x=>x.severity==='critical')||review.unverified.length||checks.some(x=>x.applicable&&x.outcome!=='passed'))s.status='blocked';else await pending(root,s,'acceptance');break;
      }
      case 'archive':{
-      requireStage(s,'archive');await completed(root,s);await assertApprovals(root,s,{spec:true,implementation:true});if(s.approvals.acceptance?.hash!==await approvalHash(root,s,'acceptance'))throw Error('Acceptance missing or stale');if(!s.verification?.sourceSnapshot||hash(s.verification.sourceSnapshot)!==hash(await sourceSnapshot(root)))throw Error('Source tree changed after verification; reopen implementation and verify again');s.promotion=await engine.promoteToBaseline({...ref,accepted:true});s.status='completed';break;
+      requireStage(s,'archive');await completed(root,s);await assertApprovals(root,s,{spec:true,implementation:true});if(s.approvals.acceptance?.hash!==await approvalHash(root,s,'acceptance'))throw Error('Acceptance missing or stale');if(!s.verification?.sourceSnapshot)throw Error('Verification source snapshot is missing; reopen implementation and verify again');
+      const archiveSource=await sourceSnapshot(root);assertCurrentSnapshot(s.verification.sourceSnapshot,archiveSource,'Verification evidence');s.promotion=await engine.promoteToBaseline({...ref,accepted:true});s.status='completed';break;
      }
      case 'reopen':{
       const stage=input.stage;requireText(input.reason,'reason');const order=['prd','spec','design','tasks','implementation','verification','archive'];if(!order.includes(stage)||order.indexOf(stage)>order.indexOf(s.stage)||stage==='archive')throw Error('Invalid reopen stage');

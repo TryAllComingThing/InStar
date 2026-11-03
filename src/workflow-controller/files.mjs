@@ -5,6 +5,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {safe,identifier} from '../openspec-min/src/store/index.js';
+import {sourceSnapshot as sharedSourceSnapshot} from '../shared/source-snapshot.mjs';
 export {fs,path,safe,identifier};
 const transactionContext=new AsyncLocalStorage();
 function assertDeclaredWrite(root,relative){const context=transactionContext.getStore();if(context&&context.root===root&&!relative.startsWith('.workflow/')&&!context.writePaths.some(p=>relative===p||relative.startsWith(p+'/')))throw Error(`Write outside transaction write set: ${relative}`);}
@@ -27,33 +28,7 @@ export async function projectRoot(input){
  return root;
 }
 export async function assertTree(root,relative){const dir=safe(root,relative);if(!await exists(dir))return;const stat=await fs.lstat(dir);if(!stat.isDirectory())throw Error(`Expected directory: ${relative}`);for(const item of await fs.readdir(dir,{withFileTypes:true})){const name=path.join(relative,item.name);safe(root,name);if(item.isSymbolicLink())throw Error(`Symlink not supported: ${name}`);if(item.isDirectory())await assertTree(root,name);else if(!item.isFile())throw Error(`Unsupported entry: ${name}`);}}
-export async function sourceSnapshot(root){
- const excluded=new Set(['.git','node_modules','dist','build','coverage','reports','logs','.workflow','planning','.next','.nuxt','vendor']);
- const entries=[];let bytes=0;
- async function walk(dir=''){
-  const full=dir?safe(root,dir):root;
-  for(const item of (await fs.readdir(full,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){
-   if(!dir&&excluded.has(item.name))continue;
-   const relative=dir?`${dir}/${item.name}`:item.name;
-   if(relative==='docs/prd'||relative.startsWith('docs/prd/')||relative==='.instar/session'||relative.startsWith('.instar/session/'))continue;
-   if(entries.length>=50000)throw Error('Source snapshot limit exceeded (50,000 files)');
-   const file=safe(root,relative),stat=await fs.lstat(file);
-   if(stat.isSymbolicLink()){
-    const target=await fs.readlink(file);entries.push([relative,'symlink',createHash('sha256').update(target).digest('hex')]);continue;
-   }
-   if(stat.isDirectory()){await walk(relative);continue;}
-   if(!stat.isFile())throw Error(`Unsupported source entry: ${relative}`);
-   bytes+=stat.size;if(bytes>536870912)throw Error('Source snapshot limit exceeded (512 MiB)');
-   const content=await fs.readFile(file);entries.push([relative,stat.mode&0o777,createHash('sha256').update(content).digest('hex')]);
-  }
- }
- await walk();
- let head=null;
- const git=spawnSync('git',['-c','core.fsmonitor=false','rev-parse','HEAD'],{cwd:root,encoding:'utf8',timeout:5000,maxBuffer:1024*1024});
- if(git.status===0&&!git.error)head=git.stdout.trim();
- const treeHash=createHash('sha256').update(JSON.stringify(entries)).digest('hex');
- return {treeHash,head,files:entries.length,bytes};
-}
+export async function sourceSnapshot(root,options={}){return sharedSourceSnapshot(root,options);}
 export async function lock(root,action){
  const dir=safe(root,'.workflow');
  try{await fs.mkdir(dir);}catch(error){if(error.code!=='EEXIST')throw error;}

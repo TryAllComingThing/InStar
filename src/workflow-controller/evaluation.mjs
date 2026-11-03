@@ -1,4 +1,5 @@
 import {discoverSpecFiles} from '../openspec-min/src/utils/spec-discovery.js';
+import {updateReportManifest} from '../shared/report-manifest.mjs';
 import {appendJsonl,atomic,exists,hash,now,read,requireText,safe} from './files.mjs';
 import {changeDir} from './documents.mjs';
 
@@ -54,6 +55,7 @@ export async function evaluate(root,state,input){
  const report={schemaVersion:1,changeId:state.changeId,stage,evaluator,artifact:doc.path,fingerprint,score,criteria,status,at:now(),limitations:'AI-assisted semantic assessment; evidence excerpts and artifact fingerprint are mechanically checked, evaluator judgment is not independently proven.'};
  const relative=`reports/semantic-quality/${state.changeId}/${stage}.json`;
  await atomic(root,relative,JSON.stringify(report,null,2)+'\n');
+ await updateReportManifest(root,{id:`semantic-${state.changeId}-${stage}`,kind:'semantic-quality',path:relative,hash:hash(report),status,snapshotFingerprint:null,at:report.at});
  await appendJsonl(root,'.workflow/traces.jsonl',{type:'quality-evaluation',changeId:state.changeId,stage,artifactFingerprint:fingerprint,status,at:report.at});
  return report;
 }

@@ -11,7 +11,7 @@ try {
     if(['FAIL','BLOCK'].includes(result.status)) process.exitCode=1;
   } else {
     const [file,...rest] = args;
-    if (!file || rest.length) throw Error('Usage: instar <doctor|snapshot|verify|review|ci> [options] OR node <plugin>/runtime/quality-controller/cli.mjs <request.json|->');
+    if (!file || rest.length) throw Error('Usage: instar <status|next|help|doctor|snapshot|verify|review|ci> [options] OR node <plugin>/runtime/quality-controller/cli.mjs <request.json|->');
   const text = file==='-' ? await readBoundedStdin() : await readBoundedFile(file);
   const result = await run(JSON.parse(text));
   console.log(JSON.stringify(result,null,2));

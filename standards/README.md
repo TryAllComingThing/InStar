@@ -16,6 +16,10 @@ This directory contains plugin-side reference material for Skills. It is not cop
 
 Use the ECC-inspired layered approach: shared guidance supplies a baseline; a matching language or domain guide adds details and may override general advice where that language or domain requires it. Select only the files relevant to the changed code. Do not load every language guide for every task.
 
+`standards/index.json` is the routing index; it does not inline rule bodies. Selected cards expose compact `sections` metadata with a stable anchor, heading, start/end line, byte count and SHA-256 hash, plus `ruleRefs` that point to real sections. Read a referenced section only when the card is ambiguous, needs an example, or conflicts with another source. Small single-section documents use a whole-document reference instead of inventing extra headings.
+
+The selector first filters by `appliesTo` and affected paths. Cards marked `always`, plus the architecture and testing baselines, are selected before optional cards and are not removed by the inline-byte budget. Optional cards are evicted only with an explicit `omitted` reason. The default compact pack is six cards and 6 KB; it is an index, not a replacement for the source rule.
+
 The user's request and the target project's applicable `AGENTS.md`, configured or discovered context/architecture/design documents, `standards/`, and existing code patterns take precedence. InStar references fill gaps and remain advisory. A deviation is not a BLOCK unless the target project adopted that rule, the user explicitly required it, or a configured automated check enforces it.
 
 Skills should identify technologies from manifests, source files, API contracts, migrations, and existing project documentation before selecting a pack. If the stack is unclear, follow repository patterns and state the uncertainty rather than guessing.

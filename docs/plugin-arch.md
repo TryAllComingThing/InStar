@@ -105,6 +105,10 @@ workflow-controller
   ├─ shared/project-baseline
   ├─ shared/code-reuse
   ├─ shared/token-sources
+  ├─ shared/source-snapshot
+  ├─ shared/efficiency
+  ├─ shared/standards-index
+  ├─ shared/skills-index
   └─ 自有 files / documents / evaluation / recovery / write-set
 
 quality-controller
@@ -113,7 +117,9 @@ quality-controller
   ├─ shared/code-reuse
   ├─ shared/token-sources
   ├─ shared/redaction
-  └─ workflow-controller/files（复用安全路径与 sourceSnapshot）
+  ├─ shared/source-snapshot
+  ├─ shared/review-dossier
+  └─ shared/workflow-status
 
 discovery-controller
   ├─ workflow-controller/files
@@ -169,7 +175,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 
 | 动作 | 前置条件 | 结果 |
 | --- | --- | --- |
-| `start` | 目标项目为 Git 根目录；changeId 尚不存在 | 创建 PRD 与工作流状态 |
+| `start` | 目标项目为 Git 根目录；changeId 尚不存在 | 创建 PRD 与工作流状态，并记录 lane、affectedPaths 和效率预算 |
 | `submit-prd` | PRD 阶段，澄清问题已关闭 | 等待 PRD 审批 |
 | `approve(prd)` | 待审批哈希匹配 | 进入 `spec` |
 | `create-spec` / `save-spec` | Spec 阶段；上下文未变化 | 写入 proposal 与 delta specs |
@@ -178,7 +184,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 | `write-design` | Spec 审批有效，上下文哈希匹配 | 写入 `technical-design.md`，进入 `tasks` |
 | `write-tasks` | 设计上下文指纹仍匹配 | 写入任务，等待实施计划审批 |
 | `approve(implementation)` | Spec 审批、设计与任务内容未变 | 进入实施阶段 |
-| `complete-task` | 已有实施审批 | 为任务记录完成证据 |
+| `complete-tasks` | 已有实施审批且整批任务/证据有效 | 原子记录一批任务完成证据；`complete-task` 为单任务兼容入口 |
 | `submit-implementation` | 所有任务已完成且有证据 | 进入 `verification` |
 | `submit-quality-review` | 已通过质量门禁且报告稳定 | 绑定质量评审快照 |
 | `submit-verification` | 质量评审仍匹配当前源码 | 记录验证结果；通过后等待验收 |
@@ -190,7 +196,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 
 ### 6.3 上下文指纹
 
-生成设计、任务和 Spec 时，控制器组装项目上下文并计算 `contextHash`，包括适用指引、架构/设计文档、Token、项目树和当前工件版本。调用方提交生成结果时必须带回该哈希；上下文变化或版本过期会被拒绝。该机制保证“生成时看到的输入”和“写入时的项目状态”一致，**不证明生成内容的语义质量**。
+生成设计、任务和 Spec 时，控制器组装项目上下文并计算 `contextHash`，包括适用指引、架构/设计文档、Token、项目树和当前工件版本。`AGENTS.md` 先加载根指引，再加载变更专属与 affectedPaths 最近的目录，并受 40 文件、单文件 12 KiB、合计 48 KiB 上限约束；`guidanceBudget` 明确列出保留、截断和省略项，`guidanceFingerprint` 覆盖内容与预算元数据。调用方提交生成结果时必须带回该哈希；上下文变化或版本过期会被拒绝。重复读取未变化的上下文可传 `knownContextHash`，哈希一致时省略完整上下文并返回 compact `contextDiff`。该机制保证“生成时看到的输入”和“写入时的项目状态”一致，**不证明生成内容的语义质量**。
 
 ## 7. 质量与证据链
 
@@ -204,6 +210,8 @@ prd → spec → design → tasks → implementation → verification → archiv
 - 复用能力索引指纹。
 - 项目策略扫描结果。
 
+工作流证据另有 `treeHash` 与逐文件 `manifest`，由 `shared/source-snapshot` 生成。依赖、虚拟环境、构建物、语言缓存和 OS 元数据会在任意深度排除；被 Git 跟踪的构建目录源码仍保留。符号链接只记录目标哈希，不跟随读取。快照不一致时会报告旧/新 `treeHash` 和变化路径分类；缺少 `manifest` 的旧报告明确失效并要求重新生成。
+
 任何参与指纹的输入变化都会使旧 Review、验证和统一报告过期。
 
 ### 7.2 验证与门禁
@@ -216,7 +224,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 6. `pre-pr-check` 要求 full 验证、质量门禁和 provenance 都属于同一快照。
 7. `ci prepare/status/publish` 把本地证据写入 PR 正文，并把远端 SHA/Check 与本地 SHA 对齐。
 
-报告链由 `reports/<verify-kind>.json`、`reports/quality-gate.json`、`reports/unified-quality.json` 和证据路径共同组成。`validateEvidenceChain` 会校验报告 ID、状态、检查列表、快照指纹、Git HEAD、策略条目和每个证据文件。
+报告链由 `reports/<verify-kind>.json`、`reports/quality-gate.json`、`reports/unified-quality.json`、`reports/review-dossier.json` 和证据路径共同组成。`validateEvidenceChain` 会校验报告 ID、状态、检查列表、快照指纹、Git HEAD、策略条目和每个证据文件；dossier 只保存稳定引用和检查哈希，并由门禁与两份源报告交叉校验。
 
 ### 7.3 报告完整性
 
@@ -270,7 +278,7 @@ logs/
 
 ### 9.2 轨迹
 
-成功的控制器动作追加到 `.workflow/traces.jsonl`。`trace-skill` 记录 Skill 生命周期；`quality-evaluation` 追加语义评测记录。轨迹是本地辅助证据，可由项目编辑，不能单独证明 Skill 或模型真实执行。
+成功的控制器动作追加到 `.workflow/traces.jsonl`。`trace-skill` 记录 Skill 生命周期，终态事件可附带响应、工具、浏览器、token、门禁和评测等 `metrics`；`quality-evaluation` 追加语义评测记录。`shared/efficiency` 只聚合终态调用，按 lane 目标与预算计算 `efficiency`，`status`/`next` 暴露用量并在超预算时给出非阻断警告。轨迹是本地辅助证据，可由项目编辑，不能单独证明 Skill、模型或 token 计数真实执行。
 
 ## 10. 安全模型
 
@@ -333,6 +341,8 @@ schema 3 的 `tools.checks` 直接 `spawnSync` 项目命令；schema 1/2 通过 
 | 改工作流阶段 | [src/workflow-controller/index.mjs](../src/workflow-controller/index.mjs)、[src/workflow-controller/write-set.mjs](../src/workflow-controller/write-set.mjs) |
 | 改审批哈希或上下文 | [src/workflow-controller/documents.mjs](../src/workflow-controller/documents.mjs) |
 | 改质量检查或报告 | [src/quality-controller/index.mjs](../src/quality-controller/index.mjs)、[src/quality-controller/policy.mjs](../src/quality-controller/policy.mjs) |
+| 改源码快照/排除规则 | [src/shared/source-snapshot.mjs](../src/shared/source-snapshot.mjs) |
+| 改 `status`/`next` 建议 | [src/shared/workflow-status.mjs](../src/shared/workflow-status.mjs) |
 | 改 PR/CI 行为 | [src/quality-controller/ci.mjs](../src/quality-controller/ci.mjs) |
 | 改存量发现 | [src/discovery-controller/index.mjs](../src/discovery-controller/index.mjs)、[src/discovery-controller/context.mjs](../src/discovery-controller/context.mjs) |
 | 改安全路径/输入 | [src/shared/](../src/shared/) |

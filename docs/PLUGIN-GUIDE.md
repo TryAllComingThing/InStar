@@ -156,9 +156,9 @@ planning/workflows/<changeId>.json
 ### 6.3 实现阶段
 
 - 任务必须使用数字编号，例如 `1.1`，并在完成后带有证据。
-- `complete-task` 只记录已完成任务；不能提前把所有任务勾选。
+- 全部任务完成后优先用一次 `complete-tasks` 批量提交 `{taskId,evidence}`；控制器会先校验整批再原子写入。`complete-task` 仅保留为单任务兼容入口，不能提前把未完成任务标记完成。
 - `submit-implementation` 要求所有任务完成且有证据。
-- 进入验证后，先运行 `quality-gate`，提交稳定的质量评审，再提交工程验证。
+- 进入验证后，先运行一次稳定快照上的 `quality-gate`，用 `reportPath` 绑定评审，再提交工程验证；相同 snapshot/配置/检查集/工具版本的稳定证据可直接复用缓存。统一报告同时写入 `reports/review-dossier.json`，用稳定引用连接验证与 Review 证据；门禁会校验 dossier 与两份源报告的 snapshot、report ID 和 checks 哈希。
 - 最终 `archive` 前，验证快照必须仍然匹配当前源码。
 
 ### 6.4 修订与回退
@@ -177,15 +177,17 @@ node <plugin>/runtime/workflow-controller/cli.mjs /tmp/workflow-request.json
 cat /tmp/workflow-request.json | node <plugin>/runtime/workflow-controller/cli.mjs -
 ```
 
+`submit-quality-review` 可以直接读取工作区内的稳定质量报告，避免手工复制大 JSON：传入 `"reportPath": "reports/quality-gate.json"`（兼容别名 `fromReport`）。报告必须是普通文件、不能是符号链接，且不超过 16 MiB；控制器仍会重新校验完整性、稳定性和当前源码快照。
+
 常用 action：
 
 ```text
 start, state, context, request-clarification, answer-clarification,
 save-prd, submit-prd, approve, request-changes,
 create-spec, save-spec, submit-spec, write-design, write-tasks,
-complete-task, submit-implementation, submit-quality-review,
+complete-tasks, complete-task, submit-implementation, submit-quality-review,
 submit-verification, archive, reopen, recover,
-trace-skill, list-skills, evaluate-quality,
+trace-skill, list-skills, route-skills, evaluate-quality,
 baseline-context, baseline-adopt, baseline-check,
 reuse-context, recovery-status, prune-recovery
 ```
@@ -197,10 +199,13 @@ reuse-context, recovery-status, prune-recovery
   "action": "start",
   "project": "/absolute/path/to/project",
   "changeId": "add-order-filter",
+  "lane": "fast",
   "document": "# PRD\n为订单列表增加状态筛选。",
   "affectedPaths": ["src/orders"]
 }
 ```
+
+`lane` 可为 `fast`、`standard` 或 `regulated`；省略时控制器使用与质量门禁相同的内置规则和项目 `riskPolicy.rules`，按 `affectedPaths` 推荐。L0/L1 小范围可用 fast，L2 至少 standard，L3 使用 regulated；显式 lane 不能低于风险下限。fast lane 记录 30–38 分钟目标、28M token 上限以及响应/工具/浏览器/门禁次数预算，并预留 PRD、Spec、设计、任务四次必需语义评测。`state` 和 `next` 会返回 `efficiency`；终态 `trace-skill` 可附带 `metrics`。时间超限按 `activeMs` 判断，同时返回 `waitMs` 和 `elapsedMs` 以区分人工等待与日历时间。这些是 advisory budget 和代理指标，不会在超预算时自动绕过质量门禁。
 
 读取当前状态：
 
@@ -212,7 +217,9 @@ reuse-context, recovery-status, prune-recovery
 }
 ```
 
-除 `list-skills`、`state`、`context` 和部分恢复/基线动作外，变更状态的动作需要 `expectedVersion` 匹配当前版本；提交生成内容还需要 `contextHash`。这两个字段用于防止并发覆盖和基于旧上下文生成。
+除 `list-skills`、`route-skills`、`state`、`context` 和部分恢复/基线动作外，变更状态的动作需要 `expectedVersion` 匹配当前版本；提交生成内容还需要 `contextHash`。这两个字段用于防止并发覆盖和基于旧上下文生成。重复读取未变化的 `context` 时可传入上次的 `knownContextHash`；哈希一致时返回 `contextDiff.fullContextOmitted:true`，不重复传输完整上下文，哈希变化时仍返回完整上下文。
+
+`route-skills` 不要求目标项目路径，只接收 `{context, stage}`，从 `skills/index.json` 返回最多 4 个紧凑 Skill 入口。结果先按阶段过滤，再要求至少达到 `minTriggerHits`；没有高置信匹配时返回 `confidence:low`，不会把明显无关的 Skill 当作强匹配。结果包含触发命中数、阶段匹配、输入输出、`entryBytes`、`referenceBytes`、参考文件列表和 `detailLoaded:false`；`skills/references.json` 作为二级索引提供每个参考文件的摘要、适用阶段、`loadWhen`、权威级别和风险，不复制正文。调用方应只加载被选中的 `SKILL.md`，再选择 `loadWhen` 成立的参考文件；不适用或归档引用进入 `referenceOmitted`。`stage` 可为 `prd`、`spec`、`design`、`tasks`、`implementation`、`verification` 或 `acceptance`。
 
 ## 7. 质量验证与 Review
 
@@ -262,9 +269,17 @@ node <plugin>/bin/instar.mjs review --project . --review-file ./review.json
 
 旧配置默认执行 npm scripts；缺少 script 会使对应检查 `BLOCK`。新项目建议使用 schema 3，把 `tools.checks` 映射到实际命令。
 
+`qualityPolicy` 的每个类别可使用兼容的 `checkId`，或使用 `checkIds` 要求多个检查。同一检查也可被多个类别复用；豁免仍按 `category + checkId` 隔离。跨栈项目可把 `review.language` / `review.framework` 写为数组，例如 `"language": ["typescript", "python"]`、`"framework": ["vue", "none"]`，Review 清单会合并前端和后端项目。
+
 ### 7.3 Review 文件
 
-`review --review-file` 可以读取直接 Review 对象，也可以读取 `{ "review": { ... } }` 包装对象。每次 Review 必须使用当前 `snapshot` 的 `fingerprint`，并覆盖当前技术栈的完整检查清单。
+`review --review-file` 可以读取直接 Review 对象，也可以读取 `{ "review": { ... } }` 包装对象。每次 Review 必须使用当前 `snapshot` 的 `fingerprint`，并覆盖当前技术栈的完整检查清单。先用 `review init` 生成模板，比手工拼写更不容易漏项：
+
+```sh
+node <plugin>/bin/instar.mjs review init --project . --reviewer team-member
+```
+
+模板中的 `WARN` + `not-verified` 只是待办，不是通过证据。检查项或栈配置变化后使用 `review repair --review-file reports/review.json` 补齐缺失项并刷新指纹；旧 `PASS` 不会被 repair 自动标记为新快照通过。
 
 低风险示例：
 
@@ -283,7 +298,7 @@ node <plugin>/bin/instar.mjs review --project . --review-file ./review.json
 }
 ```
 
-高风险 Review 的证据必须包含源码位置、精确摘录和当前快照指纹；Vue 项目需要 17 项，Python/Java/Go 项目需要 14 项。详见 [质量协议](QUALITY.md)。
+高风险 Review 的证据必须包含源码位置、精确摘录和当前快照指纹；Vue 项目需要 17 项，Python/Java/Go 项目需要 14 项，Vue + Python/Java/Go 跨栈项目需要 25 项。详见 [质量协议](QUALITY.md)。
 
 ### 7.4 提交前与 PR 前
 
@@ -296,8 +311,10 @@ node <plugin>/bin/instar.mjs snapshot --project .
 # 2. 执行完整验证
 node <plugin>/bin/instar.mjs verify --project . --profile full
 
-# 3. 根据项目清单编写 review.json，然后生成稳定质量门禁
-node <plugin>/bin/instar.mjs review --project . --review-file ./review.json
+# 3. 生成当前快照的 Review 模板并完成实际检查
+node <plugin>/bin/instar.mjs review init --project . --reviewer team-member
+# 编辑 reports/review.json 填入真实证据；栈或指纹变化后可运行 review repair
+node <plugin>/bin/instar.mjs review --project . --review-file ./reports/review.json
 
 # 4. 记录 AI 溯源（JSON action）
 cat /tmp/provenance.json | node <plugin>/runtime/quality-controller/cli.mjs -
@@ -415,11 +432,16 @@ node <plugin>/bin/instar.mjs spec-discover --project /absolute/project --scope s
 
 | 目标 | 命令 |
 | --- | --- |
+| 帮助 | `node <plugin>/bin/instar.mjs help` |
+| 工作流状态 | `node <plugin>/bin/instar.mjs status --project . [--change <id>]` |
+| 下一动作 | `node <plugin>/bin/instar.mjs next --project . [--change <id>]` |
 | 诊断 | `node <plugin>/bin/instar.mjs doctor` |
 | 快照 | `node <plugin>/bin/instar.mjs snapshot --project .` |
 | 完整验证 | `node <plugin>/bin/instar.mjs verify --profile full` |
 | 快速验证 | `node <plugin>/bin/instar.mjs verify --profile commit` |
-| 质量门禁 | `node <plugin>/bin/instar.mjs review --review-file ./review.json` |
+| Review 模板 | `node <plugin>/bin/instar.mjs review init --reviewer team-member` |
+| 修复 Review 模板 | `node <plugin>/bin/instar.mjs review repair --review-file reports/review.json` |
+| 质量门禁 | `node <plugin>/bin/instar.mjs review --review-file ./reports/review.json` |
 | 生成 PR 正文 | `node <plugin>/bin/instar.mjs ci prepare --title "..."` |
 | 发布 PR | `node <plugin>/bin/instar.mjs ci publish --title "..." --confirm` |
 | 查询 CI | `node <plugin>/bin/instar.mjs ci status` |
@@ -436,9 +458,12 @@ node <plugin>/bin/instar.mjs spec-discover --project /absolute/project --scope s
 | `project must be the Git repository root` | 在仓库根目录执行，或传入根目录 |
 | `Invalid quality configuration` | 检查 schemaVersion、baseRef、profiles、tools.checks 字段 |
 | `Missing verification report` | 先运行匹配 profile 的 verify |
-| `Review is stale` / `Quality review report is stale` | 重新 snapshot，重新 Review，再 quality-gate |
+| `Review is stale` / `Quality review report is stale` | 错误会列出旧/新 treeHash 和变化文件；生成依赖、构建物与缓存已自动排除。确认源码变化后重新 Review 和 quality-gate |
 | `Review checklist incomplete or duplicated` | 按语言/框架生成完整清单，不能只交部分项 |
+| `Review file already exists` | 使用 `review repair`，或明确执行 `review init --force` |
 | `Review evidence does not match current source` | 重新读取文件并修正路径、行号、摘录 |
+| `Review template must be under an excluded runtime path` | `--output` 使用 `reports/` 等不会改变自身快照的路径 |
+| `Potential credentials found` | 内置 secret scan 命中；轮换并移除凭据后重新验证 |
 | `Mandatory qualityPolicy missing` | 添加 qualityPolicy，full 覆盖 Q-01 到 Q-07 |
 | `Q-07 evidence integrity` | full 策略必须包含 Q-07，推荐映射 `evidence-report` |
 | `Quality operation already running` | 检查 `logs/.quality.lock` 和残留进程 |

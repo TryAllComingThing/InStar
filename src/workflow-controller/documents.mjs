@@ -1,10 +1,12 @@
-import {fs,path,safe,read,hash,requireText,exists,pluginRoot} from './files.mjs';
+import {fs,path,safe,read,hash,requireText,exists} from './files.mjs';
 import {discoverSpecFiles} from '../openspec-min/src/utils/spec-discovery.js';
 import {instructions} from '../openspec-min/src/engine/schema/index.js';
 import {buildCodeFenceMask} from '../openspec-min/src/diff/parsers/code-fence.js';
 import {resolveTokenSources} from '../shared/token-sources.mjs';
 import {baselineContext} from '../shared/project-baseline.mjs';
 import {reuseContext} from '../shared/code-reuse.mjs';
+import {selectStandards} from '../shared/standards-index.mjs';
+export const legacyStandardReferencePaths=['standards/api/DESIGN.md','standards/database/DESIGN.md','standards/languages/typescript.md'];
 export async function specs(root){const result={};for(const item of await discoverSpecFiles(root))result[item.id]=await fs.readFile(item.specFile,'utf8');return result;}
 export const changeDir=(root,id)=>safe(root,'planning','changes',id);
 export async function prd(root,state){return read(root,state.prdPath);}
@@ -27,19 +29,19 @@ export async function assertApprovals(root,state,{spec=false,implementation=fals
   if(!state.approvals[kind]||state.approvals[kind].hash!==await approvalHash(root,state,kind))throw Error(`${kind} approval missing or stale; reopen and review the changed documents`);
  }
 }
-export async function generationContext(root,state){
+export async function generationContext(root,state,{knownContextHash=null}={}){
  let context;
  if(state.stage==='spec'){
-  context={instruction:instructions.propose,prd:await prd(root,state),baseline:await specs(safe(root,'planning/specs')),projectArchitecture:await projectArchitecture(root,state.changeId)};
+  context={instruction:instructions.propose,prd:await prd(root,state),baseline:await specs(safe(root,'planning/specs')),projectArchitecture:await projectArchitecture(root,state.changeId,state.affectedPaths||[])};
   const referenceContext={...context};delete referenceContext.instruction;delete referenceContext.technicalDesign;
-  context.instarReferences=await instarReferences(relevantReferences(context.projectArchitecture.projectTree,JSON.stringify(referenceContext),false));
+  context.instarReferences=await selectStandards({affectedPaths:state.affectedPaths||[],context:JSON.stringify(referenceContext),projectTree:context.projectArchitecture.projectTree,stage:state.stage});
   try{const bundle=await specBundle(root,state);context.current={proposal:bundle.proposal,specs:bundle.specs};}catch(e){if(e.code!=='ENOENT')throw e;}
  }else if(state.stage==='design'||state.stage==='tasks'){
   context={...await specBundle(root,state),instruction:instructions[state.stage]};
-  context.projectArchitecture=await projectArchitecture(root,state.changeId);
+  context.projectArchitecture=await projectArchitecture(root,state.changeId,state.affectedPaths||[]);
   const referenceContext={...context};delete referenceContext.instruction;delete referenceContext.technicalDesign;
-  context.instarReferences=await instarReferences(relevantReferences(context.projectArchitecture.projectTree,JSON.stringify(referenceContext),true));
-  const constraintsHash=hash(context.projectArchitecture.guidance),standardsHash=hash(context.projectArchitecture.standards);
+  context.instarReferences=await selectStandards({affectedPaths:state.affectedPaths||[],context:JSON.stringify(referenceContext),projectTree:context.projectArchitecture.projectTree,stage:'design'});
+  const constraintsHash=context.projectArchitecture.guidanceFingerprint,standardsHash=hash(context.projectArchitecture.standards);
   if(state.stage==='tasks'&&(!state.designConstraintsHash||!state.designStandardsHash||!state.designInStarReferencesHash))throw Error('Technical design context fingerprints are missing; reopen design and review it again');
   if(state.stage==='tasks'&&state.designConstraintsHash!==constraintsHash)throw Error('Project architecture guidance changed after technical design; reopen design and review it again');
   if(state.stage==='tasks'&&state.designStandardsHash!==standardsHash)throw Error('Project standards changed after technical design; reopen design and review it again');
@@ -50,35 +52,38 @@ export async function generationContext(root,state){
  context.codeReuse=await reuseContext(root);
  if(state.stage==='tasks'&&(state.designReuseHash??null)!==context.codeReuse.fingerprint)throw Error('Capability sources changed; reopen design');
  if(state.stage==='tasks'&&(state.designBaselineHash??null)!==context.projectBaseline.fingerprint)throw Error('Project baseline changed; reopen design');
- return {stage:state.stage,context,contextHash:hash({project:root,changeId:state.changeId,version:state.version,context})};
+ const contextHash=hash({project:root,changeId:state.changeId,version:state.version,context});
+ if(knownContextHash!==null){
+  if(typeof knownContextHash!=='string'||!knownContextHash)throw Error('knownContextHash must be a nonempty string');
+  if(knownContextHash===contextHash)return {stage:state.stage,contextHash,contextDiff:{basis:'contextHash',unchanged:true,changed:false,fullContextOmitted:true}};
+  return {stage:state.stage,context,contextHash,contextDiff:{basis:'contextHash',unchanged:false,changed:true,fullContextIncluded:true}};
+ }
+ return {stage:state.stage,context,contextHash};
 }
-async function instarReferences(files){
- const documents={};
- for(const relative of files){const file=path.resolve(pluginRoot,relative);if(!file.startsWith(pluginRoot+path.sep))throw Error('Invalid InStar reference path');documents[relative]=await fs.readFile(file,'utf8');}
- return {precedence:'recommendation; user requirements and project-owned instructions take precedence',documents,fingerprint:hash(documents)};
+const AGENTS_MAX_FILES=40,AGENTS_FILE_MAX_BYTES=12*1024,AGENTS_TOTAL_MAX_BYTES=48*1024,AGENTS_TRUNCATION_MARKER='\n[truncated; inspect full file before finalizing]';
+function truncateUtf8(value,maxBytes){
+ let low=0,high=Math.min(value.length,maxBytes);
+ while(low<high){const middle=Math.ceil((low+high)/2);if(Buffer.byteLength(value.slice(0,middle))<=maxBytes)low=middle;else high=middle-1;}
+ return value.slice(0,low);
 }
-function relevantReferences(projectTree,taskContext,includeDesign){
- const files=['standards/README.md','standards/architecture/overview.md'];
- if(includeDesign)files.push('standards/architecture/module-boundaries.md','standards/architecture/dependency-direction.md');
- const tree=projectTree.toLowerCase(),text=taskContext.toLowerCase();
- const stack=tree+'\n'+text;
- const add=(condition,...references)=>{if(condition)files.push(...references)};
- add(/\.(tsx?|mts|cts)\b|typescript/.test(stack),'standards/languages/typescript.md');
- add(/\.(jsx?|mjs|cjs)\b|javascript|node\.js/.test(stack),'standards/languages/javascript.md');
- add(/\.py\b|pyproject\.toml|python/.test(stack),'standards/languages/python.md');
- add(/\.go\b|go\.mod|golang/.test(stack),'standards/languages/go.md');
- add(/\.java\b|pom\.xml|build\.gradle|java\b/.test(stack),'standards/languages/java.md');
- add(/\.rs\b|cargo\.toml|rust/.test(stack),'standards/languages/rust.md');
- add(/\.vue\b|vue\s*3/.test(stack),'standards/languages/vue3.md');
- add(/api|endpoint|http|openapi|webhook|接口|服务端/.test(stack),'standards/api/DESIGN.md','standards/api/SECURITY.md');
- add(/database|postgres|mysql|sqlite|sql\b|migration|schema|query|数据库|数据表|迁移|持久化/.test(stack),'standards/database/DESIGN.md','standards/database/MIGRATIONS.md');
- add(/postgres/.test(stack),'standards/database/postgresql.md');
- add(/security|auth|credential|permission|authorization|安全|鉴权|认证|权限/.test(stack),'standards/common/security.md');
- add(/test|testing|coverage|spec\b|验收|测试/.test(stack),'standards/common/testing.md');
- return [...new Set(files)];
+function boundedAgentsText(text,maxBytes){
+ const originalBytes=Buffer.byteLength(text);
+ if(originalBytes<=maxBytes)return {text,bytes:originalBytes,truncated:false};
+ const markerBytes=Buffer.byteLength(AGENTS_TRUNCATION_MARKER);
+ if(maxBytes<=markerBytes)return null;
+ const body=truncateUtf8(text,maxBytes-markerBytes);
+ return {text:`${body}${AGENTS_TRUNCATION_MARKER}`,bytes:Buffer.byteLength(body)+markerBytes,truncated:true};
 }
-async function projectArchitecture(root,changeId){
- const excluded=new Set(['.git','node_modules','dist','build','coverage','.workflow','.next','.nuxt','vendor']);
+function agentsPriority(file,affectedPaths,changeId){
+ if(file==='AGENTS.md')return [2,0];
+ if(file===`planning/changes/${changeId}/AGENTS.md`)return [1,10000];
+ const directory=path.posix.dirname(file),depth=directory==='.'?0:directory.split('/').length;
+ let relation=0;
+ for(const affected of affectedPaths){const normalized=String(affected).replaceAll('\\','/');if(normalized===directory||normalized.startsWith(`${directory}/`))relation=Math.max(relation,depth);}
+ return relation?[1,relation*100+depth]:[0,-depth];
+}
+async function projectArchitecture(root,changeId,affectedPaths=[]){
+ const excluded=new Set(['.git','node_modules','dist','build','coverage','.workflow','.instar','reports','logs','planning','.next','.nuxt','vendor']);
  const guidance={},standards={};
  let configured={};
  try{if(await exists(safe(root,'.instar-quality.json'))){const config=JSON.parse(await read(root,'.instar-quality.json'));configured=config.context||{};}}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -88,13 +93,53 @@ async function projectArchitecture(root,changeId){
  const tokenResolution=await resolveTokenSources(root,configured.tokens);
  if(tokenResolution.problems.length)throw Error(`Invalid project Token source: ${tokenResolution.problems.map(item=>`${item.path} (${item.status})`).join(', ')}`);
  const tokenPaths=tokenResolution.sources;
- const candidates=[...new Set(['AGENTS.md','.context/AGENTS.md','planning/AGENTS.md','planning/changes/AGENTS.md',`planning/changes/${changeId}/AGENTS.md`,architecture,design,...tokenPaths].filter(Boolean))];
+ const explicitAgents=['AGENTS.md','.context/AGENTS.md','planning/AGENTS.md','planning/changes/AGENTS.md',`planning/changes/${changeId}/AGENTS.md`];
+ const policySources=[architecture,design,...tokenPaths].filter(Boolean);
+ const candidates=[...new Set([...explicitAgents,...policySources])];
  async function readPolicy(file){let full=root;const parts=file.split('/');try{for(let i=0;i<parts.length;i++){full=path.join(full,parts[i]);const stat=await fs.lstat(full);if(stat.isSymbolicLink())throw Error(`Symlink policy source is not allowed: ${file}`);if(i<parts.length-1&&!stat.isDirectory())throw Error(`Policy source parent is not a directory: ${file}`);if(i===parts.length-1&&!stat.isFile())throw Error(`Policy source must be a regular file: ${file}`);}safe(root,file);return await fs.readFile(full,'utf8');}catch(error){if(error.code==='ENOENT')return null;throw error;}}
- for(const file of candidates){const text=await readPolicy(file);if(text!==null)guidance[file]=text;}
+ for(const file of policySources){const text=await readPolicy(file);if(text!==null)guidance[file]=text;}
+ const agentsFiles=new Set(explicitAgents);
  let count=0,scanned=0;const lines=[];
- let guidanceCount=0,standardBytes=0,standardsTruncated=false,guidanceTruncated=false,treeTruncated=false,standardsDirectoryPresent=false;
- async function walk(dir,depth){if(depth>8){treeTruncated=true;if(dir==='standards'||dir.startsWith('standards/'))standardsTruncated=true;return;}if(scanned>=2000){treeTruncated=true;return;}let entries;try{entries=await fs.readdir(safe(root,dir),{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){if(excluded.has(entry.name))continue;scanned++;const relative=dir?`${dir}/${entry.name}`:entry.name;if(entry.isSymbolicLink()){if(entry.name==='AGENTS.md'||relative==='standards')throw Error(`Symlink policy source is not allowed: ${relative}`);if(count<250){count++;lines.push(`${'  '.repeat(depth)}[symlink omitted] ${relative}`);}continue;}if(relative==='standards'&&entry.isDirectory())standardsDirectoryPresent=true;if(entry.name==='AGENTS.md'&&guidanceCount<40&&!Object.hasOwn(guidance,relative)){const text=await readPolicy(relative);if(text!==null){guidance[relative]=text.length>12000?`${text.slice(0,12000)}\n[truncated; inspect full file before finalizing]`:text;guidanceTruncated ||= text.length>12000;guidanceCount++;}}if(relative.startsWith('standards/')&&entry.isFile()&&/\.(md|mdx|json|ya?ml)$/i.test(entry.name)){if(Object.keys(standards).length>=100||standardBytes>=160000){standardsTruncated=true;}else{const text=await readPolicy(relative);if(text!==null){const remaining=160000-standardBytes;standards[relative]=text.length>remaining?`${text.slice(0,remaining)}\n[truncated; inspect full file before finalizing]`:text;standardBytes+=text.length;if(text.length>remaining)standardsTruncated=true;}}}if(entry.name.startsWith('.'))continue;if(count<250){count++;lines.push(`${'  '.repeat(depth)}${entry.isDirectory()?'[dir] ':'      '}${relative}`);}if(entry.isDirectory())await walk(relative,depth+1);if(scanned>=2000){treeTruncated=true;break;}}}
- await walk('',0);guidanceTruncated ||= guidanceCount>=40;return {guidance,standards,tokenSources:tokenPaths.filter(file=>Object.hasOwn(guidance,file)),tokenResolution,availableSources:[...Object.keys(guidance),...Object.keys(standards)],absentSources:candidates.filter(file=>!Object.hasOwn(guidance,file)),standardsDirectoryPresent,projectTree:lines.join('\n'),treeTruncated:treeTruncated||count>=250,standardsTruncated,guidanceTruncated};
+ let standardBytes=0,standardsTruncated=false,treeTruncated=false,standardsDirectoryPresent=false;
+ async function walk(dir,depth){
+  if(depth>8){treeTruncated=true;if(dir==='standards'||dir.startsWith('standards/'))standardsTruncated=true;return;}
+  if(scanned>=2000){treeTruncated=true;return;}
+  let entries;try{entries=await fs.readdir(safe(root,dir),{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
+  for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
+   if(excluded.has(entry.name))continue;
+   scanned++;const relative=dir?`${dir}/${entry.name}`:entry.name;
+   if(entry.isSymbolicLink()){
+    if(entry.name==='AGENTS.md'||relative==='standards')throw Error(`Symlink policy source is not allowed: ${relative}`);
+    if(count<250){count++;lines.push(`${'  '.repeat(depth)}[symlink omitted] ${relative}`);}continue;
+   }
+   if(relative==='standards'&&entry.isDirectory())standardsDirectoryPresent=true;
+   if(entry.name==='AGENTS.md')agentsFiles.add(relative);
+   if(relative.startsWith('standards/')&&entry.isFile()&&/\.(md|mdx|json|ya?ml)$/i.test(entry.name)){
+    if(Object.keys(standards).length>=100||standardBytes>=160000)standardsTruncated=true;
+    else{const body=await readPolicy(relative);if(body!==null){const bytes=Buffer.byteLength(body);standards[relative]={path:relative,bytes,hash:hash(body),inlined:false};standardBytes+=bytes;if(standardBytes>=160000)standardsTruncated=true;}}
+   }
+   if(entry.name.startsWith('.'))continue;
+   if(count<250){count++;lines.push(`${'  '.repeat(depth)}${entry.isDirectory()?'[dir] ':'      '}${relative}`);}
+   if(entry.isDirectory())await walk(relative,depth+1);
+   if(scanned>=2000){treeTruncated=true;break;}
+  }
+ }
+ await walk('',0);
+ let guidanceCount=0,guidanceBytes=0,guidanceTruncated=false;
+ const includedAgents=[],omittedAgents=[];
+ const orderedAgents=[...agentsFiles].sort((left,right)=>{const [leftGroup,leftScore]=agentsPriority(left,affectedPaths,changeId),[rightGroup,rightScore]=agentsPriority(right,affectedPaths,changeId);return rightGroup-leftGroup||rightScore-leftScore||left.localeCompare(right);});
+ for(const file of orderedAgents){
+  if(guidanceCount>=AGENTS_MAX_FILES){omittedAgents.push({path:file,reason:'file-count-cap'});guidanceTruncated=true;continue;}
+  const text=await readPolicy(file);if(text===null)continue;
+  const originalBytes=Buffer.byteLength(text),remaining=AGENTS_TOTAL_MAX_BYTES-guidanceBytes,maxBytes=Math.min(AGENTS_FILE_MAX_BYTES,remaining),bounded=boundedAgentsText(text,maxBytes);
+  if(!bounded){omittedAgents.push({path:file,reason:'total-byte-cap'});guidanceTruncated=true;continue;}
+  guidance[file]=bounded.text;guidanceCount++;guidanceBytes+=bounded.bytes;
+  const truncated=originalBytes>bounded.bytes,reason=truncated?(originalBytes>AGENTS_FILE_MAX_BYTES&&maxBytes===AGENTS_FILE_MAX_BYTES?'file-byte-cap':'total-byte-cap'):null;
+  guidanceTruncated ||= truncated;
+  includedAgents.push({path:file,originalBytes,bytes:bounded.bytes,truncated,...(reason?{reason}:{})});
+ }
+ const guidanceBudget={maxFiles:AGENTS_MAX_FILES,maxFileBytes:AGENTS_FILE_MAX_BYTES,maxTotalBytes:AGENTS_TOTAL_MAX_BYTES,totalBytes:guidanceBytes,included:includedAgents,omitted:omittedAgents.slice(0,AGENTS_MAX_FILES),omittedCount:omittedAgents.length,truncated:guidanceTruncated};
+ return {guidance,guidanceBudget,guidanceFingerprint:hash({guidance,guidanceBudget}),standards,standardDetailPolicy:'Project standards are indexed by path, byte count and content hash. Read a standard on demand only when it applies to the current task.',tokenSources:tokenPaths.filter(file=>Object.hasOwn(guidance,file)),tokenResolution,availableSources:[...Object.keys(guidance),...Object.keys(standards)],absentSources:candidates.filter(file=>!Object.hasOwn(guidance,file)),standardsDirectoryPresent,projectTree:lines.join('\n'),treeTruncated:treeTruncated||count>=250,standardsTruncated,guidanceTruncated};
 }
 export function report(input){
  if(!input||typeof input!=='object')throw Error('report is required');requireText(input.summary,'report.summary');requireText(input.source,'report.source');
