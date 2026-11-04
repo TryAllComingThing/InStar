@@ -10,7 +10,7 @@ export const qualityRubrics={
  tasks:['spec-design-traceability','dependency-order','task-sized-delivery','task-acceptance-evidence','verification-coverage']
 };
 
-async function artifact(root,state,stage){
+export async function evaluationArtifact(root,state,stage){
  if(stage==='prd')return {path:state.prdPath,text:await read(root,state.prdPath)};
  const dir=changeDir(root,state.changeId);
  if(stage==='spec'){
@@ -34,7 +34,7 @@ export async function evaluate(root,state,input){
  if(!Array.isArray(input.criteria))throw Error('criteria must be an array');
  const expected=qualityRubrics[stage];const ids=input.criteria.map(x=>x?.id);
  if(ids.length!==expected.length||new Set(ids).size!==expected.length||expected.some(id=>!ids.includes(id)))throw Error(`criteria must cover rubric: ${expected.join(', ')}`);
- const doc=await artifact(root,state,stage),fingerprint=hash(doc.text),criteria=[];
+ const doc=await evaluationArtifact(root,state,stage),fingerprint=hash(doc.text),criteria=[];
  for(const item of input.criteria){
   if(!['PASS','WARN','BLOCK','NA'].includes(item.status))throw Error(`Invalid status for ${item.id}`);
   requireText(item.reason,`${item.id}.reason`);

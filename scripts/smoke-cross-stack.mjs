@@ -60,7 +60,7 @@ async function validateVue(){
  const project=await createGitProject('vue');
  await mkdir(path.join(project,'src'));
  await writeFile(path.join(project,'src/App.vue'),'<template><main>Orders</main></template>\n');
- const scripts=Object.fromEntries(['lint','typecheck','test','build','quality:dependencies','quality:vite-build'].map(name=>[name,'node -e "process.exit(0)"']));
+ const scripts=Object.fromEntries(['lint','typecheck','test','build','quality:dependencies','quality:vite-build','browser'].map(name=>[name,'node -e "process.exit(0)"']));
  await writeFile(path.join(project,'package.json'),JSON.stringify({scripts},null,2));
  await writeFile(path.join(project,'package-lock.json'),JSON.stringify({name:'vue-validation-fixture',version:'1.0.0',lockfileVersion:3,packages:{'':{name:'vue-validation-fixture',version:'1.0.0'}}},null,2));
  await mkdir(path.join(project,'node_modules'));
@@ -70,7 +70,7 @@ async function validateVue(){
      commit:[{category:'Q-01',checkId:'lint'},{category:'Q-02',checkId:'typecheck'},{category:'Q-05',checkId:'dependencies'},{category:'Q-07',checkId:'evidence-report'}],
      full:[{category:'Q-01',checkId:'lint'},{category:'Q-02',checkId:'typecheck'},{category:'Q-03',checkId:'test'},{category:'Q-04',checkId:'build'},{category:'Q-05',checkId:'dependencies'},{category:'Q-06',checkId:'vite-build'},{category:'Q-07',checkId:'evidence-report'}]
    }},
-   tools:{dependencies:'quality:dependencies','vite-build':'quality:vite-build'},
+   scripts:{browser:'browser'},tools:{dependencies:'quality:dependencies','vite-build':'quality:vite-build'},
    riskPolicy:{l3:{requiredReviewRoles:['frontend'],requireHumanApproval:true}}
  }),null,2);
  git(project,'add','.');git(project,'commit','-m','vue baseline');git(project,'checkout','-b','feature/vue-validation');

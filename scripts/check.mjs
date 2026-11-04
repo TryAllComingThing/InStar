@@ -31,10 +31,12 @@ const manifest=JSON.parse(await readFile(new URL('.codex-plugin/plugin.json',roo
 assert.equal(manifest.name,'instar');assert.equal(manifest.version,'2.4.0');assert.equal(manifest.skills,'./skills/');assert.equal(manifest.hooks,'./hooks/hooks.json');
 const index=JSON.parse(await readFile(new URL('plugin.json',root),'utf8'));assert.equal(index.manifest,'./.codex-plugin/plugin.json');assert.equal(index.kind,'instar-engineering-index');assert.equal(index.$schema,undefined);
 await access(new URL('assets/policy.json',root));
+await access(new URL('assets/ci/github-actions.yml',root));
+await access(new URL('assets/ci/README.md',root));
 await assert.rejects(access(new URL('assets/templates/',root)),{code:'ENOENT'});
 const hooks=JSON.parse(await readFile(new URL('hooks/hooks.json',root),'utf8'));
 assert.deepEqual(Object.keys(hooks.hooks).sort(),['PreToolUse','SessionEnd']);
-for(const file of ['hooks/quality-hook.mjs','runtime/shared/token-sources.mjs','runtime/shared/bounded-input.mjs','runtime/node_modules/smol-toml/package.json','runtime/quality-controller/cli.mjs','runtime/quality-controller/ci.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','standards/README.md','standards/architecture/overview.md','standards/languages/vue3.md','standards/languages/README.md','standards/languages/typescript.md','standards/languages/javascript.md','standards/languages/python.md','standards/languages/go.md','standards/languages/java.md','standards/languages/rust.md','standards/common/security.md','standards/common/testing.md','standards/api/DESIGN.md','standards/api/SECURITY.md','standards/database/DESIGN.md','standards/database/MIGRATIONS.md'])await access(new URL(file,root));
+for(const file of ['hooks/quality-hook.mjs','runtime/shared/token-sources.mjs','runtime/shared/bounded-input.mjs','runtime/shared/project-standards.mjs','runtime/node_modules/smol-toml/package.json','runtime/quality-controller/cli.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/friendly-cli.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','commands/flow.md','commands/find.md','commands/standards.md','commands/cost.md','standards/README.md','standards/architecture/overview.md','standards/languages/vue3.md','standards/languages/README.md','standards/languages/typescript.md','standards/languages/javascript.md','standards/languages/python.md','standards/languages/go.md','standards/languages/java.md','standards/languages/rust.md','standards/common/security.md','standards/common/testing.md','standards/api/DESIGN.md','standards/api/SECURITY.md','standards/database/DESIGN.md','standards/database/MIGRATIONS.md'])await access(new URL(file,root));
 await access(new URL('runtime/quality-controller/friendly-cli.mjs',root));
 for(const file of ['runtime/discovery-controller/cli.mjs','runtime/openspec-min/src/discovery/validate.js','runtime/openspec-min/src/discovery/instructions.js','runtime/openspec-min/LICENSE','commands/spec-discover.md','skills/spec-discover/LICENSE','skills/spec-discover/references/upstream-explore.ts'])await access(new URL(file,root));
 const artifactTemplatePairs=[
@@ -44,6 +46,7 @@ const artifactTemplatePairs=[
  ['skills/spec-design/assets/technical-design.md','src/openspec-min/src/skills/design/assets/technical-design.md'],
 ];
 for(const pair of artifactTemplatePairs){const canonical=await readFile(new URL(pair[0],root),'utf8');for(const copy of pair.slice(1))assert.equal(await readFile(new URL(copy,root),'utf8'),canonical,`Artifact template drift: ${pair[0]} != ${copy}`);}
+assert.match(await readFile(new URL('skills/spec-design/assets/technical-design.md',root),'utf8'),/## Compliance Matrix/);
 const proposalTemplate=await readFile(new URL('skills/spec-propose/assets/proposal.md',root),'utf8');
 assert.match(proposalTemplate,/Architecture impact \(exploration\)/);
 assert.match(await readFile(new URL('skills/spec-propose/SKILL.md',root),'utf8'),/Carry forward the architecture impact summary.*proposal\.md/s);

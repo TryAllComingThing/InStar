@@ -34,7 +34,7 @@ function nextAction(state,tasks,quality,verification,efficiency=null){
  if(!state)return {action:'start',reason:'No tracked workflow exists',request:{controller:'workflow',action:'start',requiredInput:['project','changeId','document']}};
  if(state.status==='completed')return {action:null,reason:'Workflow is archived and immutable',request:null};
  if(state.pendingApproval){
-  const request=requestFor(state,'approve',{reviewHash:state.pendingReview?.hash});
+  const request=requestFor(state,'approve',{reviewHash:state.pendingReview?.hash,intentId:state.pendingReview?.intentId,challenge:state.pendingReview?.challenge,subjectHash:state.pendingReview?.subjectHash});
   return {action:'approve',reason:`Awaiting human ${state.pendingApproval} review`,request};
  }
  if(state.status==='waiting-clarification')return {action:'answer-clarification',reason:'Open clarification blocks transitions',request:requestFor(state,'answer-clarification',{requiredInput:['answers']})};
@@ -68,10 +68,11 @@ export async function inspectWorkflow(root,{changeId=null}={}){
  const verification=state.verification?{at:state.verification.at||null,status:state.verification.report?.status||null,checks:(state.verification.checks||[]).map(check=>({name:check.name,kind:check.kind,outcome:check.outcome,applicable:check.applicable}))}:null;
  const next=nextAction(state,tasks,quality,verification,efficiency);
  if(efficiency?.status==='over-budget'&&!next.warning)next.warning={code:'EFFICIENCY_BUDGET_EXCEEDED',message:'The workflow exceeded its lane budget. Finish the current path without adding duplicate reviews or rerunning cached evidence.',exceeded:efficiency.exceeded};
- if(next.request?.project===undefined)next.request.project=root;
+ if(efficiency?.status==='insufficient-telemetry'&&!next.warning)next.warning={code:'EFFICIENCY_TELEMETRY_MISSING',message:'Efficiency telemetry is incomplete; do not treat missing values as zero usage or within-budget.',missingMetrics:efficiency.missingMetrics};
+ if(next.request&&next.request.project===undefined)next.request.project=root;
  return {
   status:'PASS',
-  change:{changeId:state.changeId,stage:state.stage,status:state.status,version:state.version,pendingApproval:state.pendingApproval||null,pendingReview:state.pendingReview||null,governance:{baselineHash:state.designBaselineHash||null,reuseHash:state.designReuseHash||null}},
+  change:{changeId:state.changeId,stage:state.stage,status:state.status,version:state.version,pendingApproval:state.pendingApproval||null,pendingReview:state.pendingReview||null,risk:state.risk||null,governance:{lineageId:state.lineageId||null,evidenceEpoch:state.evidenceEpoch||null,generationId:state.generationId||null,baselineHash:state.designBaselineHash||null,reuseHash:state.designReuseHash||null,contextManifestHash:state.designContextManifestHash||null,evidenceGraph:state.evidenceGraph||null}},
   changes:files.map(item=>({changeId:item.state.changeId,stage:item.state.stage,status:item.state.status,version:item.state.version})).sort((left,right)=>left.changeId.localeCompare(right.changeId)),
   tasks,quality,verification,efficiency,openTraces:traces.open,source:{treeHash:snapshotIdentity(currentSource)},next
  };
@@ -85,6 +86,14 @@ export async function helpInfo(pluginRoot){
   commands:[
    {command:'instar status [--project <path>] [--change <id>]',purpose:'Show workflow stage, review bindings, tasks and open traces'},
    {command:'instar next [--project <path>] [--change <id>]',purpose:'Show the next legal workflow action and request payload'},
+   {command:'instar flow context [--change <id>] [--json]',purpose:'Show fresh workflow context, applicable standards and reuse/baseline inputs'},
+   {command:'instar flow start --change <id> --document <file|-> [--lane micro|quick|fast|standard|regulated]',purpose:'Start a workflow with a risk-aware cost lane'},
+   {command:'instar flow action <action> [--input <request.json>] [--dry-run]',purpose:'Run any workflow action through the friendly command layer'},
+   {command:'instar doc show [--kind prd|proposal|spec|design|tasks|all]',purpose:'Read the current or selected workflow document'},
+   {command:'instar find reuse|standards|architecture|spec [options]',purpose:'Discover reusable capabilities, project standards, architecture context or existing specs'},
+   {command:'instar standards context|check [options]',purpose:'Inspect applicable standards or validate a design Compliance Matrix'},
+   {command:'instar cost show|lanes [--json]',purpose:'Show lane budgets, observed usage and missing telemetry'},
+   {command:'instar explain',purpose:'Explain standards precedence, cost lanes and convenience commands'},
    {command:'instar snapshot [--project <path>]',purpose:'Print the current repository snapshot'},
    {command:'instar verify [--profile commit|full] [--risk L0-L3] [--project <path>]',purpose:'Run configured verification'},
    {command:'instar review init [--output reports/review.json] [--reviewer <id>] [--force]',purpose:'Create a pending snapshot-bound review template without inventing PASS evidence'},

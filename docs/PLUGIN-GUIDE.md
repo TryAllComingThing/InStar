@@ -151,7 +151,7 @@ planning/workflows/<changeId>.json
 3. **实施计划**：技术设计 + 任务 + 项目基线/复用决定。
 4. **验收**：实现、验证证据和未验证项。
 
-审批不是“点一下继续”的形式动作：控制器会校验 `reviewHash` 与当前文档和上下文的实际哈希一致。文档、任务、基线或验证变化后，必须重新评审。
+审批不是“点一下继续”的形式动作：控制器会校验 `reviewHash` 与当前文档和上下文的实际哈希一致，并要求当前 `intentId` 与一次性 `challenge`。intent 有有效期、消费后不可复用；复制旧确认文本不能批准新内容。文档、任务、基线或验证变化后，必须重新评审。
 
 ### 6.3 实现阶段
 
@@ -168,14 +168,27 @@ planning/workflows/<changeId>.json
 - 归档后工作流不可变；需要新变更时使用新的 `changeId`。
 - PRD 澄清未完成时，其他转换会被阻塞。
 
-### 6.5 直接使用工作流 JSON CLI
+### 6.5 工作流速查命令与 JSON CLI
 
-工作流控制器没有快捷子命令，只接受一个 JSON 文件或 stdin：
+日常读取和常见转换使用 `bin/instar.mjs` 的便捷入口；控制器仍负责全部状态机、指纹、审批和事务逻辑：
+
+```sh
+node <plugin>/bin/instar.mjs flow status --project .
+node <plugin>/bin/instar.mjs flow next --project .
+node <plugin>/bin/instar.mjs flow context --project . --json
+node <plugin>/bin/instar.mjs doc show --project . --kind design
+node <plugin>/bin/instar.mjs flow start --project . --change add-order-filter --document ./prd.md --lane quick
+node <plugin>/bin/instar.mjs flow action write-tasks --project . --input /tmp/write-tasks.json --dry-run
+```
+
+复杂动作、长 Markdown 和自动化仍可使用 JSON 文件或 stdin：
 
 ```sh
 node <plugin>/runtime/workflow-controller/cli.mjs /tmp/workflow-request.json
 cat /tmp/workflow-request.json | node <plugin>/runtime/workflow-controller/cli.mjs -
 ```
+
+`flow action` 会把 `--input` 请求交给同一控制器；`--dry-run` 只返回将发送的请求，不写入状态。`--json` 输出完整载荷，`--brief` 输出摘要。`doc show` 支持 `prd`、`proposal`、`spec`、`design`、`tasks` 和 `all`。
 
 `submit-quality-review` 可以直接读取工作区内的稳定质量报告，避免手工复制大 JSON：传入 `"reportPath": "reports/quality-gate.json"`（兼容别名 `fromReport`）。报告必须是普通文件、不能是符号链接，且不超过 16 MiB；控制器仍会重新校验完整性、稳定性和当前源码快照。
 
@@ -205,7 +218,7 @@ reuse-context, recovery-status, prune-recovery
 }
 ```
 
-`lane` 可为 `fast`、`standard` 或 `regulated`；省略时控制器使用与质量门禁相同的内置规则和项目 `riskPolicy.rules`，按 `affectedPaths` 推荐。L0/L1 小范围可用 fast，L2 至少 standard，L3 使用 regulated；显式 lane 不能低于风险下限。fast lane 记录 30–38 分钟目标、28M token 上限以及响应/工具/浏览器/门禁次数预算，并预留 PRD、Spec、设计、任务四次必需语义评测。`state` 和 `next` 会返回 `efficiency`；终态 `trace-skill` 可附带 `metrics`。时间超限按 `activeMs` 判断，同时返回 `waitMs` 和 `elapsedMs` 以区分人工等待与日历时间。这些是 advisory budget 和代理指标，不会在超预算时自动绕过质量门禁。
+`lane` 可为 `micro`、`quick`、`fast`、`standard` 或 `regulated`。省略时控制器按 `affectedPaths` 推荐默认 lane；L0/L1 小范围可显式选择 `micro`（10–20 分钟、12M token）或 `quick`（20–30 分钟、18M token）来减少重复规划和评审开销，`fast` 仍是默认档位。L2 至少 `standard`，L3 使用 `regulated`；显式 lane 不能低于对应风险下限。各 lane 记录响应/工具/浏览器/门禁/语义评测预算，并预留必需质量步骤。`state`、`next` 和 `cost show` 会返回 `efficiency`；终态 `trace-skill` 可附带 `metrics`。时间超限按 `activeMs` 判断，同时返回 `waitMs` 和 `elapsedMs` 以区分人工等待与日历时间。缺失指标保持 `insufficient-telemetry`，这些是 advisory budget 和代理指标，不会在超预算时自动绕过质量门禁。
 
 读取当前状态：
 
@@ -271,6 +284,27 @@ node <plugin>/bin/instar.mjs review --project . --review-file ./review.json
 
 `qualityPolicy` 的每个类别可使用兼容的 `checkId`，或使用 `checkIds` 要求多个检查。同一检查也可被多个类别复用；豁免仍按 `category + checkId` 隔离。跨栈项目可把 `review.language` / `review.framework` 写为数组，例如 `"language": ["typescript", "python"]`、`"framework": ["vue", "none"]`，Review 清单会合并前端和后端项目。
 
+支持的 Review profile 包括 Vue、React、Svelte、Angular、Node、Python/Java/Go 后端、Rust 和 .NET。控制器按 `language`/`framework` 合并专项项，未知栈只保留通用项，绝不默认假设 Vue。`review init` 会按当前栈生成完整清单。
+
+项目规范通过 `.instar-quality.json` 的 `context.standards` 或仓库 `standards/` 发现。`standards/index.json` 示例：
+
+```json
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "ARCH-001",
+      "path": "standards/architecture/module-boundaries.md",
+      "mandatory": true,
+      "appliesTo": ["src/**"],
+      "summary": "Use public module entry points."
+    }
+  ]
+}
+```
+
+`mandatory`/`always` 且命中当前 `affectedPaths` 的规则必须写入设计 `Compliance Matrix`，并在 Review 的 `standardsReferences` 中逐条提供状态和证据。建议性规则不会单独阻断；无关规则变化不会使当前设计指纹失效。
+
 ### 7.3 Review 文件
 
 `review --review-file` 可以读取直接 Review 对象，也可以读取 `{ "review": { ... } }` 包装对象。每次 Review 必须使用当前 `snapshot` 的 `fingerprint`，并覆盖当前技术栈的完整检查清单。先用 `review init` 生成模板，比手工拼写更不容易漏项：
@@ -298,7 +332,19 @@ node <plugin>/bin/instar.mjs review init --project . --reviewer team-member
 }
 ```
 
-高风险 Review 的证据必须包含源码位置、精确摘录和当前快照指纹；Vue 项目需要 17 项，Python/Java/Go 项目需要 14 项，Vue + Python/Java/Go 跨栈项目需要 25 项。详见 [质量协议](QUALITY.md)。
+高风险 Review 的证据必须包含源码位置、精确摘录和当前快照指纹；检查项数量由 `review init` 按当前语言、框架和 `extraChecks` 生成，不再假设固定 Vue 清单。存在适用强制项目规范时，Review 还必须包含：
+
+```json
+"standardsReferences": [
+  {
+    "id": "ARCH-001",
+    "status": "PASS",
+    "evidence": "src/orders/index.ts:12 uses the public module entry point"
+  }
+]
+```
+
+详见 [质量协议](QUALITY.md)。
 
 ### 7.4 提交前与 PR 前
 
@@ -435,6 +481,17 @@ node <plugin>/bin/instar.mjs spec-discover --project /absolute/project --scope s
 | 帮助 | `node <plugin>/bin/instar.mjs help` |
 | 工作流状态 | `node <plugin>/bin/instar.mjs status --project . [--change <id>]` |
 | 下一动作 | `node <plugin>/bin/instar.mjs next --project . [--change <id>]` |
+| 工作流上下文 | `node <plugin>/bin/instar.mjs flow context --project . [--json]` |
+| 启动工作流 | `node <plugin>/bin/instar.mjs flow start --change <id> --document <file> [--lane <lane>]` |
+| 通用工作流动作 | `node <plugin>/bin/instar.mjs flow action <action> --input <request.json> [--dry-run]` |
+| 查看文档 | `node <plugin>/bin/instar.mjs doc show --project . [--kind design|tasks|all]` |
+| 复用发现 | `node <plugin>/bin/instar.mjs find reuse --query "订单筛选" --json` |
+| 规范发现 | `node <plugin>/bin/instar.mjs find standards --path src/orders [--changed]` |
+| 架构/基线发现 | `node <plugin>/bin/instar.mjs find architecture --json` |
+| 规范合规检查 | `node <plugin>/bin/instar.mjs standards check --document ./technical-design.md` |
+| 成本与缺失指标 | `node <plugin>/bin/instar.mjs cost show --project .` |
+| 成本档位说明 | `node <plugin>/bin/instar.mjs cost lanes --json` |
+| 设计理念说明 | `node <plugin>/bin/instar.mjs explain` |
 | 诊断 | `node <plugin>/bin/instar.mjs doctor` |
 | 快照 | `node <plugin>/bin/instar.mjs snapshot --project .` |
 | 完整验证 | `node <plugin>/bin/instar.mjs verify --profile full` |

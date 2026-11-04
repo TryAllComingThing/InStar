@@ -99,7 +99,7 @@ npm run check
 | 文件 | 覆盖重点 |
 | --- | --- |
 | `test/cli.test.mjs` | 非法参数、畸形 JSON、非零退出码、8 MiB 输入上限、最小工作流启动 |
-| `test/friendly-cli.test.mjs` | `doctor/snapshot/verify/review/ci` 参数解析、Review 文件两种包装形式、发布确认 |
+| `test/friendly-cli.test.mjs` | 质量快捷命令参数解析、工作流 `flow/doc/find/standards/cost` 路由、dry-run、Review 文件两种包装形式和发布确认 |
 | `test/process-runner.test.mjs` | 不经过 shell 执行命令、原生可执行文件路径 |
 | `test/portable.test.mjs` | 迁移到临时目录的 `runtime/` 在无源码树、无外部依赖时可启动工作流 |
 
@@ -131,6 +131,7 @@ npm run check
 | `test/discovery.test.mjs` | 预览只读、范围扫描、上下文失效、证据校验、基线更新保护、符号链接、回滚、独立恢复 |
 | `test/project-baseline.test.mjs` | glob 语义、规则注册表、采纳、陈旧证据、策略读取边界 |
 | `test/code-reuse.test.mjs` | 能力新鲜度、复用决策、内部边界、共享能力提取和 Review 指纹 |
+| `test/project-standards.test.mjs` | 项目规范 manifest、glob 适用范围、适用指纹失效、Compliance Matrix、Review `standardsReferences` 和设计期阻断 |
 
 ### 4.5 文档引擎
 
@@ -157,6 +158,16 @@ npm run check
 npm run build
 npm run check
 npm test
+```
+
+定向验证：
+
+```sh
+node --test test/project-standards.test.mjs
+node --test test/friendly-cli.test.mjs
+node --test test/efficiency.test.mjs test/quality.test.mjs test/workflow.test.mjs
+node bin/instar.mjs explain --json
+node bin/instar.mjs cost lanes --json
 ```
 
 `npm test` 的定义是：

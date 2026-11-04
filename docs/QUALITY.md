@@ -45,6 +45,48 @@ schema 3 禁止使用旧的 `scripts` 和 npm 工具适配字段，必须显式�
 - `timeoutMs` 范围为 `1..600000` 毫秒。
 - CLI JSON 请求上限为 8 MiB；证据、报告和 Review 文本会被脱敏或截断到规定上限。
 
+### 2.4 项目规范与强制规则
+
+项目规范优先于插件建议。控制器自动发现 `<project>/standards/`，并合并 `.instar-quality.json` 的 `context.standards` 路径：
+
+```json
+{
+  "context": {
+    "standards": ["standards", "docs/engineering"]
+  }
+}
+```
+
+规范目录通过 `standards/index.json`（或任一被发现的 `index.json`）声明规则：
+
+```json
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "ARCH-001",
+      "path": "standards/architecture/module-boundaries.md",
+      "title": "Module boundaries",
+      "mandatory": true,
+      "appliesTo": ["src/**"],
+      "summary": "Use public module entry points.",
+      "owner": "architecture",
+      "version": "1"
+    }
+  ]
+}
+```
+
+`mandatory: true` 或 `always: true` 的规则在命中当前 `affectedPaths` 后成为强制规则。`appliesTo` 使用仓库相对 glob；没有 `appliesTo` 的强制规则始终适用。设计阶段必须在 `technical-design.md` 写入 `Compliance Matrix`，Review 阶段必须在 `standardsReferences` 逐条引用。以下情况会阻断：
+
+- 缺少适用强制规则行，或 `Status` 不是 `PASS/WARN/NA`。
+- `Source` 无法识别规则文件或规则 ID，或 `Evidence` 为空。
+- Review 漏掉任一适用强制规则、引用未知规则、重复引用或证据为空。
+
+规则文件、manifest 和路径都会执行符号链接、越界、大小和数量限制检查。设计失效指纹只包含命中的规则和文档哈希；修改无关规则不会使已批准设计失效。插件 [`standards/`](../standards/README.md) 仍是建议，不会自动成为项目门禁。
+
+manifest 条目还可用 `conflictsWith` 与 `supersedes` 声明规则关系。两者只有当双方都命中当前 `affectedPaths` 时才参与判断。`supersedes` 在冲突中给出明确胜者；没有胜者的显式冲突返回 `HUMAN_DECISION_REQUIRED` 并阻断 `write-design`。未知引用会在加载 manifest 时失败。项目规则优先于插件建议，控制器不会在冲突时静默选择一条规则。`instar find standards` 和 `instar standards check` 会输出冲突状态与解决说明。
+
 ## 3. schema 3 推荐配置
 
 以下示例使用 Python，但 `tools.checks` 可以指向任意本项目可执行的命令。命令使用 `spawnSync`，不经过 shell。
@@ -124,8 +166,10 @@ schema 3 禁止使用旧的 `scripts` 和 npm 工具适配字段，必须显式�
 
 - `commit` 默认：`lint`、`typecheck`、`dependencies`
 - `full` 默认：`lint`、`typecheck`、`test`、`build`、`dependencies`、`vite-build`
-- 可额外配置 `tools.security`、`scripts.e2e`、`scripts.visual`
+- 可额外配置 `tools.architecture`、`tools.contracts`、`tools.migrations`、`tools.security`、`scripts.e2e`、`scripts.visual`
 - 旧配置必须显式 `packageManager: "npm"`
+
+`tools.contracts` 只在变更命中 `api/`、`contracts/`、`schemas/`、`proto/`、`graphql/`、`openapi` 或同类契约文件时运行；`tools.migrations` 只在命中 `migrations/`、`alembic/`、`flyway/`、`liquibase/` 或 `.sql` 文件时运行。未命中时记录 `INFO`，不把未执行包装成通过；命中后失败会使 `quality-gate`、`pre-pr-check` 和提交前链路阻断。适配器结果写入既有 quality-gate checks 和 unified report，不另建平行证据文件。schema 3 项目应把对应命令加入 `verification.profiles` 和 `tools.checks`，并显式选择何时运行。
 
 兼容模式只用于既有 Vue/npm 流程；新项目和新语言优先使用 schema 3。
 
@@ -286,19 +330,25 @@ Review 是质量门禁的核心输入。必须包含 `reviewer`、当前 `finger
 
 ### 8.1 检查项组成
 
-`reviewItemsFor` 根据 `review.language` 与 `review.framework` 生成。两者均兼容字符串或数组；数组会合并去重，便于 Vue + Python/Java/Go 等跨栈变更获得完整清单：
+`reviewItemsFor` 根据 `review.language` 与 `review.framework` 生成。两者均兼容字符串或数组；数组会合并去重，便于 React + Node、Vue + Python/Java/Go 等跨栈变更获得完整清单：
 
 | 项目类型 | 检查项数量 | 组成 |
 | --- | --- | --- |
 | 未知（未配置语言/框架） | 6 | `correctness`、`maintainability`、`architecture`、`security`、`performance`、`naming` |
 | Vue | 17 | 6 个通用项 + 11 个 Vue 专项项 |
+| React | 13 | 6 个通用项 + 7 个 React 专项项 |
+| Svelte / Angular | 11 / 12 | 通用项 + 各自组件状态、生命周期、可访问性专项项 |
+| Node | 11 | 6 个通用项 + 5 个异步、输入、授权、资源和可观测性专项项 |
 | Python / Java / Go | 14 | 6 个通用项 + 8 个后端专项项 |
-| Vue + Python/Java/Go | 25 | 6 个通用项 + 11 个 Vue 专项项 + 8 个后端专项项 |
-| React | 6 | 通用项；除非 `review.extraChecks` 追加 |
+| Rust | 10 | 6 个通用项 + unsafe、所有权、错误传播、并发安全 |
+| .NET / C# | 10 | 6 个通用项 + nullable、async、DI 生命周期、EF migration |
+| 多栈 | 合并去重 | 通用项 + 各命中 profile；未知栈不会默认加入 Vue |
 
 Vue 专项项包括：`types`、`component-boundaries`、`design`、`watch-cleanup`、`v-for-key`、`reactive-destructure`、`props`、`computed-purity`、`unmount-cleanup`、`async-component`、`lazy-route`。
 
 后端专项项包括：`api-contract`、`input-validation`、`authorization`、`error-handling`、`data-consistency`、`transactions`、`concurrency`、`observability`。
+
+React 专项项包括：`types`、`component-boundaries`、`hooks-rules`、`state-ownership`、`effect-cleanup`、`memoization`、`accessibility`。Node 专项项包括：`async-errors`、`input-validation`、`authorization`、`resource-cleanup`、`observability`。Rust 与 .NET 使用上表列出的语言专项项；`review.extraChecks` 仍可追加项目自有检查。
 
 ### 8.2 L0/L1 证据
 
@@ -378,6 +428,24 @@ node <plugin>/bin/instar.mjs review repair --project . --review-file reports/rev
 - `reuse-existing`
 - `duplicate-implementation`
 - `shared-capability-design`
+
+### 8.6 项目规范引用
+
+当存在适用的强制项目规范时，Review 需要 `standardsReferences`：
+
+```json
+{
+  "standardsReferences": [
+    {
+      "id": "ARCH-001",
+      "status": "PASS",
+      "evidence": "src/orders/index.ts:12 uses the public module entry point"
+    }
+  ]
+}
+```
+
+`review init` 会列出当前适用的强制规则并生成待办引用；`review repair` 会补齐新增规则，同时保留已核实引用。`quality-gate` 会重新计算适用规则并校验完整性，不能依赖模板中的占位状态通过。Review 报告会记录 `standards.status`、`fingerprint`、`required` 和 `present`，便于审计。
 
 ## 9. 报告与证据链
 

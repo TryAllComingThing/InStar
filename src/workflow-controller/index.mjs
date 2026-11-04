@@ -1,16 +1,23 @@
 import {fs,safe,identifier,now,requireText,projectRoot,exists,read,json,atomic,putJson,lock,transaction,restore,hash,appendJsonl,pluginRoot,sourceSnapshot} from './files.mjs';
-import {changeDir,prd,approvalHash,assertApprovals,generationContext,taskItems,report} from './documents.mjs';
+import {changeDir,prd,approvalHash,assertApprovals,generationContext,taskItems,report,persistContextManifest,specBundle,technicalDesign,contextManifestPath} from './documents.mjs';
 import * as engine from '../openspec-min/entry.js';
 import {evaluate} from './evaluation.mjs';
 import {redactData,boundedText} from '../shared/redaction.mjs';
 import {baselineContext,adoptRules,validateRuleReferences,baselineCheck} from '../shared/project-baseline.mjs';
 import {reuseContext,validateReuseDecisions,validateReuseReview,validateReusePlan} from '../shared/code-reuse.mjs';
 import {workflowWritePaths} from './write-set.mjs';
-import {describeSnapshotDrift,snapshotIdentity} from '../shared/source-snapshot.mjs';
-import {initialEfficiency,laneAtLeast,normalizeLane,recommendedLane,summarizeEfficiency,validateMetrics} from '../shared/efficiency.mjs';
+import {describeSnapshotDrift,isExcludedSourcePath,snapshotIdentity} from '../shared/source-snapshot.mjs';
+import {initialEfficiency,laneAtLeast,laneDefinition,normalizeLane,recommendedLane,riskMinimumLane,summarizeEfficiency,validateMetrics} from '../shared/efficiency.mjs';
 import {selectSkills} from '../shared/skills-index.mjs';
+import {inferRisk} from '../shared/risk.mjs';
+import {inspectSemanticGate,assertSemanticNotBlocked} from '../shared/semantic-gate.mjs';
+import {buildEvidenceGraph,validateEvidenceGraph,writeEvidenceGraph,readEvidenceGraph} from '../shared/evidence-graph.mjs';
+import {validateChangedPathsCoverage} from '../shared/affected-paths.mjs';
+import {applicableProjectStandards,loadProjectStandards,validateComplianceMatrix} from '../shared/project-standards.mjs';
+import {validateRequirementTraceability} from '../shared/requirement-traceability.mjs';
 import {constants as fsConstants} from 'node:fs';
 import path from 'node:path';
+import {randomBytes,randomUUID} from 'node:crypto';
 const statePath=id=>`planning/workflows/${identifier(id)}.json`;
 const requireStage=(s,...stages)=>{if(!stages.includes(s.stage)||s.status==='completed'||s.pendingApproval)throw Error(`Action unavailable in ${s.stage}/${s.status}`);};
 async function projectRiskPolicy(root){
@@ -21,7 +28,20 @@ async function projectRiskPolicy(root){
  if(!config.riskPolicy||typeof config.riskPolicy!=='object'||Array.isArray(config.riskPolicy))throw Error('Invalid riskPolicy configuration');
  return config.riskPolicy;
 }
-async function pending(root,s,kind){s.status='awaiting-approval';s.pendingApproval=kind;s.pendingReview={kind,hash:await approvalHash(root,s,kind)};}
+async function configuredStandards(root){
+ if(!await exists(safe(root,'.instar-quality.json')))return [];
+ const config=await json(root,'.instar-quality.json');
+ const value=config?.context?.standards;
+ if(value===undefined||value===null)return [];
+ const values=Array.isArray(value)?value:[value];
+ if(!values.length||values.some(item=>typeof item!=='string'||!item.trim()||item.startsWith('/')||item.includes('\\')||item.split('/').includes('..')))throw Error('context.standards must be a workspace-relative path or non-empty path array');
+ return [...new Set(values.map(item=>item.trim()))];
+}
+async function pending(root,s,kind){
+ const subjectHash=await approvalHash(root,s,kind),issuedAt=Date.now();
+ s.status='awaiting-approval';s.pendingApproval=kind;
+ s.pendingReview={kind,hash:subjectHash,subjectHash,intentId:randomUUID(),challenge:randomBytes(24).toString('hex'),issuedAt:new Date(issuedAt).toISOString(),expiresAt:new Date(issuedAt+15*60*1000).toISOString()};
+}
 function clearPending(s){s.pendingApproval=null;s.pendingReview=null;s.status='in-progress';}
 function packageInput(input){requireText(input.proposal,'proposal');if(!input.specs||typeof input.specs!=='object'||Array.isArray(input.specs)||!Object.keys(input.specs).length)throw Error('specs must be a nonempty mapping');for(const [id,doc] of Object.entries(input.specs)){identifier(id,true);requireText(doc,'spec');}return {proposal:input.proposal,specs:input.specs};}
 function affectedPaths(value=[]){if(!Array.isArray(value)||value.length>50||value.some(p=>typeof p!=='string'||!p||p.includes('..')||p.includes('\\')||p.startsWith('/')))throw Error('Invalid affectedPaths');return value;}
@@ -97,6 +117,44 @@ function assertCurrentSnapshot(previous,current,label){
  const before=snapshotIdentity(previous),after=snapshotIdentity(current);
  if(!before||before!==after)throw Error((label==='Verification evidence'?'Source tree changed after verification; ':'')+label+' is stale. '+describeSnapshotDrift(previous,current)+' Recovery: run quality-gate against the current tree, bind the new reports/quality-gate.json with submit-quality-review, then submit verification evidence again.');
 }
+async function buildWorkflowEvidenceGraph(root,s,qualityReview,reviewedSource){
+ const dir=changeDir(root,s.changeId),snapshotFingerprint=snapshotIdentity(reviewedSource);
+ if(!snapshotFingerprint)throw Error('Quality review source snapshot fingerprint is missing');
+ const prdText=await prd(root,s),bundle=await specBundle(root,s),design=await technicalDesign(root,dir),tasks=await read(dir,'tasks.md');
+ const baseline=await baselineContext(root,s.affectedPaths||[]),contextManifest=await read(root,contextManifestPath(s.changeId,'design'));
+ const node=(id,kind,value,reference)=>({id,kind,hash:hash(value),reference});
+ return buildEvidenceGraph({
+  changeId:s.changeId,lineageId:s.lineageId,evidenceEpoch:s.evidenceEpoch,generationId:s.generationId,snapshotFingerprint,
+  nodes:[
+   node('artifact.prd','artifact',prdText,s.prdPath),
+   node('artifact.spec','artifact',bundle,`planning/changes/${s.changeId}/proposal.md`),
+   node('artifact.design','artifact',design,`planning/changes/${s.changeId}/technical-design.md`),
+   node('artifact.tasks','artifact',tasks,`planning/changes/${s.changeId}/tasks.md`),
+   node('context.design','manifest',contextManifest,contextManifestPath(s.changeId,'design')),
+   node('baseline.project','policy',baseline,baseline.path||'docs/project-baseline/rules.json'),
+   node('decision.reuse','decision',s.reuseDecisions||[],'planning/workflows/'+s.changeId+'.json'),
+   node('review.quality','report',qualityReview,qualityReview.path||qualityReview.id||'quality-gate'),
+   node('snapshot.source','snapshot',snapshotFingerprint,'.workflow/traces.jsonl'),
+  ],
+  edges:[
+   {from:'artifact.prd',to:'artifact.spec',kind:'derives'},
+   {from:'artifact.spec',to:'artifact.design',kind:'derives'},
+   {from:'artifact.design',to:'artifact.tasks',kind:'derives'},
+   {from:'context.design',to:'artifact.design',kind:'constrains'},
+   {from:'baseline.project',to:'artifact.design',kind:'constrains'},
+   {from:'decision.reuse',to:'artifact.design',kind:'constrains'},
+   {from:'artifact.tasks',to:'review.quality',kind:'reviewed-by'},
+   {from:'review.quality',to:'snapshot.source',kind:'bound-to'},
+  ],
+ });
+}
+async function validateStoredEvidenceGraph(root,s,currentSource){
+ if(!s.evidenceGraph?.path)throw Error('Current evidence graph is missing; submit a fresh quality review');
+ const graph=await readEvidenceGraph(root,s.evidenceGraph.path);
+ validateEvidenceGraph(graph,{expectedSnapshotFingerprint:snapshotIdentity(currentSource),expectedEvidenceEpoch:s.evidenceEpoch,requiredNodeIds:['artifact.prd','review.quality','snapshot.source']});
+ if(graph.fingerprint!==s.evidenceGraph.fingerprint||graph.generationId!==s.generationId)throw Error('Current evidence graph is stale; submit a fresh quality review');
+ return graph;
+}
 async function readWorkspaceJson(root,relative,label){
  if(typeof relative!=='string'||!relative.trim()||path.isAbsolute(relative)||relative.split(/[\\/]/).includes('..'))throw Error(label+' must be a workspace-relative JSON path');
  const file=safe(root,relative),stat=await fs.lstat(file);
@@ -120,7 +178,20 @@ export async function run(input){
  if(input.action==='route-skills')return selectSkills({context:input.context||'',stage:input.stage||null});
  if(['recovery-status','prune-recovery'].includes(input.action)){const root=await projectRoot(input.project);const {recoveryStore}=await import('./recovery.mjs');return lock(root,()=>recoveryStore(root,input));}
  if(input.action==='baseline-check')return baselineCheck(await projectRoot(input.project));
- if(input.action==='reuse-context')return reuseContext(await projectRoot(input.project));
+ if(input.action==='reuse-context')return reuseContext(await projectRoot(input.project),{query:input.query||'',limit:input.limit});
+ if(['standards-context','standards-check','project-context'].includes(input.action)){
+  const root=await projectRoot(input.project),catalog=await loadProjectStandards(root,await configuredStandards(root));
+  const paths=Array.isArray(input.paths)?input.paths:Array.isArray(input.affectedPaths)?input.affectedPaths:[];
+  const applicable=applicableProjectStandards(catalog,paths);
+  if(input.action==='project-context'){
+   return {status:'PASS',standards:{...catalog,applicable},baseline:await baselineContext(root,paths)};
+  }
+  if(input.action==='standards-check'){
+   const compliance=validateComplianceMatrix(requireText(input.document,'document'),applicable.mandatoryEntries);
+   return {status:compliance.status,compliance,applicable:{fingerprint:applicable.fingerprint,mandatory:applicable.mandatoryEntries.map(entry=>entry.id),rules:applicable.entries.map(entry=>entry.id)}};
+  }
+  return {status:'PASS',catalog,applicable};
+ }
  if(['baseline-context','baseline-adopt'].includes(input.action)){
   const root=await projectRoot(input.project);
   return input.action==='baseline-context'?baselineContext(root,input.paths||[]):lock(root,()=>adoptRules(root,input));
@@ -145,9 +216,9 @@ export async function run(input){
    let s;
    if(input.action==='start'){
     if(await exists(safe(root,file))||await exists(changeDir(root,id))||await exists(safe(root,'planning/archive',id))||await exists(safe(root,`docs/prd/${id}.md`)))throw Error('Change already exists');
-    const paths=input.affectedPaths===undefined?[]:affectedPaths(input.affectedPaths),minimumLane=recommendedLane({affectedPaths:paths,riskPolicy:await projectRiskPolicy(root)}),lane=normalizeLane(input.lane??minimumLane);
+    const paths=input.affectedPaths===undefined?[]:affectedPaths(input.affectedPaths),riskPolicy=await projectRiskPolicy(root),risk=inferRisk({riskPolicy},paths),minimumLane=riskMinimumLane(risk.level),recommended=recommendedLane({affectedPaths:paths,riskPolicy}),lane=normalizeLane(input.lane??recommended);
     if(!laneAtLeast(lane,minimumLane))throw Error(`lane ${lane} is below the risk-aware minimum ${minimumLane}; choose ${minimumLane} or a stricter lane`);
-    s={schemaVersion:1,changeId:id,prdPath:`docs/prd/${id}.md`,stage:'prd',status:'in-progress',pendingApproval:null,pendingReview:null,approvals:{},taskEvidence:{},clarifications:[],version:0,history:[],affectedPaths:paths,efficiency:initialEfficiency({lane,affectedPaths:paths,minimumLane,startedAt:now()})};
+    s={schemaVersion:1,changeId:id,lineageId:randomUUID(),evidenceEpoch:1,generationId:randomUUID(),prdPath:`docs/prd/${id}.md`,stage:'prd',status:'in-progress',pendingApproval:null,pendingReview:null,approvals:{},approvalIntents:[],taskEvidence:{},clarifications:[],version:0,history:[],affectedPaths:paths,risk:{level:risk.level,reasons:risk.matches},efficiency:initialEfficiency({lane,affectedPaths:paths,minimumLane,startedAt:now()})};
     await atomic(root,s.prdPath,requireText(input.document,'document'));
    }else{
     s=await json(root,file);if(input.expectedVersion!==s.version)throw Error('Stale expectedVersion; read state again');
@@ -166,48 +237,76 @@ export async function run(input){
       for(const answer of input.answers){const q=(s.clarifications||[]).find(x=>x.id===answer.id);if(!q)throw Error('Unknown clarification id');if(q.answer)throw Error('Clarification already answered');q.answer=requireText(answer.answer,'answer');q.answeredAt=now();}
       if(s.clarifications.every(q=>q.answer))s.status='in-progress';break;
      }
-     case 'save-prd':requireStage(s,'prd');if(input.affectedPaths!==undefined)s.affectedPaths=affectedPaths(input.affectedPaths);
+     case 'save-prd':requireStage(s,'prd');if(input.affectedPaths!==undefined){
+      const paths=affectedPaths(input.affectedPaths),riskPolicy=await projectRiskPolicy(root),risk=inferRisk({riskPolicy},paths),minimumLane=riskMinimumLane(risk.level),lane=input.lane===undefined?s.efficiency.lane:normalizeLane(input.lane);
+      if(!laneAtLeast(lane,minimumLane))throw Error(`affectedPaths change raises the risk-aware minimum to ${minimumLane}; choose ${minimumLane} or a stricter lane`);
+      const definition=laneDefinition(lane);s.affectedPaths=paths;s.risk={level:risk.level,reasons:risk.matches};Object.assign(s.efficiency,{lane,targetMinutes:definition.targetMinutes,tokenTarget:definition.tokenTarget,budgets:definition.budgets,riskFloor:minimumLane});
+     }
     await atomic(root,s.prdPath,requireText(input.document,'document'));s.status='in-progress';break;
-     case 'submit-prd':requireStage(s,'prd');await pending(root,s,'prd');break;
+     case 'submit-prd':requireStage(s,'prd');{const semantic=await inspectSemanticGate(root,s,'prd');assertSemanticNotBlocked(semantic,'PRD');await pending(root,s,'prd');}break;
      case 'approve':{
-      const kind=s.pendingApproval;if(!kind||input.reviewHash!==s.pendingReview.hash||input.reviewHash!==await approvalHash(root,s,kind))throw Error('Review hash missing or stale');
+      const kind=s.pendingApproval,pending=s.pendingReview;
+      if(!kind||!pending)throw Error('No pending approval; review hash missing or stale');
+      if(Date.parse(pending.expiresAt)<=Date.now())throw Error('Approval intent expired; request a fresh review');
+      if(input.reviewHash!==pending.hash||input.reviewHash!==await approvalHash(root,s,kind))throw Error('Review hash missing or stale');
+      if(input.intentId!==pending.intentId||input.challenge!==pending.challenge)throw Error('Approval intent or challenge missing, stale or reused');
       requireText(input.confirmation?.text,'human confirmation text');requireText(input.confirmation?.source,'human confirmation source');
+      const semantic=await inspectSemanticGate(root,s,kind==='implementation'?'tasks':kind==='acceptance'?null:kind);assertSemanticNotBlocked(semantic,kind);
       if(kind!=='prd')await assertApprovals(root,s,{spec:kind!=='spec',implementation:kind==='acceptance'});
       if(kind==='spec')await gate(ref);
-      s.approvals[kind]={hash:input.reviewHash,confirmation:input.confirmation,at:now()};clearPending(s);
+      s.approvals[kind]={hash:input.reviewHash,subjectHash:pending.subjectHash,intentId:pending.intentId,semanticGate:semantic,confirmation:input.confirmation,at:now()};
+      (s.approvalIntents??=[]).push({intentId:pending.intentId,kind,subjectHash:pending.subjectHash,consumedAt:now()});
+      clearPending(s);
       s.stage={prd:'spec',spec:'design',implementation:'implementation',acceptance:'archive'}[kind];break;
      }
      case 'request-changes':{
       requireText(input.feedback,'feedback');if(!s.pendingApproval)throw Error('No pending review');
       const kind=s.pendingApproval;clearPending(s);s.stage={prd:'prd',spec:'spec',implementation:'tasks',acceptance:'implementation'}[kind];s.feedback=input.feedback;
       if(kind==='implementation'){await fs.rm(safe(changeDir(root,id),'tasks.md'),{force:true});await fs.rm(safe(changeDir(root,id),'.tasks.json'),{force:true});}
-      if(kind==='spec'){const dir=changeDir(root,id);for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;s.taskEvidence={};delete s.approvals.implementation;}
+      if(kind==='spec'){const dir=changeDir(root,id);for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designContextManifestHash;s.taskEvidence={};delete s.approvals.implementation;}
       delete s.verification;delete s.qualityReview;delete s.approvals.acceptance;break;
      }
      case 'create-spec':case 'save-spec':{
       validateRuleReferences(await baselineContext(root,s.affectedPaths||[]),input.ruleReferences);
       requireStage(s,'spec');await assertApprovals(root,s);const ctx=await generationContext(root,s);if(input.contextHash!==ctx.contextHash)throw Error('Generation context changed');const output=packageInput(input);
       if(input.action==='create-spec')await engine.createSpecChange({...ref,prd:await prd(root,s),generate:async()=>output});
-      else{const dir=changeDir(root,id);if(!await exists(dir))throw Error('Create spec first');await atomic(dir,'proposal.md',output.proposal);await fs.rm(safe(dir,'specs'),{recursive:true,force:true});for(const [key,doc] of Object.entries(output.specs))await atomic(dir,`specs/${key}/spec.md`,doc);for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;s.taskEvidence={};}
+      else{const dir=changeDir(root,id);if(!await exists(dir))throw Error('Create spec first');await atomic(dir,'proposal.md',output.proposal);await fs.rm(safe(dir,'specs'),{recursive:true,force:true});for(const [key,doc] of Object.entries(output.specs))await atomic(dir,`specs/${key}/spec.md`,doc);for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designContextManifestHash;s.taskEvidence={};}
       s.status='in-progress';break;
      }
      case 'submit-spec':{
       requireStage(s,'spec');await assertApprovals(root,s);const result=await engine.runSpecVerifyGate(ref);s.specReview=report(input.report);s.gate=result;
       if(!result.valid||s.specReview.issues.some(x=>x.severity==='critical')||s.specReview.unverified.length){s.status='blocked';break;}
+      {const semantic=await inspectSemanticGate(root,s,'spec');assertSemanticNotBlocked(semantic,'Spec');}
       await pending(root,s,'spec');break;
      }
      case 'write-design':case 'write-tasks':{
-      if(input.action==='write-design'){const reuse=await reuseContext(root);validateReuseDecisions(reuse,input.reuseDecisions);s.designReuseHash=reuse.fingerprint;s.reuseDecisions=input.reuseDecisions||[];}
+      if(input.action==='write-design'){const reuse=await reuseContext(root);validateReuseDecisions(reuse,input.reuseDecisions);s.designReuseHash=reuse.fingerprint;s.reuseIndexState=reuse.state;s.reuseDecisions=input.reuseDecisions||[];}
       const baseline=await baselineContext(root,s.affectedPaths||[]);
       if(input.action==='write-design'){validateRuleReferences(baseline,input.ruleReferences);s.designBaselineHash=baseline.fingerprint;}
       const stage=input.action==='write-design'?'design':'tasks';requireStage(s,stage);await assertApprovals(root,s,{spec:true});const ctx=await generationContext(root,s);if(input.contextHash!==ctx.contextHash)throw Error('Generation context changed');requireText(input.document,'document');
-      if(stage==='design'){await engine.generateDesignDoc({...ref,specReviewed:true,generate:async()=>input.document});s.designConstraintsHash=ctx.context.projectArchitecture.guidanceFingerprint;s.designStandardsHash=hash(ctx.context.projectArchitecture.standards);s.designInStarReferencesHash=ctx.context.instarReferences.fingerprint;s.stage='tasks';}
-      else{if(taskItems(input.document).some(t=>t.done))throw Error('New tasks must be unchecked');await engine.generateTaskList({...ref,generate:async()=>input.document});s.stage='implementation';await pending(root,s,'implementation');}break;
+      if(stage==='design'){
+       const unknownStandards=ctx.context.projectArchitecture.applicableStandards?.unknownEntries||[];
+       if(unknownStandards.some(entry=>entry.mandatory))throw Error(`affectedPaths is required before design to evaluate mandatory project standards: ${unknownStandards.filter(entry=>entry.mandatory).map(entry=>entry.id).join(', ')}. Update affectedPaths through the PRD review and regenerate design context`);
+       const unresolvedConflicts=(ctx.context.projectArchitecture.applicableStandards?.conflicts||[]).filter(conflict=>conflict.status!=='RESOLVED');
+       if(unresolvedConflicts.length)throw Error(`Applicable project standards conflict: ${unresolvedConflicts.map(conflict=>conflict.id).join(', ')}. ${unresolvedConflicts[0].resolution}`);
+       const compliance=validateComplianceMatrix(input.document,ctx.context.projectArchitecture.applicableStandards?.mandatoryEntries||[]);
+       const traceability=validateRequirementTraceability(input.document,ctx.context.requirementIds||[]);
+       await engine.generateDesignDoc({...ref,specReviewed:true,generate:async()=>input.document});
+       s.designConstraintsHash=ctx.context.projectArchitecture.guidanceFingerprint;
+       s.designStandardsHash=ctx.context.projectArchitecture.standardsFingerprint;
+       s.designInStarReferencesHash=ctx.context.instarReferences.fingerprint;
+       s.designContextManifestHash=ctx.context.contextManifest.fingerprint;
+       s.designCompliance=compliance;
+       s.designTraceability=traceability;
+       await persistContextManifest(root,s,ctx.context.contextManifest);
+       s.stage='tasks';
+      }
+      else{const semantic=await inspectSemanticGate(root,s,'design');assertSemanticNotBlocked(semantic,'Design');if(taskItems(input.document).some(t=>t.done))throw Error('New tasks must be unchecked');await engine.generateTaskList({...ref,generate:async()=>input.document});s.stage='implementation';await pending(root,s,'implementation');}break;
      }
      case 'complete-task':{await completeTasks(root,s,[{taskId:input.taskId,evidence:input.evidence}]);break;}
      case 'complete-tasks':{await completeTasks(root,s,input.tasks);break;}
      case 'submit-implementation':{
-      requireStage(s,'implementation');await assertApprovals(root,s,{spec:true,implementation:true});const items=taskItems(await read(changeDir(root,id),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');s.stage='verification';s.status='in-progress';break;
+      requireStage(s,'implementation');await assertApprovals(root,s,{spec:true,implementation:true});{const semantic=await inspectSemanticGate(root,s,'tasks');assertSemanticNotBlocked(semantic,'Tasks');}const items=taskItems(await read(changeDir(root,id),'tasks.md'));if(items.some(t=>!t.done||!s.taskEvidence[t.id]))throw Error('All tasks need completion evidence');s.stage='verification';s.status='in-progress';break;
      }
      case 'submit-quality-review':{
       requireStage(s,'verification');await assertApprovals(root,s,{spec:true,implementation:true});
@@ -215,10 +314,20 @@ export async function run(input){
       const qualityReview=input.report||(reportPath?await readWorkspaceJson(root,reportPath,'review report'):null);
       if(!qualityReview||typeof qualityReview!=='object'||!['PASS','WARN','PASS_WITH_WAIVERS'].includes(qualityReview.status))throw Error('A current PASS, WARN or PASS_WITH_WAIVERS quality-gate report is required');
       if(qualityReview.kind!=='quality-gate'||qualityReview.stable!==true||typeof qualityReview.snapshot?.fingerprint!=='string'||!qualityReview.snapshot.fingerprint.trim())throw Error('Quality-gate report must be stable and include a snapshot fingerprint');
-      const reuse=await reuseContext(root);validateReuseReview(reuse,qualityReview.review?.reuseReview);await validateReusePlan(root,reuse,qualityReview.review?.reuseReview);
-      const {validateQualityReviewReport}=await import('../quality-controller/index.mjs');
+      const reuse=await reuseContext(root);validateReuseReview(reuse,qualityReview.review?.reuseReview,{required:true});await validateReusePlan(root,reuse,qualityReview.review?.reuseReview,{required:true});
+      const {validateQualityReviewReport,snapshot:qualitySnapshot}=await import('../quality-controller/index.mjs');
       const reviewedSource=await validateQualityReviewReport(root,qualityReview);
+      const currentQuality=await qualitySnapshot(root);
+      const changedSource=(currentQuality.changed||[]).filter(file=>!isExcludedSourcePath(file)&&!file.startsWith('docs/project-baseline/'));
+      const scopeCoverage=validateChangedPathsCoverage({affectedPaths:s.affectedPaths||[],changed:changedSource,projectTree:(reviewedSource.manifest||[]).map(item=>item.path).join('\n')});
+      s.scopeCoverage={declared:scopeCoverage.inputs,expanded:scopeCoverage.paths,unknown:scopeCoverage.unknownInputs,changed:scopeCoverage.changed,snapshotFingerprint:currentQuality.fingerprint,at:now()};
+      s.lineageId??=randomUUID();s.evidenceEpoch??=1;
+      if(s.evidenceGraph)(s.supersededEvidence??=[]).push({...s.evidenceGraph,supersededAt:now(),reason:'quality-review-refresh'});
+      s.generationId=randomUUID();
+      const evidenceGraph=await buildWorkflowEvidenceGraph(root,s,qualityReview,reviewedSource);
+      const graphRef=await writeEvidenceGraph(root,evidenceGraph);
       s.qualityReview={reportId:qualityReview.id||qualityReview.reportId||null,status:qualityReview.status,snapshotFingerprint:qualityReview.snapshot.fingerprint,sourceSnapshot:reviewedSource,at:now()};
+      s.evidenceGraph=graphRef;
       break;
      }
      case 'submit-verification':{
@@ -229,13 +338,14 @@ export async function run(input){
       if(!s.qualityReview)throw Error('Current quality-gate review is required before verification');
       const currentSource=await sourceSnapshot(root);
       assertCurrentSnapshot(s.qualityReview.sourceSnapshot,currentSource,'Quality-gate review');
+      await validateStoredEvidenceGraph(root,s,currentSource);
       s.verification={report:review,checks,at:now()};
       s.verification.sourceSnapshot=currentSource;
       if(review.issues.some(x=>x.severity==='critical')||review.unverified.length||checks.some(x=>x.applicable&&x.outcome!=='passed'))s.status='blocked';else await pending(root,s,'acceptance');break;
      }
      case 'archive':{
       requireStage(s,'archive');await completed(root,s);await assertApprovals(root,s,{spec:true,implementation:true});if(s.approvals.acceptance?.hash!==await approvalHash(root,s,'acceptance'))throw Error('Acceptance missing or stale');if(!s.verification?.sourceSnapshot)throw Error('Verification source snapshot is missing; reopen implementation and verify again');
-      const archiveSource=await sourceSnapshot(root);assertCurrentSnapshot(s.verification.sourceSnapshot,archiveSource,'Verification evidence');s.promotion=await engine.promoteToBaseline({...ref,accepted:true});s.status='completed';break;
+      const archiveSource=await sourceSnapshot(root);assertCurrentSnapshot(s.verification.sourceSnapshot,archiveSource,'Verification evidence');await validateStoredEvidenceGraph(root,s,archiveSource);s.promotion=await engine.promoteToBaseline({...ref,accepted:true});s.status='completed';break;
      }
      case 'reopen':{
       const stage=input.stage;requireText(input.reason,'reason');const order=['prd','spec','design','tasks','implementation','verification','archive'];if(!order.includes(stage)||order.indexOf(stage)>order.indexOf(s.stage)||stage==='archive')throw Error('Invalid reopen stage');
@@ -244,8 +354,8 @@ export async function run(input){
       const dir=changeDir(root,id);if(stage==='prd')await fs.rm(dir,{recursive:true,force:true});
       if(['spec','design','tasks'].includes(stage))for(const name of stage==='tasks'?['tasks.md','.tasks.json']:['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});
       if(['prd','spec','design','tasks'].includes(stage)){s.taskEvidence={};delete s.specReview;delete s.gate;}
-      if(['prd','spec','design'].includes(stage)){delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;}
-      delete s.verification;delete s.qualityReview;clearPending(s);s.stage=stage;s.reopenReason=input.reason;if(stage==='prd'){s.clarifications=[];s.status='in-progress';}break;
+      if(['prd','spec','design'].includes(stage)){delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designContextManifestHash;}
+      if(s.evidenceGraph)(s.supersededEvidence??=[]).push({...s.evidenceGraph,supersededAt:now(),reason:input.reason});delete s.evidenceGraph;delete s.verification;delete s.qualityReview;s.evidenceEpoch=(s.evidenceEpoch||1)+1;s.generationId=randomUUID();clearPending(s);s.stage=stage;s.reopenReason=input.reason;if(stage==='prd'){s.clarifications=[];s.status='in-progress';}break;
      }
      default:throw Error(`Unknown action: ${input.action}`);
     }

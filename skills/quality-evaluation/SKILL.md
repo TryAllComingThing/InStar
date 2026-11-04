@@ -15,6 +15,6 @@ Use after a tracked artifact is drafted or revised, before presenting it for hum
 ## Boundaries
 
 - Do not invent evidence or claim a PASS without an exact source excerpt.
-- Evaluation does not change workflow state, approve a stage, or automatically authorize implementation.
+- Evaluation does not itself change workflow state or approve a stage, but a current `BLOCK` report is enforced by the workflow and blocks the corresponding PRD, Spec, Tasks or approval transition. Missing or stale reports are not PASS evidence.
 - The controller cannot prove the model's semantic judgment or that this Skill actually ran. Skill invocation traces are explicit agent-reported events, not trusted execution attestations.
 - Keep reports in `reports/semantic-quality/`; do not embed evaluator prose in product requirements.

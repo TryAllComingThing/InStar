@@ -5,7 +5,7 @@ import {spawnSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {sourceSnapshot,diffSourceSnapshots,describeSnapshotDrift} from '../runtime/shared/source-snapshot.mjs';
+import {sourceSnapshot,diffSourceSnapshots,describeSnapshotDrift,isExcludedSourcePath} from '../runtime/shared/source-snapshot.mjs';
 import {run as qualityRun} from '../runtime/quality-controller/index.mjs';
 import {symlinkAvailable} from './symlink-support.mjs';
 
@@ -76,3 +76,15 @@ test('help runs without treating the plugin installation as a project',async()=>
  assert.equal(help.status,'PASS');
  assert(help.commands.some(item=>item.command.startsWith('instar status')));
 });
+
+test('workflow context cache under .instar/context is runtime state, not source',async t=>{
+ const root=await project(t);
+ await mkdir(path.join(root,'src'),{recursive:true});
+ await mkdir(path.join(root,'.instar/context/demo'),{recursive:true});
+ await writeFile(path.join(root,'src/app.js'),'export const value=1;');
+ await writeFile(path.join(root,'.instar/context/demo/spec.json'),JSON.stringify({schemaVersion:1,cache:true}));
+ assert.equal(isExcludedSourcePath('.instar/context/demo/spec.json'),true);
+ const snapshot=await sourceSnapshot(root);
+ assert.deepEqual(snapshot.manifest.map(item=>item.path),['src/app.js']);
+});
+

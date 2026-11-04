@@ -4,6 +4,8 @@ InStar 是一个 Codex 软件交付插件，支持前后端协同的需求、Spe
 
 Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约定发现的架构/设计文档与可选 `standards/`，并将规则纳入生成上下文。`AGENTS.md` 按“根目录 → 变更专属 → 与 affectedPaths 最近的目录”加载，最多 40 个文件、单文件 12 KiB、合计 48 KiB；超限时返回 `guidanceBudget` 的截断/省略元数据。插件内 `standards/` 按通用、语言、API、数据库分层；Skill 通过 `standards/index.json` 先选择最多 6 张紧凑规则卡（内联上限 6144 字节），规则卡返回真实章节 `sections`（锚点、起止行、字节数、哈希）与 `ruleRefs`，仅在规则有歧义或需要完整示例时打开对应章节，不把建议强加给项目。`skills/index.json` 先按阶段和触发条件路由 Skill，`skills/references.json` 作为二级引用索引提供摘要、适用阶段与 `loadWhen`；选中的入口返回 `entryBytes`、可加载引用和 `detailLoaded:false`，避免先加载全部 Skill 正文或全部参考文件。架构规范由项目维护；InStar 不强制采用特定架构模式。
 
+项目规范与插件规范是两层：目标项目自己的 `standards/index.json`（或 `.instar-quality.json` 的 `context.standards`）可把规则标记为 `mandatory`/`always` 并声明 `appliesTo`。适用的强制规则必须在技术设计 `Compliance Matrix` 中出现，并在 Review 的 `standardsReferences` 中逐条给出状态与证据；插件 `standards/` 仍是建议性参照，不会因为存在某条建议就自动变成项目门禁。设计上下文只对“当前 affectedPaths 命中的规则”计算失效指纹，无关规范变化不会强迫重开设计。
+
 ## 文档索引
 
 - [架构书](docs/plugin-arch.md)：定位、模块、状态机、证据链、恢复和安全模型。
@@ -24,7 +26,7 @@ Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约
 
 工作流控制器会将成功的状态变更写入目标项目 `.workflow/traces.jsonl`；requirements-workflow 按指引登记 specialist Skill 的开始/结束。`quality-evaluation` 为 PRD、Spec、技术设计和任务输出带原文证据及指纹的语义评测报告。评测和 Skill 轨迹是本地可编辑的辅助证据，不替代人工审批或证明模型实际执行。
 
-新变更可声明 `lane` 和精确的 `affectedPaths`。省略 lane 时控制器按内置与项目 `riskPolicy.rules` 推断：L0/L1 小范围可用 `fast`，L2 至少 `standard`，L3 使用 `regulated`；显式 lane 不能低于风险下限。fast lane 记录 30–38 分钟目标、28M token 上限，并限制模型响应、工具调用、浏览器动作、质量门禁和四次必需阶段语义评测；超出预算时 `status`/`next` 给出警告但不绕过门禁。时间预算基于终态 Skill 的 `durationMs`，并单独展示 `activeMs`、`waitMs` 和日历 `elapsedMs`。任务完成使用一次 `complete-tasks` 批量提交证据，terminal `trace-skill` 可附带代理或宿主报告的 `metrics`。这些是控制器记录的预算和代理数据，不是对外部实际耗时、token 计费或人力的保证。
+新变更可声明 `lane` 和精确的 `affectedPaths`。省略 lane 时控制器按内置与项目 `riskPolicy.rules` 推断：L0/L1 小范围默认 `fast`，可显式选择更小的 `micro`（10–20 分钟、12M token）或 `quick`（20–30 分钟、18M token）；`fast` 记录 30–38 分钟、28M token；L2 至少 `standard`，L3 使用 `regulated`，显式 lane 不能低于对应风险下限。各 lane 限制模型响应、工具调用、浏览器动作、质量门禁和语义评测次数；超出预算时 `status`/`next`/`cost show` 给出警告但不绕过门禁。时间预算基于终态 Skill 的 `durationMs`，并单独展示 `activeMs`、`waitMs` 和日历 `elapsedMs`；缺失指标保持 `insufficient-telemetry`，不能当作 0。任务完成使用一次 `complete-tasks` 批量提交证据，terminal `trace-skill` 可附带代理或宿主报告的 `metrics`。这些是控制器记录的预算和代理数据，不是对外部实际耗时、token 计费或人力的保证。
 
 ### 从现有源码生成 Spec
 
@@ -112,6 +114,14 @@ node <plugin>/bin/instar.mjs doctor
 node <plugin>/bin/instar.mjs snapshot --project .
 node <plugin>/bin/instar.mjs verify --profile full
 node <plugin>/bin/instar.mjs review --project . --review-file ./review.json
+node <plugin>/bin/instar.mjs flow status --project .
+node <plugin>/bin/instar.mjs flow context --project . --json
+node <plugin>/bin/instar.mjs flow start --project . --change add-filter --document ./prd.md --lane quick
+node <plugin>/bin/instar.mjs doc show --project . --kind design
+node <plugin>/bin/instar.mjs find reuse --project . --query "订单筛选" --json
+node <plugin>/bin/instar.mjs find standards --project . --path src/orders --changed
+node <plugin>/bin/instar.mjs standards check --project . --document ./technical-design.md
+node <plugin>/bin/instar.mjs cost show --project .
 node <plugin>/bin/instar.mjs ci prepare --project . --title "feat: add order filtering"
 node <plugin>/bin/instar.mjs ci status --project .
 # Publishing pushes the reviewed feature branch and creates or updates a PR.
@@ -120,13 +130,18 @@ node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order fil
 
 `ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。UI 设计约束由目标项目自己的设计文档、框架配置、组件库和 Token 来源提供。
 
+CI 起始模板位于 [`assets/ci/github-actions.yml`](assets/ci/github-actions.yml)，配套说明见 [`assets/ci/README.md`](assets/ci/README.md)。模板要求真实 full 验证和当前 Review 文件；缺失文件、缺失扫描器或未配置插件路径都会失败，不会静默跳过。
+
 ## JSON CLI
 
-发布包中的质量控制器入口：
+发布包仍保留 JSON 请求入口，适合自动化、复杂动作和长 Markdown：
 
 ```sh
 node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
+node <plugin>/runtime/workflow-controller/cli.mjs <request.json|->
 ```
+
+日常读取优先使用 `instar flow/doc/find/standards/cost/explain`；`instar flow action <action>` 是通用转义入口，内部仍组装并调用同一个 workflow controller。`--json` 返回完整控制器载荷，`--brief` 返回简短摘要，`flow start` 与 `flow action` 支持 `--dry-run` 预览请求。
 
 质量控制器不会向目标项目写入配置文件。目标项目只需准备 Git 仓库即可使用 `doctor` 和 `snapshot` 的零配置发现；需要可重复质量门禁时，再由项目自行维护 `.instar-quality.json`、项目验证命令和 Git 仓库。schema 1/2 兼容 npm scripts，schema 3 支持直接执行多语言工具链。
 

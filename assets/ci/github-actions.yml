@@ -1,0 +1,52 @@
+name: instar-quality
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Configure InStar
+        env:
+          INSTAR_PLUGIN: ${{ vars.INSTAR_PLUGIN_PATH }}
+        run: test -f "$INSTAR_PLUGIN/bin/instar.mjs"
+      - name: Bootstrap project
+        env:
+          INSTAR_BOOTSTRAP_COMMAND: ${{ vars.INSTAR_BOOTSTRAP_COMMAND || 'npm ci' }}
+        run: bash -euo pipefail -c "$INSTAR_BOOTSTRAP_COMMAND"
+      - name: InStar full verification
+        env:
+          INSTAR_PLUGIN: ${{ vars.INSTAR_PLUGIN_PATH }}
+        run: node "$INSTAR_PLUGIN/bin/instar.mjs" verify --profile full --project "$GITHUB_WORKSPACE"
+      - name: InStar quality review evidence
+        env:
+          INSTAR_PLUGIN: ${{ vars.INSTAR_PLUGIN_PATH }}
+        run: |
+          test -f reports/review.json || { echo "reports/review.json is required; generate it with instar review init and complete the evidence."; exit 1; }
+          node "$INSTAR_PLUGIN/bin/instar.mjs" review --review-file reports/review.json --project "$GITHUB_WORKSPACE"
+      - name: InStar CI readiness
+        env:
+          INSTAR_PLUGIN: ${{ vars.INSTAR_PLUGIN_PATH }}
+        run: node "$INSTAR_PLUGIN/bin/instar.mjs" ci status --project "$GITHUB_WORKSPACE"
+      - name: Upload InStar evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instar-evidence
+          path: |
+            reports/
+            logs/
+          if-no-files-found: warn
+          retention-days: 14

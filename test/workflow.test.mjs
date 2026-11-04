@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {run as qualityRun} from '../runtime/quality-controller/index.mjs';
 import {reuseContext,reusePlanHash,validateReusePlan} from '../src/shared/code-reuse.mjs';
+import {readEvidenceGraph} from '../runtime/shared/evidence-graph.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile,writeFile,mkdir,readdir,symlink,access} from 'node:fs/promises';
@@ -14,11 +15,12 @@ const proposal='## Why\nUsers need search.\n## What Changes\nAdd search.\n## Cap
 const delta='## Purpose\nEnable users to find relevant orders using clear and consistent search behavior.\n## ADDED Requirements\n### Requirement: Search\nThe system SHALL search orders.\n#### Scenario: Match\n- **WHEN** a matching query is entered\n- **THEN** matching orders appear.\n';
 const design='## Context\nOrder list.\n## Goals / Non-Goals\nFind orders.\n## Decisions\nUse existing list API.\n## Project Constraints\nFollow root AGENTS.md.\n## Architecture\nExisting order module with local state.\n## File Change Plan\nUpdate src/views/orders/OrderList.vue.\n## Risks / Trade-offs\nNetwork errors.\n## Migration Plan\nAdditive rollout.';
 const tasks='- [ ] 1.1 Implement search; acceptance: matching query test passes.';
+const localReuse=[{need:'Search for an existing implementation before creating a local module',searched:['src','docs/project-baseline/capabilities'],candidates:[],decision:'local-new',reason:'No fresh capability index or suitable public capability was found',verification:'Architecture review and focused tests'}];
 const report={summary:'Reviewed documents against requirements.',source:'test fixture reviewer',issues:[],unverified:[]};
 const checks=[{kind:'test',name:'search test',outcome:'passed',evidence:'fixture simulated test result'},{kind:'browser',name:'search journey',outcome:'passed',evidence:'fixture simulated browser result'}];
 async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));const base={project,changeId:'add-search'};let state;
- return {project,base,get state(){return state;},async call(action,extra={}){const result=await run({...base,action,expectedVersion:state?.version,...extra});if(result.version)state=result;return result;},async context(){return run({...base,action:'context'});},async approve(){return this.call('approve',{reviewHash:state.pendingReview.hash,confirmation:{text:'Approved fixture',source:'test only'}});}};}
-async function toSpec(f){await f.call('start',{document:'# PRD\nSearch orders.'});await f.call('submit-prd');await f.approve();const c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});}
+ return {project,base,get state(){return state;},async call(action,extra={}){if(action==='write-design'&&extra.reuseDecisions===undefined)extra={...extra,reuseDecisions:localReuse};const result=await run({...base,action,expectedVersion:state?.version,...extra});if(result.version)state=result;return result;},async context(){return run({...base,action:'context'});},async approve(){return this.call('approve',{reviewHash:state.pendingReview.hash,intentId:state.pendingReview.intentId,challenge:state.pendingReview.challenge,confirmation:{text:'Approved fixture',source:'test only'}});}};}
+async function toSpec(f,{affectedPaths=[]}={}){await f.call('start',{document:'# PRD\nSearch orders.',...(affectedPaths.length?{affectedPaths}:{})});await f.call('submit-prd');await f.approve();const c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});}
 
 test('semantic evaluation reads nested capability specs and invalidates their fingerprint',async t=>{
  const f=await setup(t);await toSpec(f);const dir=path.join(f.project,'planning/changes/add-search/specs/orders/search');await mkdir(dir,{recursive:true});await fs.rename(path.join(f.project,'planning/changes/add-search/specs/search/spec.md'),path.join(dir,'spec.md'));
@@ -29,17 +31,19 @@ test('semantic evaluation reads nested capability specs and invalidates their fi
  const semantic=manifest.reports.filter(item=>item.kind==='semantic-quality'&&item.path==='reports/semantic-quality/add-search/spec.json');
  assert.equal(semantic.length,1);assert.equal(semantic[0].status,next.status);assert.equal(semantic[0].snapshotFingerprint,null);assert.match(semantic[0].hash,/^[a-f0-9]{64}$/);
 });
-async function toImplementation(f){await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();}
-async function currentReview(f){
+async function toImplementation(f,options={}){await toSpec(f,options);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();}
+async function currentReview(f,{withReuse=true}={}){
  const git=(...args)=>{const result=spawnSync('git',args,{cwd:f.project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);};
  if(!await access(path.join(f.project,'.git')).then(()=>true,()=>false)){git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','Workflow fixture');git('add','.');git('commit','-m','fixture baseline');}
  const snapshot=await qualityRun({action:'snapshot',project:f.project});
- return qualityRun({action:'quality-gate',project:f.project,review:{reviewer:'workflow fixture',fingerprint:snapshot.fingerprint,checks:['correctness','maintainability','architecture','security','performance','naming'].map(id=>({id,status:'PASS',evidence:'Fixture orchestration evidence'}))}});
+ const reuse=withReuse?await reuseContext(f.project):null;
+ const reuseReview=withReuse?{changeId:f.state.changeId,planHash:reusePlanHash(f.state.reuseDecisions||[]),fingerprint:reuse.fingerprint,decisions:f.state.reuseDecisions||[],checks:['reuse-existing','duplicate-implementation','shared-capability-design'].map(id=>({id,status:'PASS',evidence:'Fixture verified the bounded reuse search and approved decisions'}))}:undefined;
+ return qualityRun({action:'quality-gate',project:f.project,review:{reviewer:'workflow fixture',fingerprint:snapshot.fingerprint,checks:['correctness','maintainability','architecture','security','performance','naming'].map(id=>({id,status:'PASS',evidence:'Fixture orchestration evidence'})),...(reuseReview?{reuseReview}:{})}});
 }
 async function submitVerification(f,verificationChecks=checks){await f.call('submit-quality-review',{report:await currentReview(f)});return f.call('submit-verification',{report,checks:verificationChecks});}
 
 test('workflow rejects a stale or modified quality report before binding source',async t=>{
- const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'Fixture'});await f.call('submit-implementation');
+ const f=await setup(t);await toImplementation(f,{affectedPaths:['unindexed.js']});await f.call('complete-task',{taskId:'1.1',evidence:'Fixture'});await f.call('submit-implementation');
  const old=await currentReview(f);await writeFile(path.join(f.project,'unindexed.js'),'export const changed=true;');
  await assert.rejects(f.call('submit-quality-review',{report:old}),/stale/);
  const fresh=await currentReview(f);await assert.rejects(f.call('submit-quality-review',{report:{...fresh,projectRoot:'other'}}),/integrity/);
@@ -61,7 +65,7 @@ test('enabled reuse permits planned extension and binds review to approved decis
  const sourceHash=createHash('sha256').update(source).digest('hex');
  await mkdir(path.join(f.project,'docs/project-baseline/capabilities'),{recursive:true});
  await writeFile(path.join(f.project,'docs/project-baseline/capabilities/index.json'),JSON.stringify({schemaVersion:1,enabled:true,capabilities:[{id:'CAP-SERVICE',name:'Service',summary:'Service value',entry,sourceHash,visibility:'public',status:'active'}]}));
- await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();
+ await toSpec(f,{affectedPaths:[entry]});await f.call('submit-spec',{report});await f.approve();let c=await f.context();
  const decisions=[{need:'Extend service',searched:[entry],candidates:['CAP-SERVICE'],selected:'CAP-SERVICE',decision:'extend',sourceHash,reason:'Same responsibility',verification:'Service contract test'}];
  await f.call('write-design',{contextHash:c.contextHash,document:design,reuseDecisions:decisions});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();
  await writeFile(path.join(f.project,entry),'export const value=2;');
@@ -72,6 +76,36 @@ test('enabled reuse permits planned extension and binds review to approved decis
  await assert.rejects(validateReusePlan(f.project,context,{...review,planHash:'old'}),/stale/);
 });
 
+test('missing capability inventory still requires a review receipt bound to design decisions',async t=>{
+ const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'Fixture implementation'});await f.call('submit-implementation');
+ await assert.rejects(f.call('submit-quality-review',{report:await currentReview(f,{withReuse:false})}),/Reuse review required/);
+ const reportWithReuse=await currentReview(f);await f.call('submit-quality-review',{report:reportWithReuse});
+ assert.equal(f.state.qualityReview.reportId,reportWithReuse.id);
+});
+test('quality review binds an evidence graph and reopen advances the evidence epoch',async t=>{
+ const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'Fixture implementation'});await f.call('submit-implementation');
+ await f.call('submit-quality-review',{report:await currentReview(f)});
+ const first=await readEvidenceGraph(f.project,f.state.evidenceGraph.path),epoch=f.state.evidenceEpoch,generation=f.state.generationId;
+ assert.equal(first.snapshotFingerprint,f.state.qualityReview.sourceSnapshot.fingerprint);
+ assert.equal(first.evidenceEpoch,epoch);assert.equal(first.generationId,generation);
+ assert.ok(first.nodes.some(node=>node.id==='artifact.prd'));
+ await f.call('reopen',{stage:'implementation',reason:'Evidence regeneration test'});
+ assert.equal(f.state.evidenceEpoch,epoch+1);assert.equal(f.state.evidenceGraph,undefined);
+ assert.ok(f.state.supersededEvidence.some(item=>item.fingerprint===first.fingerprint));
+ await f.call('submit-implementation');await f.call('submit-quality-review',{report:await currentReview(f)});
+ assert.equal(f.state.evidenceEpoch,epoch+1);assert.notEqual(f.state.evidenceGraph.path,`${f.state.evidenceGraph.path.split('/').slice(0,-1).join('/')}/${epoch}-${generation}.json`);
+ const second=await readEvidenceGraph(f.project,f.state.evidenceGraph.path);assert.notEqual(second.fingerprint,first.fingerprint);
+});
+test('quality review rejects changed source outside the declared affectedPaths',async t=>{
+ const f=await setup(t);await writeFile(path.join(f.project,'app.js'),'export const version = 1;\n');
+ const git=(...args)=>{const result=spawnSync('git',args,{cwd:f.project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);};
+ git('init','-b','main');git('config','user.email','scope@example.invalid');git('config','user.name','Scope fixture');git('add','.');git('commit','-m','scope baseline');
+ await toImplementation(f,{affectedPaths:['app.js']});
+ await writeFile(path.join(f.project,'app.js'),'export const version = 1;\nexport const changed = true;\n');await writeFile(path.join(f.project,'extra.js'),'export const undeclared = true;\n');
+ await f.call('complete-task',{taskId:'1.1',evidence:'Fixture scope test'});await f.call('submit-implementation');
+ await assert.rejects(f.call('submit-quality-review',{report:await currentReview(f)}),/outside affectedPaths: extra\.js/);
+});
+
 test('disabled capability inventory does not invalidate task generation',async t=>{
  const f=await setup(t);await mkdir(path.join(f.project,'docs/project-baseline/capabilities'),{recursive:true});
  const file=path.join(f.project,'docs/project-baseline/capabilities/index.json');await writeFile(file,JSON.stringify({schemaVersion:1,enabled:false,capabilities:[]}));
@@ -79,9 +113,41 @@ test('disabled capability inventory does not invalidate task generation',async t
  await writeFile(file,JSON.stringify({schemaVersion:1,enabled:false,capabilities:[],note:'inventory maintenance'}));
  c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();await f.call('complete-task',{taskId:'1.1',evidence:'No governance opt-in'});
 });
+test('missing capability inventory requires a bounded search and local-new decision',async t=>{
+ const f=await setup(t);await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();
+ assert.equal(c.context.contextManifest.reuse.state,'missing');assert.match(c.context.contextManifest.fingerprint,/^[a-f0-9]{64}$/);
+ await assert.rejects(f.call('write-design',{contextHash:c.contextHash,document:design,reuseDecisions:[]}),/Reuse decisions required/);
+ await f.call('write-design',{contextHash:c.contextHash,document:design,reuseDecisions:localReuse});
+ assert.equal(f.state.reuseIndexState,'missing');
+});
+test('design context manifest is persisted and required for task generation',async t=>{
+ const f=await setup(t);await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();
+ await f.call('write-design',{contextHash:c.contextHash,document:design});
+ const file=path.join(f.project,'.workflow/context-manifests/add-search/design.json');
+ const persisted=JSON.parse(await readFile(file,'utf8'));
+ assert.equal(persisted.fingerprint,f.state.designContextManifestHash);
+ await writeFile(file,JSON.stringify({...persisted,fingerprint:'0'.repeat(64)})+'\n');
+ await assert.rejects(f.context(),/Persisted design context manifest is stale/);
+ await writeFile(file,JSON.stringify(persisted,null,2)+'\n');
+ c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});
+ assert.equal(f.state.pendingApproval,'implementation');
+});
+test('a current semantic BLOCK prevents approval',async t=>{
+ const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.'});await f.call('submit-prd');
+ const criteria=['problem-outcome','scope-boundaries','user-journey-states','measurable-acceptance','risks-dependencies'].map((id,index)=>({id,status:index===0?'BLOCK':'PASS',reason:'Fixture review',evidence:['Search orders.']}));
+ await f.call('evaluate-quality',{stage:'prd',evaluator:'fixture',criteria});
+ await assert.rejects(f.approve(),/Semantic quality gate is BLOCK/);
+});
+test('approval intent is one-time and challenge-bound',async t=>{
+ const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.'});await f.call('submit-prd');
+ const pending=f.state.pendingReview;
+ await assert.rejects(f.call('approve',{reviewHash:pending.hash,intentId:pending.intentId,challenge:'wrong',confirmation:{text:'Approved',source:'fixture'}}),/intent or challenge/);
+ await f.approve();
+ await assert.rejects(f.call('approve',{reviewHash:pending.hash,intentId:pending.intentId,challenge:pending.challenge,confirmation:{text:'Approved',source:'fixture'}}),/hash/);
+});
 test('all review boundaries and complete baseline/archive lifecycle',async t=>{const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.'});await assert.rejects(f.call('create-spec',{proposal,specs:{search:delta}}),/unavailable/);await f.call('submit-prd');assert.equal(f.state.pendingApproval,'prd');await assert.rejects(f.call('approve',{reviewHash:'wrong',confirmation:{text:'yes',source:'fixture'}}),/hash/);await f.approve();let c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});await f.call('submit-spec',{report});assert.equal(f.state.pendingApproval,'spec');await assert.rejects(f.call('write-design',{document:design}),/unavailable/);await f.approve();c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});assert.equal(f.state.pendingApproval,'implementation');await assert.rejects(f.call('complete-task',{taskId:'1.1',evidence:'fixture'}),/unavailable/);await f.approve();await f.call('complete-task',{taskId:'1.1',evidence:'fixture test and review'});await f.call('submit-implementation');await submitVerification(f);assert.equal(f.state.pendingApproval,'acceptance');await assert.rejects(f.call('archive'),/unavailable/);await f.approve();await f.call('archive');assert.equal(f.state.status,'completed');for(const p of ['proposal.md','specs/search/spec.md','technical-design.md','tasks.md','workflow.json'])assert.ok(await readFile(path.join(f.project,'planning/archive/add-search',p),'utf8'));assert.match(await readFile(path.join(f.project,'planning/specs/search/spec.md'),'utf8'),/Requirement: Search/);await assert.rejects(f.call('reopen',{stage:'prd',reason:'late edit'}),/immutable/);});
 test('acceptance cannot archive after source changes since verification',async t=>{
- const f=await setup(t);await writeFile(path.join(f.project,'app.js'),'export const version = 1;');await toImplementation(f);
+ const f=await setup(t);await writeFile(path.join(f.project,'app.js'),'export const version = 1;');await toImplementation(f,{affectedPaths:['app.js']});
  await f.call('complete-task',{taskId:'1.1',evidence:'fixture tests passed'});await f.call('submit-implementation');
  await submitVerification(f);assert.ok(f.state.verification.sourceSnapshot.treeHash);await f.approve();
  await writeFile(path.join(f.project,'app.js'),'export const version = 2;');
@@ -203,3 +269,13 @@ test('business feedback after design returns to PRD review and regenerates downs
  assert.equal(f.state.pendingApproval,'implementation');
  assert.equal(f.state.approvals.implementation,undefined);
 });
+
+test('stale controller lock is reclaimed so a killed operation does not self-block',async t=>{
+ const f=await setup(t);
+ const exited=spawnSync(process.execPath,['-e',''],{encoding:'utf8'});
+ await mkdir(path.join(f.project,'.workflow'),{recursive:true});
+ await writeFile(path.join(f.project,'.workflow/controller.lock'),JSON.stringify({pid:exited.pid,at:new Date(Date.now()-1000).toISOString()}));
+ await f.call('start',{document:'# PRD\nRecover from stale lock.'});
+ assert.equal(f.state.stage,'prd');
+});
+

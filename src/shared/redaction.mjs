@@ -4,7 +4,9 @@ export function redactText(input){
  return String(input)
   .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,'[REDACTED PRIVATE KEY]')
   .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16}|sk-[A-Za-z0-9_-]{24,})\b/g,'[REDACTED SECRET]')
+  .replace(/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g,'[REDACTED JWT]')
   .replace(/(\bauthorization\s*[:=]\s*bearer\s+)[^\s,;"']+/ig,'$1[REDACTED]')
+  .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,'Bearer [REDACTED]')
   .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|credential|secret|token)\s*["']?\s*[:=]\s*["']?)[^\s,;&"']+/ig,'$1[REDACTED]')
   .replace(/([?&](?:token|access_token|api_key|key|signature)=)[^&#\s]+/ig,'$1[REDACTED]');
 }

@@ -2,6 +2,31 @@
 
 This directory contains plugin-side reference material for Skills. It is not copied into target repositories and does not automatically become project policy.
 
+## Project-owned standards
+
+Target projects may maintain their own `standards/` directory or configure extra roots with `.instar-quality.json` `context.standards`. A project rule becomes enforceable only when its `standards/index.json` entry is marked `mandatory: true` (or `always: true`) and its `appliesTo` glob matches the current `affectedPaths`. Applicable mandatory rules must be cited in the technical design `Compliance Matrix` and in Review `standardsReferences`; plugin references remain advisory.
+
+```json
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "ARCH-001",
+      "path": "standards/architecture/module-boundaries.md",
+      "mandatory": true,
+      "appliesTo": ["src/**"],
+      "summary": "Use public module entry points.",
+      "conflictsWith": ["ARCH-002"],
+      "supersedes": ["ARCH-000"]
+    }
+  ]
+}
+```
+
+`conflictsWith` and `supersedes` are optional rule-ID edges. They are evaluated only when both rules apply to the current paths. A declared `supersedes` edge resolves the conflict in favor of the newer rule; an unresolved conflict returns `HUMAN_DECISION_REQUIRED` and blocks `write-design` rather than letting the agent choose silently. Project-owned rules always take precedence over InStar advisory references. Unknown conflict references fail manifest loading.
+
+The design fingerprint covers only matching rules, including their conflict metadata. Editing an unrelated standards document does not reopen the design, but editing an applicable rule document or its manifest entry does. Use `instar find standards --path <path> [--changed]` to inspect applicability and conflicts, and `instar standards check --document <file>` to validate a design matrix before submission.
+
 ## Structure
 
 - `architecture/`: architecture and module-boundary guidance, including [`design-principles.md`](architecture/design-principles.md).

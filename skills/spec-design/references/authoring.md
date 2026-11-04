@@ -10,6 +10,7 @@ identify when it needs a fuller treatment; for a small change keep it concise:
 Sections:
 - **Context**: Only the current state and constraints needed to explain the approach. Reference the proposal for motivation instead of restating it (e.g., "See proposal.md - Why").
 - **Goals / Non-Goals**: What this design achieves and explicitly excludes. Don't restate the proposal's scope - add only design-level boundaries.
+- **Requirement Traceability**: Required when the PRD or Spec uses `REQ-*` / `NFR-*` IDs. Map every ID once to the design decision, planned implementation and verification evidence. Cross-module changes should also include this table even when requirements are not numbered.
 - **Decisions**: Key technical choices with rationale (why X over Y?). Include alternatives considered for each decision.
 - **Project Constraints**: Applicable `AGENTS.md` rules, available project architecture/design guidance, and existing project structure that constrain the implementation.
 - **Architecture**: Affected modules, module/component boundaries, dependency direction, cross-module calls, data flow and state ownership. Cite applicable project rules; state when a topic does not apply. Do not impose an architecture profile absent from project guidance.

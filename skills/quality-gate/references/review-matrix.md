@@ -22,8 +22,10 @@
 | async-component | 大型非首屏组件是否适合 defineAsyncComponent；首屏关键组件可说明不适用 |
 | lazy-route | 路由组件是否合理使用动态 import() |
 
-每项 PASS/BLOCK/WARN/INFO/NA 均提供文件、行号或可复查证据；L2/L3 的 evidence 还必须包含证据类型、相对路径、单行 `line` 或 `startLine`/`endLine` 范围、当前源码摘录、说明和 `snapshotFingerprint`，控制器会校验摘录确实位于声明行范围。`not-verified` 只能配合 WARN/BLOCK，`not-applicable` 只能配合 NA，不能用 PASS 替代验证或适用性判断。NA 必须解释适用性。UI 或 Vue 专项项只在对应技术栈/变更存在时评估，否则标 NA 并解释；后端变更应将安全、API、数据库迁移、并发和可观测性作为适用风险检查。
+每项 PASS/BLOCK/WARN/INFO/NA 均提供文件、行号或可复查证据；L2/L3 的 evidence 还必须包含证据类型、相对路径、单行 `line` 或 `startLine`/`endLine` 范围、当前源码摘录、说明和 `snapshotFingerprint`，控制器会校验摘录确实位于声明行范围。`not-verified` 只能配合 WARN/BLOCK，`not-applicable` 只能配合 NA，不能用 PASS 替代验证或适用性判断。NA 必须解释适用性。UI/Vue/React/Svelte/Angular 专项项只在对应技术栈/变更存在时评估，否则标 NA 并解释；Node、Rust 与 .NET 使用各自 profile；后端变更应将安全、API、数据库迁移、并发和可观测性作为适用风险检查。
 
 L3 变更还必须满足项目 `riskPolicy.l3` 的人工 Reviewer 角色要求；`review.approvals` 中的每个批准项必须包含角色、外部身份标识、身份提供方、批准 ID 和 `approved` 状态。CI/GitHub 是可选的：没有远端基础设施时仍可完成本地 full verify、Review 和人工审批，但必须披露远端未接入；接入后才由 CI、分支保护和 CODEOWNERS 提供远端门禁。控制器只校验元数据格式和完整性，不伪造或替代外部身份认证。
 
-纯后端改动时，下列 Vue 专项使用 `NA`，并在 evidence 写明“本次变更不包含 Vue/UI 文件，依据变更路径与仓库技术栈判定不适用”：`watch-cleanup`、`v-for-key`、`reactive-destructure`、`props`、`computed-purity`、`unmount-cleanup`、`async-component`、`lazy-route`。`component-boundaries` 仍需检查服务/模块边界；`design` 可 NA。若任务同时改 UI，则不能套用该 NA 说明，需审查对应的前端项。跨栈项目应配置 `review.language` / `review.framework` 数组，让清单同时包含 Vue 与后端专项项，不能只审一侧。
+纯后端改动时，下列 Vue 专项使用 `NA`，并在 evidence 写明“本次变更不包含 Vue/UI 文件，依据变更路径与仓库技术栈判定不适用”：`watch-cleanup`、`v-for-key`、`reactive-destructure`、`props`、`computed-purity`、`unmount-cleanup`、`async-component`、`lazy-route`。React 使用 `hooks-rules`、`state-ownership`、`effect-cleanup`、`memoization`、`accessibility`；Svelte 使用 `reactivity`、`lifecycle-cleanup`、`accessibility`；Angular 使用 `change-detection`、`subscription-cleanup`、`dependency-injection`、`accessibility`。Node 使用 `async-errors`、`input-validation`、`authorization`、`resource-cleanup`、`observability`；Rust 使用 `unsafe-usage`、`ownership-model`、`error-propagation`、`concurrency-safety`；.NET 使用 `nullable-safety`、`async-correctness`、`di-lifetime`、`ef-migrations`。`component-boundaries` 仍需检查服务/模块边界；`design` 可 NA。若任务同时改 UI，则不能套用该 NA 说明，需审查对应的前端项。跨栈项目应配置 `review.language` / `review.framework` 数组，让清单同时包含各栈专项项，不能只审一侧。
+
+存在适用强制项目规范时，Review 的 `standardsReferences` 必须覆盖全部规则 ID，并逐条提供 `PASS/WARN/NA` 和非空证据；模板生成或 repair 后的占位状态不是通过证据。

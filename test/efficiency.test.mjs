@@ -13,6 +13,7 @@ import {run} from '../runtime/workflow-controller/index.mjs';
 const proposal='## Why\nUsers need secure OA access.\n## What Changes\nAdd login and homepage.\n## Capabilities\nlogin,homepage\n## Impact\nVue frontend and Python API.';
 const delta='## Purpose\nAllow authorized employees to sign in and reach the OA homepage.\n## ADDED Requirements\n### Requirement: Secure login\nThe system SHALL authenticate employees and reject invalid credentials.\n#### Scenario: Valid login\n- **WHEN** valid credentials are submitted\n- **THEN** the homepage is available.\n';
 const design='## Context\nOA login and homepage.\n## Goals / Non-Goals\nSecure access; no unrelated features.\n## Decisions\nUse the existing API and Vue layout.\n## Project Constraints\nFollow project authentication rules.\n## Architecture\nVue client calls a Python authentication API.\n## File Change Plan\nUpdate frontend/src/views/Login.vue and backend/app/api/auth.py.\n## Risks / Trade-offs\nCredential handling and authorization.\n## Migration Plan\nAdditive rollout.';
+const localReuse=[{need:'OA login and homepage implementation search',searched:['frontend','backend'],candidates:[],decision:'local-new',reason:'No capability inventory is configured',verification:'Focused frontend and backend checks'}];
 const report={summary:'Reviewed the OA login and homepage change.',source:'efficiency fixture',issues:[],unverified:[]};
 
 function git(project,...args){const result=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);return result.stdout;}
@@ -23,7 +24,7 @@ async function workflowFixture(t){
  await writeFile(path.join(project,'backend/app/api/auth.py'),'def login():\n    return None\n');
  git(project,'init','-b','main');git(project,'config','user.email','efficiency@example.invalid');git(project,'config','user.name','Efficiency test');git(project,'add','.');git(project,'commit','-m','fixture baseline');
  const base={project,changeId:'oa-login'};let state;
- return {project,base,get state(){return state;},async call(action,extra={}){const result=await run({...base,action,expectedVersion:state?.version,...extra});if(result.version)state=result;return result;},async context(extra={}){return run({...base,action:'context',...extra});},async approve(){return this.call('approve',{reviewHash:state.pendingReview.hash,confirmation:{text:'Approved fixture',source:'test only'}});}};
+ return {project,base,get state(){return state;},async call(action,extra={}){if(action==='write-design'&&extra.reuseDecisions===undefined)extra={...extra,reuseDecisions:localReuse};const result=await run({...base,action,expectedVersion:state?.version,...extra});if(result.version)state=result;return result;},async context(extra={}){return run({...base,action:'context',...extra});},async approve(){return this.call('approve',{reviewHash:state.pendingReview.hash,intentId:state.pendingReview.intentId,challenge:state.pendingReview.challenge,confirmation:{text:'Approved fixture',source:'test only'}});}};
 }
 const fsRealpath=path=>import('node:fs/promises').then(fs=>fs.realpath(path));
 
@@ -42,8 +43,8 @@ test('efficiency summaries aggregate terminal traces and warn on active rather t
  const now=new Date('2026-11-03T12:00:00.000Z');
  const state={changeId:'oa-login',status:'in-progress',efficiency:initialEfficiency({lane:'fast',startedAt:'2026-11-03T10:00:00.000Z'})};
  const traces=[
-  {type:'skill-invocation',changeId:'oa-login',invocationId:'a',event:'started',metrics:{modelResponses:999}},
-  {type:'skill-invocation',changeId:'oa-login',invocationId:'a',event:'completed',metrics:{durationMs:40*60*1000,modelResponses:121,toolCalls:181,inputTokens:15000000,outputTokens:5000000,browserActions:25}},
+  {type:'skill-invocation',changeId:'oa-login',invocationId:'a',event:'started',stage:'design',skill:'spec-design',metrics:{modelResponses:999}},
+  {type:'skill-invocation',changeId:'oa-login',invocationId:'a',event:'completed',stage:'design',skill:'spec-design',bytes:2048,metrics:{durationMs:40*60*1000,modelResponses:121,toolCalls:181,inputTokens:15000000,outputTokens:5000000,browserActions:25}},
  ];
  const summary=summarizeEfficiency({state,traces,now});
  assert.equal(summary.usage.modelResponses,121);assert.equal(summary.usage.totalTokens,20000000);
@@ -52,12 +53,32 @@ test('efficiency summaries aggregate terminal traces and warn on active rather t
  assert.ok(summary.exceeded.some(item=>item.metric==='activeMinutes'));
  assert.ok(!summary.exceeded.some(item=>item.metric==='elapsedMinutes'));
  assert.ok(summary.exceeded.some(item=>item.metric==='modelResponses'));
+ assert.equal(summary.observedBytes,2048);
+ assert.equal(summary.observedBytesStatus,'observed');
+ assert.equal(summary.byStage.design.usage.modelResponses,121);
+ assert.equal(summary.byStage.design.usage.totalTokens,20000000);
+ assert.equal(summary.bySkill['spec-design'].usage.toolCalls,181);
+});
+
+test('missing telemetry is reported as insufficient, never as zero or within-budget',()=>{
+ const state={changeId:'oa-login',status:'in-progress',efficiency:initialEfficiency({lane:'fast',startedAt:'2026-11-03T10:00:00.000Z'})};
+ const summary=summarizeEfficiency({state,traces:[],now:new Date('2026-11-03T12:00:00.000Z')});
+ assert.equal(state.efficiency.metrics.totalTokens,null);
+ assert.equal(summary.status,'insufficient-telemetry');
+ assert.equal(summary.usage.totalTokens,null);
+ assert.equal(summary.usage.modelResponses,null);
+ assert.equal(summary.usage.activeMs,null);
+ assert.equal(summary.observedBytes,null);
+ assert.equal(summary.observedBytesStatus,'missing');
+ assert.ok(summary.missingMetrics.includes('totalTokens'));
+ assert.ok(summary.missingMetrics.includes('modelResponses'));
 });
 
 test('recommended lanes respect built-in and project risk floors',async t=>{
  assert.equal(recommendedLane({affectedPaths:['frontend/src/views/Login.vue']}),'fast');
  assert.equal(recommendedLane({affectedPaths:['backend/app/api/orders.py']}),'standard');
  assert.equal(recommendedLane({affectedPaths:['backend/auth/login.py']}),'regulated');
+ assert.equal(recommendedLane({affectedPaths:['python/app/routers/auth.py']}),'regulated');
  assert.equal(recommendedLane({affectedPaths:['docs/ops/runbook.md'],riskPolicy:{rules:[{riskLevel:'L3',patterns:['docs/ops/**']}]}}),'regulated');
  const f=await workflowFixture(t);
  await assert.rejects(f.call('start',{lane:'fast',affectedPaths:['backend/auth/login.py'],document:'# PRD\nSecure login.'}),/risk-aware minimum regulated/);
@@ -115,6 +136,18 @@ test('standards routing rejects path-incompatible language cards',async()=>{
  assert.ok(!backendIds.includes('language.vue3'));
 });
 
+test('coarse Vue and Python directories expand through the project tree before matching standards',async()=>{
+ const pack=await selectStandards({affectedPaths:['vue','python'],projectTree:'vue/src/views/Login.vue\npython/app/routers/auth.py\npython/requirements.txt',context:'Vue 3 login and Python FastAPI authentication API',stage:'design'});
+ const ids=pack.selected.map(item=>item.id);
+ assert.deepEqual(pack.applicability.expanded.map(item=>item.input),['vue','python']);
+ assert.ok(ids.includes('language.vue3'));
+ assert.ok(ids.includes('language.python'));
+ assert.ok(ids.includes('api.security'));
+ const unresolved=await selectStandards({affectedPaths:['new-area'],context:'Unknown area',stage:'design'});
+ assert.ok(unresolved.unknowns.length>0);
+ assert.equal(unresolved.complete,false);
+});
+
 test('Skill routing returns compact entries and defers detail loading',async()=>{
  const index=await loadSkillsIndex();
  assert.equal(index.routes.flatMap(item=>item.referenceDetails).length,23);
@@ -142,7 +175,7 @@ test('start records a lane, traces aggregate, and complete-tasks applies one ato
  const f=await workflowFixture(t);
  const started=await f.call('start',{lane:'fast',affectedPaths:['frontend/src/views/Login.vue','frontend/src/views/Home.vue'],document:'# PRD\nSecure OA login and homepage.'});
  assert.equal(started.efficiency.lane,'fast');assert.equal(started.efficiency.budgets.totalTokens,28000000);
- await f.call('submit-prd');await f.approve();let context=await f.context();const compact=await f.context({knownContextHash:context.contextHash});assert.equal(compact.contextDiff.unchanged,true);assert.equal(compact.context,undefined);await f.call('create-spec',{contextHash:context.contextHash,proposal,specs:{auth:delta}});await f.call('submit-spec',{report});await f.approve();context=await f.context();await f.call('write-design',{contextHash:context.contextHash,document:design});context=await f.context();
+ await f.call('submit-prd');await f.approve();let context=await f.context();const compact=await f.context({knownContextHash:context.contextHash});assert.equal(compact.contextDiff.unchanged,true);assert.equal(compact.contextDiff.cache,'hit');assert.equal(compact.context,undefined);await writeFile(path.join(f.project,'AGENTS.md'),'# Project rules\nKeep contracts explicit.\n');const changed=await f.context({knownContextHash:context.contextHash});assert.equal(changed.contextDiff.changed,true);assert.equal(changed.contextDiff.cache,'miss');assert.ok(changed.context);await rm(path.join(f.project,'AGENTS.md'));context=await f.context();await f.call('create-spec',{contextHash:context.contextHash,proposal,specs:{auth:delta}});await f.call('submit-spec',{report});await f.approve();context=await f.context();await f.call('write-design',{contextHash:context.contextHash,document:design});context=await f.context();
  const tasks='- [ ] 1.1 Implement secure login.\n- [ ] 1.2 Implement authorized homepage.\n';await f.call('write-tasks',{contextHash:context.contextHash,document:tasks});await f.approve();
  await f.call('trace-skill',{skill:'engineering-implement',invocationId:'impl-1',event:'started',summary:'Implement OA login',stage:'implementation'});
  await f.call('trace-skill',{skill:'engineering-implement',invocationId:'impl-1',event:'completed',summary:'OA implementation complete',stage:'implementation',metrics:{modelResponses:6,toolCalls:12,browserActions:4,inputTokens:1000,outputTokens:200}});
@@ -154,4 +187,13 @@ test('start records a lane, traces aggregate, and complete-tasks applies one ato
  const completed=await readFile(path.join(f.project,'planning/changes/oa-login/tasks.md'),'utf8');
  assert.equal((completed.match(/\[x\]/g)||[]).length,2);assert.deepEqual(Object.keys(f.state.taskEvidence).sort(),['1.1','1.2']);
  assert.equal((await inspectWorkflow(f.project,{changeId:'oa-login'})).next.action,'submit-implementation');
+});
+
+test('save-prd recalculates risk and never lowers the lane floor',async t=>{
+ const f=await workflowFixture(t);
+ await f.call('start',{lane:'fast',affectedPaths:['frontend/src/views/Login.vue'],document:'# PRD\nSecure OA login.'});
+ await assert.rejects(f.call('save-prd',{affectedPaths:['backend/app/api/auth.py'],document:'# PRD\nSecure OA login and authentication API.'}),/minimum to regulated/);
+ assert.equal(f.state.risk.level,'L1');assert.equal(f.state.efficiency.lane,'fast');
+ const saved=await f.call('save-prd',{affectedPaths:['backend/app/api/auth.py'],lane:'regulated',document:'# PRD\nSecure OA login and authentication API.'});
+ assert.equal(saved.risk.level,'L3');assert.equal(saved.efficiency.lane,'regulated');assert.equal(saved.efficiency.riskFloor,'regulated');assert.equal(saved.efficiency.budgets.totalTokens,100000000);
 });

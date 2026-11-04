@@ -14,6 +14,14 @@
 **Non-Goals:**
 <!-- What is explicitly out of scope -->
 
+## Requirement Traceability
+
+<!-- Required when the PRD or Spec uses REQ-* / NFR-* IDs, or when a cross-module change needs explicit requirement-to-design mapping. Map every requirement ID once; use planned evidence at design time and replace it with actual verification evidence as tasks complete. -->
+
+| Requirement | Design | Implementation | Verification |
+| --- | --- | --- | --- |
+| `<REQ-001 or NFR-001>` | Cite the design decision or architecture section | Cite planned modules/files or task IDs | Cite the planned check or actual evidence |
+
 ## Decisions
 
 <!-- Key design decisions with rationale and alternatives considered -->
@@ -21,6 +29,14 @@
 ## Project Constraints
 
 <!-- Applicable AGENTS.md rules, architecture guidance, and existing project structure used by this plan -->
+
+## Compliance Matrix
+
+<!-- Required when applicable mandatory project standards exist. Cite every rule ID with its source, status and design/implementation evidence. Use NA only with an applicability reason. -->
+
+| Rule | Source | Status | Evidence |
+| --- | --- | --- | --- |
+| `<rule-id>` | `<project standard path>` | PASS / WARN / NA | Cite the design decision and implementation evidence |
 
 ## Architecture
 

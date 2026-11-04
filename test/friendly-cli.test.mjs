@@ -1,65 +1,100 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
+import {spawnSync} from 'node:child_process';
 import path from 'node:path';
-import {parseFriendlyArgs} from '../src/quality-controller/friendly-cli.mjs';
+import {parseWorkflowArgs} from '../runtime/workflow-controller/friendly-cli.mjs';
+import {laneDefinition,riskMinimumLane} from '../runtime/shared/efficiency.mjs';
+import {run as runWorkflow} from '../runtime/workflow-controller/index.mjs';
 
-test('friendly CLI parses quality commands and verify profiles',async()=>{
-  const project=await mkdtemp(path.join(tmpdir(),'instar-friendly-'));
-  try {
-    assert.deepEqual(await parseFriendlyArgs(['snapshot','--project','.'],project),{action:'snapshot',project});
-    assert.equal((await parseFriendlyArgs(['verify','--profile','commit'],project)).profile,'commit');
-    assert.equal((await parseFriendlyArgs(['verify','--profile','full','--risk','L2'],project)).riskLevel,'L2');
-    const status=await parseFriendlyArgs(['status','--change','add-search'],project);assert.equal(status.action,'workspace-status');assert.equal(status.changeId,'add-search');
-    assert.equal((await parseFriendlyArgs(['next'],project)).action,'workspace-next');
-    assert.equal((await parseFriendlyArgs(['help'],project)).action,'help');
-  } finally {await rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
+const root=path.resolve(import.meta.dirname,'..');
+
+async function fixture(t){
+ const created=await mkdtemp(path.join(tmpdir(),'instar-cli-'));
+ const project=await import('node:fs/promises').then(fs=>fs.realpath(created));
+ t.after(()=>rm(project,{recursive:true,force:true,maxRetries:20,retryDelay:100}));
+ return project;
+}
+
+test('micro and quick lanes expose smaller targets while keeping risk floors',()=>{
+ assert.deepEqual(laneDefinition('micro').targetMinutes,[10,20]);
+ assert.equal(laneDefinition('micro').budgets.totalTokens,12000000);
+ assert.deepEqual(laneDefinition('quick').targetMinutes,[20,30]);
+ assert.equal(laneDefinition('quick').budgets.qualityGateRuns,1);
+ assert.equal(riskMinimumLane('L1'),'micro');
+ assert.equal(riskMinimumLane('L2'),'standard');
+ assert.equal(riskMinimumLane('L3'),'regulated');
 });
 
-test('review CLI reads either a direct review object or a wrapped review object',async()=>{
-  const dir=await mkdtemp(path.join(tmpdir(),'instar-review-'));
-  try {
-    const review={reviewer:'reviewer',fingerprint:'abc',checks:[]};
-    const file=path.join(dir,'review.json');
-    await writeFile(file,JSON.stringify({review}));
-    assert.deepEqual((await parseFriendlyArgs(['review','--review-file','review.json'],dir)).review,review);
-    assert.equal((await parseFriendlyArgs(['review','--review-file','review.json','--risk','L2'],dir)).riskLevel,'L2');
-    await writeFile(file,JSON.stringify(review));
-    assert.deepEqual((await parseFriendlyArgs(['review','--review-file','review.json'],dir)).review,review);
-  } finally {await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
+test('micro lane can start a small L1 workflow without lowering L2/L3 floors',async t=>{
+ const project=await fixture(t),document=path.join(project,'prd.md');
+ await writeFile(document,'# PRD\nTiny copy update.\n');
+ const started=await runWorkflow({action:'start',project,changeId:'tiny-copy',lane:'micro',affectedPaths:['src/tiny.js'],document:'# PRD\nTiny copy update.\n'});
+ assert.equal(started.efficiency.lane,'micro');
+ assert.equal(started.efficiency.targetMinutes[1],20);
+ assert.equal(started.efficiency.riskFloor,'micro');
 });
 
-test('review CLI creates a repair request without reading or inventing review evidence',async()=>{
-  const dir=await mkdtemp(path.join(tmpdir(),'instar-review-template-'));
-  try {
-    const init=await parseFriendlyArgs(['review','init','--reviewer','team-member'],dir);
-    assert.equal(init.action,'quality-review-init');assert.equal(init.outputPath,'reports/review.json');assert.equal(init.reviewer,'team-member');
-    const custom=await parseFriendlyArgs(['review','init','--output','reports/custom.json','--risk','L2'],dir);
-    assert.equal(custom.outputPath,'reports/custom.json');assert.equal(custom.riskLevel,'L2');
-    const forced=await parseFriendlyArgs(['review','init','--force'],dir);assert.equal(forced.force,true);
-    const repair=await parseFriendlyArgs(['review','repair','--review-file','reports/review.json'],dir);
-    assert.equal(repair.action,'quality-review-repair');assert.equal(repair.reviewFile,'reports/review.json');
-    await assert.rejects(parseFriendlyArgs(['review','repair'],dir),/requires --review-file/);
-    await assert.rejects(parseFriendlyArgs(['review','init','--output','reports/review.json','--review-file','old.json'],dir),/not supported by review/);
-  } finally {await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
+test('friendly CLI parses flow, document, discovery and dry-run commands',async t=>{
+ const project=await fixture(t),document=path.join(project,'prd.md'),input=path.join(project,'request.json');
+ await writeFile(document,'# PRD\nTiny update.\n');
+ await writeFile(input,JSON.stringify({action:'write-tasks',contextHash:'abc',document:'- [ ] 1.1 Update copy.'}));
+ const status=await parseWorkflowArgs(['flow','status','--project',project,'--change','tiny-copy','--json'],root);
+ assert.equal(status.type,'inspect');
+ assert.equal(status.command,'status');
+ assert.equal(status.mode.json,true);
+ assert.equal(status.project,project);
+ const start=await parseWorkflowArgs(['flow','start','--project',project,'--change','tiny-copy','--document',document,'--profile','micro','--affected','src/tiny.js','--dry-run'],root);
+ assert.equal(start.type,'workflow');
+ assert.equal(start.request.lane,'micro');
+ assert.deepEqual(start.request.affectedPaths,['src/tiny.js']);
+ assert.equal(start.mode.dryRun,true);
+ assert.match(start.request.document,/Tiny update/);
+ const action=await parseWorkflowArgs(['flow','action','write-tasks','--project',project,'--input',input],root);
+ assert.equal(action.request.action,'write-tasks');
+ assert.equal(action.request.contextHash,'abc');
+ const standards=await parseWorkflowArgs(['find','standards','--project',project,'--path','src/orders.ts','--changed'],root);
+ assert.equal(standards.request.action,'standards-context');
+ assert.deepEqual(standards.request.paths,['src/orders.ts']);
+ assert.equal(standards.changed,true);
+ const doc=await parseWorkflowArgs(['doc','show','--project',project,'--kind','design','--change','tiny-copy'],root);
+ assert.equal(doc.kind,'design');
+ const cost=await parseWorkflowArgs(['cost','show','--project',project],root);
+ assert.equal(cost.command,'cost');
+ const resume=await parseWorkflowArgs(['flow','context','--project',project,'--change','tiny-copy','--resume','--brief'],root);
+ assert.equal(resume.resume,true);
+ assert.equal(resume.mode.brief,true);
+ const help=await parseWorkflowArgs(['flow','start','--help','--json'],root);
+ assert.equal(help.type,'help');
+ assert.equal(help.topic,'flow start');
+ assert.equal(help.mode.json,true);
+ const mismatchInput=path.join(project,'mismatch.json');
+ await writeFile(mismatchInput,JSON.stringify({action:'write-tasks',project:path.join(project,'elsewhere')}));
+ await assert.rejects(parseWorkflowArgs(['flow','action','write-tasks','--project',project,'--input',mismatchInput],root),/does not match/);
 });
 
-test('CI CLI requires a phase and explicit publish confirmation',async()=>{
-  const dir=await mkdtemp(path.join(tmpdir(),'instar-ci-'));
-  try {
-    const prepare=await parseFriendlyArgs(['ci','prepare','--title','feat: demo'],dir);
-    assert.equal(prepare.phase,'prepare');assert.equal(prepare.title,'feat: demo');assert.equal(prepare.authorization,undefined);
-    assert.equal((await parseFriendlyArgs(['ci','status'],dir)).phase,'status');
-    await assert.rejects(parseFriendlyArgs(['ci','publish','--title','feat: demo'],dir),/requires --confirm/);
-    const publish=await parseFriendlyArgs(['ci','publish','--title','feat: demo','--confirm'],dir);
-    assert.equal(publish.authorization,'User explicitly confirmed via InStar CLI');
-  } finally {await rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
-});
-
-test('friendly CLI rejects ignored flags, missing values, and conflicting PR bodies',async()=>{
-  await assert.rejects(parseFriendlyArgs(['verify','--json']),/Unknown option/);
-  await assert.rejects(parseFriendlyArgs(['verify','--confirm']),/not supported by verify/);
-  assert.equal(await parseFriendlyArgs(['init','--project']),null);
-  await assert.rejects(parseFriendlyArgs(['ci','prepare','--title','demo','--body','a','--body-file','body.md']),/Choose only one/);
+test('instar explain and cost lanes are available through the top-level command',()=>{
+ const explain=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'explain','--json'],{cwd:root,encoding:'utf8'});
+ assert.equal(explain.status,0,explain.stderr);
+ const payload=JSON.parse(explain.stdout);
+ assert.match(payload.text,/project-owned rules first/);
+ const lanes=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'cost','lanes','--json'],{cwd:root,encoding:'utf8'});
+ assert.equal(lanes.status,0,lanes.stderr);
+ assert.deepEqual(JSON.parse(lanes.stdout).lanes.map(item=>item.lane),['micro','quick','fast','standard','regulated']);
+ const brief=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'cost','lanes','--brief'],{cwd:root,encoding:'utf8'});
+ assert.equal(brief.status,0,brief.stderr);
+ assert.deepEqual(brief.stdout.trim().split('\n').map(line=>line.split(' ')[0]),['micro','quick','fast','standard','regulated']);
+ const compact=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'cost','lanes','--json','--brief'],{cwd:root,encoding:'utf8'});
+ assert.equal(compact.status,0,compact.stderr);
+ assert.equal(compact.stdout.trim().split('\n').length,1);
+ const help=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'flow','start','--help','--json'],{cwd:root,encoding:'utf8'});
+ assert.equal(help.status,0,help.stderr);
+ assert.match(JSON.parse(help.stdout).text,/Usage: instar flow/);
+ const textError=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'flow','start'],{cwd:root,encoding:'utf8'});
+ assert.equal(textError.status,1);
+ assert.match(textError.stderr,/^BLOCK:/);
+ const jsonError=spawnSync(process.execPath,[path.join(root,'bin/instar.mjs'),'flow','start','--json'],{cwd:root,encoding:'utf8'});
+ assert.equal(jsonError.status,1);
+ assert.equal(JSON.parse(jsonError.stderr).status,'BLOCK');
 });

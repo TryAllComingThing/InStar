@@ -98,7 +98,14 @@ Skill / Hook 层 ──────────────► 目标项目文�
 ```text
 bin/instar.mjs
   ├─ spec-discover ──► runtime/discovery-controller/cli.mjs
+  ├─ flow/doc/find/standards/cost/explain ──► runtime/workflow-controller/friendly-cli.mjs
   └─ 其他参数 ──────► runtime/quality-controller/cli.mjs
+
+friendly-cli
+  ├─ workflow-controller/run
+  ├─ discovery-controller/run
+  ├─ shared/workflow-status
+  └─ shared/efficiency
 
 workflow-controller
   ├─ openspec-min
@@ -107,6 +114,7 @@ workflow-controller
   ├─ shared/token-sources
   ├─ shared/source-snapshot
   ├─ shared/efficiency
+  ├─ shared/project-standards
   ├─ shared/standards-index
   ├─ shared/skills-index
   └─ 自有 files / documents / evaluation / recovery / write-set
@@ -134,6 +142,7 @@ discovery-controller
 | 模块 | 职责 | 关键文件 |
 | --- | --- | --- |
 | 入口路由 | 区分存量发现与质量命令 | [bin/instar.mjs](../bin/instar.mjs) |
+| 便捷 CLI | 解析 `flow/doc/find/standards/cost/explain` 并调用既有控制器 | [src/workflow-controller/friendly-cli.mjs](../src/workflow-controller/friendly-cli.mjs) |
 | 工作流控制器 | PRD 到归档的状态机、审批、上下文、事务 | [src/workflow-controller/index.mjs](../src/workflow-controller/index.mjs) |
 | 文档与审批 | 工件读取、任务解析、审批哈希、上下文组装 | [src/workflow-controller/documents.mjs](../src/workflow-controller/documents.mjs) |
 | 质量控制器 | 快照、检查、门禁、报告、CI | [src/quality-controller/index.mjs](../src/quality-controller/index.mjs) |
@@ -142,6 +151,7 @@ discovery-controller
 | 存量发现 | 源码清单、证据校验、预览与落盘 | [src/discovery-controller/index.mjs](../src/discovery-controller/index.mjs) |
 | 项目基线 | 规则注册表、采纳与检查 | [src/shared/project-baseline.mjs](../src/shared/project-baseline.mjs) |
 | 复用治理 | 能力索引、复用决策与计划一致性 | [src/shared/code-reuse.mjs](../src/shared/code-reuse.mjs) |
+| 项目规范 | 发现 `standards/`、校验 manifest、适用规则、Compliance Matrix 与 Review 引用 | [src/shared/project-standards.mjs](../src/shared/project-standards.mjs) |
 | 安全与边界 | 路径、符号链接、输入上限、脱敏 | [src/shared/](../src/shared/) |
 
 ## 6. 工作流状态机
@@ -169,7 +179,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 - `implementation`：技术设计、任务、项目基线、复用决定与复用指纹的组合哈希。
 - `acceptance`：计划、任务、验证和任务证据的组合哈希。
 
-审批记录同时保存 `reviewHash`、人工确认文本和来源。文档、任务、设计、基线或验证内容发生变化都会使旧审批失效。`approve` 还要求提交时的待审批哈希与当前重新计算值一致。
+审批记录同时保存 `reviewHash`、`subjectHash`、一次性 `intentId`、人工确认文本和来源。`approve` 会校验待审批哈希、intent、challenge 和有效期；intent 消费后写入 `approvalIntents`，不能重放。文档、任务、设计、基线或验证内容发生变化都会使旧审批失效。
 
 ### 6.2 主要转换
 
@@ -196,7 +206,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 
 ### 6.3 上下文指纹
 
-生成设计、任务和 Spec 时，控制器组装项目上下文并计算 `contextHash`，包括适用指引、架构/设计文档、Token、项目树和当前工件版本。`AGENTS.md` 先加载根指引，再加载变更专属与 affectedPaths 最近的目录，并受 40 文件、单文件 12 KiB、合计 48 KiB 上限约束；`guidanceBudget` 明确列出保留、截断和省略项，`guidanceFingerprint` 覆盖内容与预算元数据。调用方提交生成结果时必须带回该哈希；上下文变化或版本过期会被拒绝。重复读取未变化的上下文可传 `knownContextHash`，哈希一致时省略完整上下文并返回 compact `contextDiff`。该机制保证“生成时看到的输入”和“写入时的项目状态”一致，**不证明生成内容的语义质量**。
+生成设计、任务和 Spec 时，控制器组装项目上下文并计算 `contextHash`，包括适用指引、架构/设计文档、Token、项目规范、项目树和当前工件版本。`AGENTS.md` 先加载根指引，再加载变更专属与 affectedPaths 最近的目录，并受 40 文件、单文件 12 KiB、合计 48 KiB 上限约束；`guidanceBudget` 明确列出保留、截断和省略项，`guidanceFingerprint` 覆盖内容与预算元数据。项目规范单独计算全量 `standardsCatalog.fingerprint` 和适用 `applicableStandards.fingerprint`；设计阶段只绑定后者，因此无关规范变化不会使设计失效。调用方提交生成结果时必须带回该哈希；上下文变化或版本过期会被拒绝。重复读取未变化的上下文可传 `knownContextHash`，哈希一致时省略完整上下文并返回 compact `contextDiff`。该机制保证“生成时看到的输入”和“写入时的项目状态”一致，**不证明生成内容的语义质量**。
 
 ## 7. 质量与证据链
 
@@ -219,7 +229,7 @@ prd → spec → design → tasks → implementation → verification → archiv
 1. `snapshot` 获取当前指纹。
 2. `verify` 执行配置的 `commit` 或 `full` profile。
 3. 调用方提交 `review`，其中每个检查项必须有当前快照的证据。
-4. `quality-gate` 校验 Review 结构、证据位置、基线引用、复用审查、风险等级和可选工具适配器。
+4. `quality-gate` 校验 Review 结构、证据位置、基线引用、复用审查、适用强制项目规范的 `standardsReferences`、风险等级和可选工具适配器。
 5. `ai-provenance` 记录 AI 生成标记与会话摘要。
 6. `pre-pr-check` 要求 full 验证、质量门禁和 provenance 都属于同一快照。
 7. `ci prepare/status/publish` 把本地证据写入 PR 正文，并把远端 SHA/Check 与本地 SHA 对齐。
@@ -292,7 +302,7 @@ logs/
 
 ### 10.2 命令执行
 
-schema 3 的 `tools.checks` 直接 `spawnSync` 项目命令；schema 1/2 通过 npm 执行项目 scripts。执行时过滤敏感环境变量、设置超时和输出字节上限，并禁止 shell 拼接。项目命令本身仍是项目代码，**不是 OS 级沙箱**；运行不可信仓库时应使用宿主沙箱或容器。
+schema 3 的 `tools.checks` 直接 `spawnSync` 项目命令；schema 1/2 通过 npm 执行项目 scripts。执行时过滤敏感环境变量、设置超时和输出字节上限，并禁止 shell 拼接。**运行 `local-verify`/`frontend-verify`/`engineering-verify` 等同以调用方权限执行项目代码**（`package.json` 脚本与 `tools.checks` 命令），**不是 OS 级沙箱**；不可信仓库必须依赖宿主沙箱或容器隔离。离线参数只是阻止包安装，不是网络隔离边界。
 
 ### 10.3 Git / GitHub
 
@@ -313,6 +323,8 @@ schema 3 的 `tools.checks` 直接 `spawnSync` 项目命令；schema 1/2 通过 
 | L3 人工角色 | `riskPolicy.l3.requiredReviewRoles` | 需要外部审批元数据和可选的 required checks |
 | 质量策略 | `qualityPolicy.profiles` / `waivers` | full 必须覆盖 Q-01 到 Q-07；Q-07 不可豁免 |
 | 项目上下文 | `context.architecture`、`context.design`、`context.tokens` | 路径必须位于项目内、非敏感、无符号链接 |
+| 项目规范 | `standards/index.json` 或 `context.standards` | 强制规则必须有 `id`、`path`、`appliesTo`；设计和 Review 都必须引用 |
+| 成本档位 | `efficiency` lane 与 Skill `metrics` | `micro/quick/fast/standard/regulated`；缺失指标不能伪装为 0 |
 | 工程基线 | `docs/project-baseline/rules.json` | 规则需有 scope、document 和采纳元数据 |
 | 复用能力 | `docs/project-baseline/capabilities/index.json` | 能力源哈希和可见性决定是否可复用 |
 | 文档模板 | `skills/spec-*/assets/` 与 `src/openspec-min/artifact-templates/` | `check.mjs` 要求多处模板字节一致 |
@@ -337,7 +349,7 @@ schema 3 的 `tools.checks` 直接 `spawnSync` 项目命令；schema 1/2 通过 
 
 | 需求 | 起点 |
 | --- | --- |
-| 改 CLI 参数或路由 | [bin/instar.mjs](../bin/instar.mjs)、[src/quality-controller/friendly-cli.mjs](../src/quality-controller/friendly-cli.mjs)、[src/discovery-controller/cli.mjs](../src/discovery-controller/cli.mjs) |
+| 改 CLI 参数或路由 | [bin/instar.mjs](../bin/instar.mjs)、[src/workflow-controller/friendly-cli.mjs](../src/workflow-controller/friendly-cli.mjs)、[src/quality-controller/friendly-cli.mjs](../src/quality-controller/friendly-cli.mjs)、[src/discovery-controller/cli.mjs](../src/discovery-controller/cli.mjs) |
 | 改工作流阶段 | [src/workflow-controller/index.mjs](../src/workflow-controller/index.mjs)、[src/workflow-controller/write-set.mjs](../src/workflow-controller/write-set.mjs) |
 | 改审批哈希或上下文 | [src/workflow-controller/documents.mjs](../src/workflow-controller/documents.mjs) |
 | 改质量检查或报告 | [src/quality-controller/index.mjs](../src/quality-controller/index.mjs)、[src/quality-controller/policy.mjs](../src/quality-controller/policy.mjs) |

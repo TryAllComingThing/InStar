@@ -40,13 +40,16 @@ without changeId. It returns bounded summaries, current hashes and freshness, no
 source bodies. Generation context includes `codeReuse`. First version returns the
 bounded index, not semantic search results; use rg and module routing for discovery.
 
-When enabled, write-design accepts required `reuseDecisions`:
+Every write-design requires `reuseDecisions`, including when the capability index is missing or disabled:
 
 ```json
 [{"need":"Query orders","searched":["src/orders","src/shared"],"candidates":["CAP-ORDERS-QUERY"],"decision":"reuse","selected":"CAP-ORDERS-QUERY","sourceHash":"current source hash","reason":"Contract matches and dependency direction is allowed","verification":"Run order contract and report integration tests"}]
 ```
 
-Allowed decisions: reuse/adapt/extend/local-new/extract-shared/defer. For selected
+Allowed decisions: reuse/adapt/extend/local-new/extract-shared/defer. With a missing or
+disabled index, only local-new/defer are legal; they must still record a bounded
+`searched` receipt, reason and verification so the skip is auditable. With an enabled
+index, for selected
 reuse/adapt/extend, entry must exist, be active and fresh. Internal/unknown entries
 also require boundaryEvidence. This is evidence, not automated boundary proof.
 Shared extraction requires owner, consumers and publicContract strings. A no-op
@@ -61,8 +64,9 @@ design before implementation. Implementation approval binds the design-time reus
 snapshot and decisions, permitting planned source edits and index refresh. Current
 result sources are validated at Review. The enabled discovery index remains bounded
 and global; unrelated index changes before task generation can require refresh.
-Disabled inventories retain inventoryFingerprint for discovery but have no enforcement
-fingerprint and do not invalidate task generation or implementation approval.
+Missing or disabled inventories no longer bypass design governance. They retain their
+state (`missing`/`disabled`) for audit, require a search receipt and local-new/defer
+decision, and do not invalidate task generation after that decision is approved.
 
 ## Review and real verification
 

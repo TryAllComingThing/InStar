@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,mkdir,rm,symlink,access,readdir} from 'node:fs/promises';
+import {promises as fsPromises} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {createHash} from 'node:crypto';
@@ -29,8 +30,8 @@ async function fixture(t) {
  const git=(...args)=>{const r=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout;};
  git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','InStar test');
  const commitChecks=['lint','typecheck','dependencies'],fullChecks=['lint','typecheck','test','build','dependencies','vite-build'];
- const config={schemaVersion:2,packageManager:'npm',baseRef:'main',context:{},review:{language:'typescript',framework:'vue'},qualityPolicy:qualityPolicyFor(commitChecks,fullChecks),tools:Object.fromEntries(['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint','dependencies','ci-config','vite-build'].map(n=>[n,`quality:${n}`]))};await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify(config));
- const pkg={scripts:Object.fromEntries(['lint','typecheck','test','build','quality:vue-doctor','quality:vue-ai-sanitizer','quality:ai-code-gate','quality:design-lint','quality:dependencies','quality:ci-config','quality:vite-build'].map(n=>[n,'node -e "process.exit(0)"']))};
+ const config={schemaVersion:2,packageManager:'npm',baseRef:'main',context:{},review:{language:'typescript',framework:'vue'},scripts:{browser:'browser'},qualityPolicy:qualityPolicyFor(commitChecks,fullChecks),tools:Object.fromEntries(['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint','dependencies','ci-config','vite-build'].map(n=>[n,`quality:${n}`]))};await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify(config));
+ const pkg={scripts:Object.fromEntries(['lint','typecheck','test','build','browser','quality:vue-doctor','quality:vue-ai-sanitizer','quality:ai-code-gate','quality:design-lint','quality:dependencies','quality:ci-config','quality:vite-build'].map(n=>[n,'node -e "process.exit(0)"']))};
  await writeFile(path.join(project,'package.json'),JSON.stringify(pkg));
  await writeFile(path.join(project,'.gitignore'),'reports/\nlogs/\nnode_modules/\n');
  await mkdir(path.join(project,'reports'));await mkdir(path.join(project,'logs'));
@@ -125,6 +126,15 @@ test('report transactions clean up after success and preserve existing targets o
  assert.equal((await (await import('node:fs/promises')).stat(path.join(f.project,'reports','doctor.json'))).isDirectory(),true);
  assert.deepEqual(await readdir(path.join(f.project,'.instar','quality-transactions')),[]);
 });
+test('report, manifest and dossier replacement rolls back together when manifest commit fails',async t=>{
+ const f=await fixture(t);await f.call('doctor');const reportsDir=path.join(f.project,'reports'),doctorBefore=await readFile(path.join(reportsDir,'doctor.json'),'utf8'),before=await readdir(reportsDir);
+ const original=fsPromises.rename;
+ fsPromises.rename=async(from,to)=>{if(String(to).endsWith(`${path.sep}reports${path.sep}manifest.json`))throw Error('Injected manifest failure');return original(from,to);};
+ try{await assert.rejects(f.call('doctor'),/Injected manifest failure/);}finally{fsPromises.rename=original;}
+ assert.equal(await readFile(path.join(reportsDir,'doctor.json'),'utf8'),doctorBefore);
+ assert.deepEqual((await readdir(reportsDir)).sort(),before.sort());
+ assert.deepEqual(await readdir(path.join(f.project,'.instar','quality-transactions')),[]);
+});
 test('sensitive paths cannot be downgraded below the inferred L3 risk',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  config.riskPolicy={l3:{requiredReviewRoles:['security'],requiredChecks:['Security Scan'],requireHumanApproval:true}};
@@ -166,6 +176,45 @@ test('first failure stops execution, overwrites prior pass and missing tools blo
  delete f.pkg.scripts['quality:vue-doctor'];await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
  assert.equal((await f.call('quality-gate',{review:await f.review()})).status,'BLOCK');
 });
+test('unconfigured browser acceptance cannot produce a passing full verification',async t=>{
+ const f=await fixture(t),configPath=path.join(f.project,'.instar-quality.json'),config=JSON.parse(await readFile(configPath,'utf8'));delete f.pkg.scripts.browser;delete config.scripts;await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));await writeFile(configPath,JSON.stringify(config));
+ const report=await f.call('local-verify',{profile:'full'});
+ assert.equal(report.browserAcceptance.status,'NOT_CONFIGURED');assert.equal(report.status,'WARN');
+});
+test('CLI and service surfaces do not require browser acceptance',async t=>{
+ const f=await fixture(t),configPath=path.join(f.project,'.instar-quality.json'),config=JSON.parse(await readFile(configPath,'utf8'));
+ delete f.pkg.scripts.browser;delete config.scripts;config.review={language:'javascript',framework:'node',surface:'cli'};
+ await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));await writeFile(configPath,JSON.stringify(config));
+ const report=await f.call('local-verify',{profile:'full'});
+ assert.equal(report.browserAcceptance.status,'NOT_APPLICABLE');assert.equal(report.status,'PASS');
+});
+test('contract and migration adapters run only for matching changes and enter the evidence chain',async t=>{
+ const f=await fixture(t),configPath=path.join(f.project,'.instar-quality.json'),config=JSON.parse(await readFile(configPath,'utf8'));
+ config.tools.contracts='quality:contracts';config.tools.migrations='quality:migrations';
+ f.pkg.scripts['quality:contracts']='node -e "process.exit(0)"';f.pkg.scripts['quality:migrations']='node -e "process.exit(0)"';
+ await writeFile(configPath,JSON.stringify(config));await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
+ await mkdir(path.join(f.project,'src/contracts'),{recursive:true});await mkdir(path.join(f.project,'db-schema'),{recursive:true});
+ await writeFile(path.join(f.project,'src/contracts/openapi.yaml'),'openapi: 3.1.0\n');
+ await writeFile(path.join(f.project,'db-schema/001.sql'),'SELECT 1;\n');
+ let gate=await f.call('quality-gate',{review:await f.review()});
+ assert.equal(gate.status,'PASS');
+ assert.equal(gate.checks.find(check=>check.id==='contracts').status,'PASS');
+ assert.equal(gate.checks.find(check=>check.id==='migrations').status,'PASS');
+ f.pkg.scripts['quality:contracts']='node -e "process.exit(9)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
+ await writeFile(path.join(f.project,'src/contracts/openapi.yaml'),'openapi: 3.1.0\ninfo: {title: Changed}\n');
+ gate=await f.call('quality-gate',{review:await f.review()});
+ assert.equal(gate.status,'BLOCK');
+ assert.equal(gate.checks.find(check=>check.id==='contracts').status,'BLOCK');
+});
+test('unmatched contract and migration adapters are reported as not applicable',async t=>{
+ const f=await fixture(t),configPath=path.join(f.project,'.instar-quality.json'),config=JSON.parse(await readFile(configPath,'utf8'));
+ config.tools.contracts='missing-contract-script';config.tools.migrations='missing-migration-script';
+ await writeFile(configPath,JSON.stringify(config));
+ const gate=await f.call('quality-gate',{review:await f.review()});
+ assert.equal(gate.status,'PASS');
+ assert.equal(gate.checks.find(check=>check.id==='contracts').status,'INFO');
+ assert.equal(gate.checks.find(check=>check.id==='migrations').status,'INFO');
+});
 test('project quality scripts do not inherit host credential environment variables',async t=>{
  const f=await fixture(t),old=process.env.GITHUB_TOKEN;process.env.GITHUB_TOKEN='fixture-not-a-secret';
  t.after(()=>{if(old===undefined)delete process.env.GITHUB_TOKEN;else process.env.GITHUB_TOKEN=old;});
@@ -198,7 +247,7 @@ test('quality schema version 1 remains explicitly supported',async t=>{
 
 test('schema 3 engineering verification runs project commands without npm coupling',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};
  config.verification={profiles:{commit:['go-vet'],full:['go-vet','go-test']}};
  config.qualityPolicy=qualityPolicyFor(['go-vet'],['go-vet','go-test']);
  config.tools.checks={
@@ -219,7 +268,7 @@ test('schema 3 engineering verification runs project commands without npm coupli
 
 test('schema 3 engineering verification blocks failed project commands',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};
  config.verification={profiles:{commit:['lint'],full:['lint']}};
  config.qualityPolicy=qualityPolicyFor(['lint'],['lint']);
  config.tools.checks={lint:{command:process.execPath,args:['-e','process.exit(7)']}};
@@ -229,7 +278,7 @@ test('schema 3 engineering verification blocks failed project commands',async t=
 });
 test('schema 3 rejects incomplete and unsafe command configurations and replaces stale PASS on errors',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['lint'],full:['lint']}};config.qualityPolicy=qualityPolicyFor(['lint'],['lint']);config.tools.checks={lint:{command:process.execPath,args:['-e','process.exit(0)']}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};config.verification={profiles:{commit:['lint'],full:['lint']}};config.qualityPolicy=qualityPolicyFor(['lint'],['lint']);config.tools.checks={lint:{command:process.execPath,args:['-e','process.exit(0)']}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  assert.equal((await f.call('engineering-verify',{profile:'commit'})).status,'PASS');
  delete config.verification;await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/schemaVersion 3 requires/);
@@ -241,7 +290,7 @@ test('schema 3 rejects incomplete and unsafe command configurations and replaces
 });
 test('schema 3 hides command arguments and removes common database credentials from child env',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['env-check'],full:['env-check']}};config.qualityPolicy=qualityPolicyFor(['env-check'],['env-check']);
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};config.verification={profiles:{commit:['env-check'],full:['env-check']}};config.qualityPolicy=qualityPolicyFor(['env-check'],['env-check']);
  config.tools.checks={'env-check':{command:process.execPath,args:['-e','process.exit(process.env.DATABASE_URL?9:0)','hunter2']}};
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));const old=process.env.DATABASE_URL;process.env.DATABASE_URL='postgres://user:password@example.invalid/db';
  t.after(()=>{if(old===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=old;});
@@ -250,7 +299,7 @@ test('schema 3 hides command arguments and removes common database credentials f
 });
 test('schema 3 snapshots explicit ignored inputs and blocks timeout or workspace mutation',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']},inputs:['.local-build-input']};config.qualityPolicy=qualityPolicyFor(['check'],['check']);
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']},inputs:['.local-build-input']};config.qualityPolicy=qualityPolicyFor(['check'],['check']);
  config.tools.checks={check:{command:process.execPath,args:['-e','require("fs").writeFileSync(".local-build-input", "changed")']}};
  await writeFile(path.join(f.project,'.gitignore'),'.local-build-input\nreports/\nlogs/\nnode_modules/\n');await writeFile(path.join(f.project,'.local-build-input'),'before');await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  const result=await f.call('engineering-verify',{profile:'commit'});assert.equal(result.status,'BLOCK');assert.equal(result.stable,false);
@@ -259,7 +308,7 @@ test('schema 3 snapshots explicit ignored inputs and blocks timeout or workspace
 });
 test('schema 3 bounds verification input directory count and nesting depth',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};
  config.verification={profiles:{commit:['check'],full:['check']},inputs:['empty-tree']};config.qualityPolicy=qualityPolicyFor(['check'],['check']);
  config.tools.checks={check:{command:process.execPath,args:['-e','process.exit(0)']}};
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
@@ -272,7 +321,7 @@ test('schema 3 bounds verification input directory count and nesting depth',asyn
 });
 test('schema 3 blocks missing executables and symlink working directories',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};config.qualityPolicy=qualityPolicyFor(['check'],['check']);
+ config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};config.qualityPolicy=qualityPolicyFor(['check'],['check']);
  config.tools.checks={check:{command:'instar-test-command-that-does-not-exist',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  let result=await f.call('engineering-verify',{profile:'commit'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].error,'ENOENT');assert.equal(result.checks[0].result,'SPAWN_ERROR');
  await t.test('symlink cwd is rejected',async t=>{if(!await symlinkAvailable(t))return;
@@ -320,7 +369,7 @@ test('P1 snapshot-bound waiver expires on uncommitted changes, policy edits and 
  const f=await fixture(t),configPath=path.join(f.project,'.instar-quality.json');let config=JSON.parse(await readFile(configPath,'utf8'));f.pkg.scripts['quality:vite-build']='node -e "process.exit(2)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));const head=(await f.call('snapshot')).head;const waiver={category:'Q-06',checkId:'vite-build',reason:'temporary',risk:'reduced coverage',compensatingControl:'manual review',approvedBy:'qa',expiresAt:'2099-01-01T00:00:00Z',scopeFingerprint:head};config.qualityPolicy.waivers=[waiver];await writeFile(configPath,JSON.stringify(config));assert.equal((await f.call('frontend-verify',{profile:'full'})).status,'PASS_WITH_WAIVERS');await writeFile(path.join(f.project,'App.vue'),'<template>Changed before waiver recheck</template>');assert.equal((await f.call('frontend-verify',{profile:'full'})).status,'FAIL');config=JSON.parse(await readFile(configPath,'utf8'));config.qualityPolicy.profiles.full[5].checkId='check-6';await writeFile(configPath,JSON.stringify(config));assert.ok(['FAIL','BLOCK'].includes((await f.call('frontend-verify',{profile:'full'})).status));config=JSON.parse(await readFile(configPath,'utf8'));delete config.qualityPolicy.waivers;await writeFile(configPath,JSON.stringify(config));assert.ok(['FAIL','BLOCK'].includes((await f.call('frontend-verify',{profile:'full'})).status));
 });
 test('T15 timeout and spawn failures are BLOCK with infrastructure results',async t=>{
- const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};config.qualityPolicy=qualityPolicyFor(['check'],['check']);config.tools.checks={check:{command:'missing-t15-command',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));let result=await f.call('engineering-verify',{profile:'full'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].result,'SPAWN_ERROR');config.tools.checks.check={command:process.execPath,args:['-e','setTimeout(()=>{},5000)'],timeoutMs:50};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));result=await f.call('engineering-verify',{profile:'full'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].result,'TIMEOUT');
+ const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));config.schemaVersion=3;delete config.packageManager;delete config.scripts;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};config.qualityPolicy=qualityPolicyFor(['check'],['check']);config.tools.checks={check:{command:'missing-t15-command',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));let result=await f.call('engineering-verify',{profile:'full'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].result,'SPAWN_ERROR');config.tools.checks.check={command:process.execPath,args:['-e','setTimeout(()=>{},5000)'],timeoutMs:50};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));result=await f.call('engineering-verify',{profile:'full'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].result,'TIMEOUT');
 });
 test('quality CLI returns non-zero for FAIL as well as BLOCK',async t=>{
  const f=await fixture(t);f.pkg.scripts.lint='node -e "process.exit(2)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));const failed=spawnSync(process.execPath,[fileURLToPath(qualityCli),'-'],{input:JSON.stringify({project:f.project,action:'frontend-verify',profile:'commit'}),encoding:'utf8'});assert.equal(failed.status,1);assert.equal(JSON.parse(failed.stdout).status,'FAIL');

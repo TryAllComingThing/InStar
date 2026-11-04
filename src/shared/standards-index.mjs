@@ -2,6 +2,7 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {expandAffectedPaths} from './affected-paths.mjs';
 
 const digest=value=>createHash('sha256').update(value).digest('hex');
 export const defaultPluginRoot=path.resolve(fileURLToPath(new URL('../../',import.meta.url)));
@@ -82,9 +83,13 @@ function pathMatches(pattern,relative){
   const normalized=relative.replaceAll('\\','/').replace(/^\.\//,'');
   return (pattern.includes('/')?globRegex(pattern):globRegex(`**/${pattern}`)).test(normalized);
 }
-function pathApplicable(entry,affectedPaths){
-  if(!affectedPaths.length||!entry.appliesTo.length)return true;
-  return affectedPaths.some(relative=>entry.appliesTo.some(pattern=>pathMatches(pattern,relative)));
+function applicabilityFor(entry,resolved){
+  if(!resolved.inputs.length||!entry.appliesTo.length)return {status:'applicable',matchedPaths:[],unknownInputs:[]};
+  if(!resolved.paths.length)return {status:'unknown',reason:'coarse affected path could not be expanded',matchedPaths:[],unknownInputs:resolved.unknownInputs};
+  const matchedPaths=resolved.paths.filter(relative=>entry.appliesTo.some(pattern=>pathMatches(pattern,relative)));
+  if(matchedPaths.length)return {status:'applicable',matchedPaths,unknownInputs:[]};
+  if(resolved.unknownInputs.length)return {status:'unknown',reason:'some affected paths could not be expanded',matchedPaths:[],unknownInputs:resolved.unknownInputs};
+  return {status:'not-applicable',matchedPaths:[],unknownInputs:[]};
 }
 function triggerMatches(trigger,content){
   if(!/^[\x00-\x7f]+$/.test(trigger))return content.includes(trigger);
@@ -190,23 +195,26 @@ function compactEntry(entry,documentHash,body,context,{mandatory=false}={}){
 }
 
 export async function selectStandards({pluginRoot=defaultPluginRoot,affectedPaths=[],context='',projectTree='',stage='spec'}={}){
-  if(!Array.isArray(affectedPaths)||affectedPaths.length>50||affectedPaths.some(item=>typeof item!=='string'||!item||item.includes('..')||item.startsWith('/')))throw Error('affectedPaths must be a bounded list of workspace-relative paths');
+  const resolved=expandAffectedPaths({affectedPaths,projectTree});
   const index=await loadStandardsIndex({pluginRoot});
   const content=`${typeof context==='string'?context:JSON.stringify(context)}\n${projectTree}`.toLowerCase();
-  const ranked=index.entries.filter(entry=>pathApplicable(entry,affectedPaths)).map(entry=>scoreEntry(entry,{affectedPaths,content,stage})).sort((left,right)=>right.score-left.score||left.entry.priority-right.entry.priority||left.entry.id.localeCompare(right.entry.id));
-  const selected=[],omitted=[],groupCounts=new Map();
-  const mandatoryGroups=new Set(affectedPaths.length?['architecture','testing']:['architecture']);
+  const evaluated=index.entries.map(entry=>({entry,applicability:applicabilityFor(entry,resolved)}));
+  const ranked=evaluated.filter(item=>item.applicability.status==='applicable').map(item=>scoreEntry(item.entry,{affectedPaths:resolved.paths,content,stage})).sort((left,right)=>right.score-left.score||left.entry.priority-right.entry.priority||left.entry.id.localeCompare(right.entry.id));
+  const selected=[],omitted=[],unknowns=[],groupCounts=new Map();
+  const mandatoryGroups=new Set(resolved.paths.length?['architecture','testing']:['architecture']);
   const mandatoryIds=new Set(ranked.filter(item=>item.entry.always||mandatoryGroups.has(groupFor(item.entry))).map(item=>item.entry.id));
-  for(const entry of index.entries){
-    if(!ranked.some(item=>item.entry.id===entry.id))omitted.push({id:entry.id,reason:'path not applicable'});
+  for(const item of evaluated){
+    if(item.applicability.status==='not-applicable')omitted.push({id:item.entry.id,reason:'path not applicable'});
+    else if(item.applicability.status==='unknown')unknowns.push({id:item.entry.id,reason:item.applicability.reason,inputs:item.applicability.unknownInputs.slice(0,10)});
   }
   const consider=item=>{
     const group=groupFor(item.entry),limit=group==='language'?3:1;
     if((groupCounts.get(group)||0)>=limit){omitted.push({id:item.entry.id,reason:`group ${group} already represented`});return false;}
     selected.push(item);groupCounts.set(group,(groupCounts.get(group)||0)+1);return true;
   };
+  const mandatoryOmitted=[];
   for(const item of ranked.filter(candidate=>mandatoryIds.has(candidate.entry.id))){
-    if(selected.length>=index.maxSelected){omitted.push({id:item.entry.id,reason:`maxSelected ${index.maxSelected} (mandatory)`});continue;}
+    if(selected.length>=index.maxSelected){omitted.push({id:item.entry.id,reason:`maxSelected ${index.maxSelected} (mandatory)`});mandatoryOmitted.push(item.entry.id);continue;}
     consider(item);
   }
   for(const item of ranked){
@@ -238,10 +246,13 @@ export async function selectStandards({pluginRoot=defaultPluginRoot,affectedPath
     precedence:index.precedence,
     policy:'These are compact applicable rule cards. Read the referenced file only when a selected rule is ambiguous or the task requires its full detail.',
     selected:selectedEntries,
-    omitted:omitted.slice(0,40),
+    omitted:omitted.slice(0,80),
+    unknowns:unknowns.slice(0,80),
     mandatory:selectedEntries.filter(entry=>entry.mandatory).map(entry=>entry.id),
-    budget:{maxSelected:index.maxSelected,maxInlineBytes:index.maxInlineBytes,inlineBytes:Buffer.byteLength(JSON.stringify(selectedEntries)),sectionRefs:selectedEntries.reduce((total,entry)=>total+entry.sections.length,0),mandatoryCount:selectedEntries.filter(entry=>entry.mandatory).length,exceeded:budgetExceeded},
+    applicability:resolved,
+    budget:{maxSelected:index.maxSelected,maxInlineBytes:index.maxInlineBytes,inlineBytes:Buffer.byteLength(JSON.stringify(selectedEntries)),sectionRefs:selectedEntries.reduce((total,entry)=>total+entry.sections.length,0),mandatoryCount:selectedEntries.filter(entry=>entry.mandatory).length,mandatoryOmitted,exceeded:budgetExceeded||mandatoryOmitted.length>0},
   };
-  payload.fingerprint=digest(JSON.stringify(payload.selected));
+  payload.complete=unknowns.length===0&&!payload.budget.exceeded;
+  payload.fingerprint=digest(JSON.stringify({schemaVersion:1,stage,inputs:resolved.inputs,selected:selectedEntries.map(entry=>({id:entry.id,path:entry.path,documentHash:entry.documentHash})),omitted,unknowns,mandatoryOmitted}));
   return payload;
 }

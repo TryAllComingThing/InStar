@@ -11,7 +11,7 @@ const dependencyDirectories=new Set(['node_modules','.venv','venv','virtualenv',
 const generatedDirectories=new Set(['dist','build','coverage','.next','.nuxt','.cache','.turbo','.vite','.parcel-cache','htmlcov','target','out','__pycache__','.pytest_cache','.ruff_cache','.mypy_cache','.pyre','.hypothesis']);
 const runtimeDirectories=new Set(['.git','.workflow','reports','logs','planning']);
 const osMetadata=new Set(['.DS_Store','Thumbs.db','desktop.ini']);
-const rootStatePrefixes=['docs/prd/','.instar/session/'];
+const rootStatePrefixes=['docs/prd/','.instar/session/','.instar/context/'];
 
 const normalize=relative=>String(relative||'').replaceAll('\\','/').replace(/^\.\//,'').replace(/\/+$/,'');
 const digest=value=>createHash('sha256').update(value).digest('hex');

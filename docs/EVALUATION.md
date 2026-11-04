@@ -10,7 +10,7 @@
 | 语义质量评测 | `quality-evaluation` Skill + 宿主模型 | 按 Rubric 给出带原文证据的质量信号 | 评测者身份、独立性、判断正确性 |
 | 人工验收 | 产品、架构、安全或业务负责人 | 对当前工件版本作出真实决策 | 不能替代自动化回归或 CI |
 
-`evaluate-quality` 不改变工作流版本，不批准阶段，也不会自动授权实施。它生成的是**辅助信号**，人工审批仍必须使用当前 `reviewHash` 完成。
+`evaluate-quality` 不改变工作流版本，也不自行批准阶段。它生成绑定当前工件指纹的质量报告；当前报告的 `BLOCK` 会阻断 `submit-prd`、`submit-spec`、`write-tasks`、`submit-implementation` 和 `approve`。报告缺失或过期会标记为 `missing`/`stale`，不能被当作 PASS 证据。人工审批仍必须使用当前 `reviewHash`、一次性 `intentId` 和 `challenge` 完成。
 
 ## 2. Rubric 契约
 
@@ -68,6 +68,8 @@ Rubric 的**结构**由控制器校验；每一项的**语义判定**由评测�
 ## 3. Rubric 判定指南
 
 以下是文档层面的判定语义。实际评测应结合项目 `AGENTS.md`、架构/设计文档、`standards/`、Design Token 和已批准 PRD。
+
+项目 `standards/index.json` 中命中当前路径的 `mandatory`/`always` 规则属于硬约束，不是可选评分项。设计评测应先检查 `Compliance Matrix` 是否逐条引用；Review 评测应检查 `standardsReferences` 是否覆盖同一组规则。评测器仍不能替代控制器的确定性校验：`write-design` 和 `quality-gate` 会再次计算适用规则并阻断缺项。
 
 ### 3.1 PRD
 
@@ -203,7 +205,7 @@ Spec 草稿 → 确定性 Spec 门禁 → 语义评测 → 人工 Spec 审批
 实现完成 → 质量门禁/工程验证 → 人工验收
 ```
 
-语义评测报告不进入 `approvalHash` 的计算，也不会自动阻断 `submit-prd`、`approve` 或 `submit-spec`。是否把 `BLOCK` 作为团队停工条件，应由项目流程明确约定。
+语义评测报告不进入 `approvalHash` 的计算，但当前工件指纹对应的 `BLOCK` 是工作流门禁，会阻断 `submit-prd`、`submit-spec`、`write-tasks`、`submit-implementation` 和 `approve`。`WARN`/`NA` 会保留为显式信号；缺失或过期报告显示为 `missing`/`stale`，不得冒充 PASS。
 
 ## 6. 与质量门禁的区别
 
@@ -289,7 +291,7 @@ node scripts/verify-model-acceptance.mjs
 - [ ] 技术设计和任务有当前语义评测报告，且实施计划已人工批准。
 - [ ] 每项任务有完成证据，所有任务已完成。
 - [ ] 当前代码快照通过项目配置的验证命令。
-- [ ] `quality-gate` 报告稳定，Review 证据与快照匹配。
+- [ ] `quality-gate` 报告稳定，Review 证据与快照匹配，适用的强制项目规范已逐条引用。
 - [ ] 适用的失败、未验证和高风险项已披露，并有人工结论。
 - [ ] 验收针对当前验证快照，源码未在验收后变化。
 - [ ] 归档后检查 proposal、全部 delta specs、技术设计、任务和 `workflow.json` 完整。

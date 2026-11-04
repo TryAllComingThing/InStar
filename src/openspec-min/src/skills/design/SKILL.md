@@ -35,7 +35,7 @@ alternatives, risks, migration guidance, and Open Questions rules intact.
 5. Resolve questions that would change the specs, chosen approach, or task
    breakdown before completion. If the Spec must change, return to the Spec gate
    and human review instead of hiding the change inside the design.
-6. Use the supplied `projectArchitecture` context, including applicable AGENTS.md guidance and the observed project tree. After the call succeeds, verify technical-design.md exists and report its location,
+6. Use the supplied `projectArchitecture` context, including applicable AGENTS.md guidance, project standards and the observed project tree. When `applicableStandards.mandatoryEntries` is non-empty, include a `Compliance Matrix` with every applicable rule ID, source path, PASS/WARN/NA status and evidence. When `requirementIds` is non-empty, include a `Requirement Traceability` table mapping every ID once to design, planned implementation and verification evidence. After the call succeeds, verify technical-design.md exists and report its location,
    principal decisions, and genuinely deferrable questions. Continue to task
    generation only within the caller's authorized workflow.
 

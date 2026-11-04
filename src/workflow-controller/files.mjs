@@ -29,13 +29,38 @@ export async function projectRoot(input){
 }
 export async function assertTree(root,relative){const dir=safe(root,relative);if(!await exists(dir))return;const stat=await fs.lstat(dir);if(!stat.isDirectory())throw Error(`Expected directory: ${relative}`);for(const item of await fs.readdir(dir,{withFileTypes:true})){const name=path.join(relative,item.name);safe(root,name);if(item.isSymbolicLink())throw Error(`Symlink not supported: ${name}`);if(item.isDirectory())await assertTree(root,name);else if(!item.isFile())throw Error(`Unsupported entry: ${name}`);}}
 export async function sourceSnapshot(root,options={}){return sharedSourceSnapshot(root,options);}
+const LOCK_STALE_MS=10*60*1000;
+function pidAlive(pid){
+ if(!Number.isInteger(pid)||pid<1)return false;
+ try{process.kill(pid,0);return true;}catch(error){return error.code==='EPERM';}
+}
+async function acquireLock(file){
+ for(let attempt=0;attempt<3;attempt++){
+  let handle=null;
+  try{handle=await fs.open(file,'wx');}catch(error){if(error.code!=='EEXIST')throw error;}
+  if(handle)return handle;
+  let stat;
+  try{stat=await fs.lstat(file);}catch(error){if(error.code==='ENOENT')continue;throw error;}
+  if(!stat.isFile())throw Error('Unsafe controller lock path');
+  const age=Date.now()-stat.mtimeMs;
+  let parsed=null;
+  try{parsed=JSON.parse(await fs.readFile(file,'utf8'));}catch{}
+  const stale=!parsed
+   ? age>LOCK_STALE_MS
+   : !Number.isInteger(parsed.pid)||!pidAlive(parsed.pid);
+  if(!stale)throw Object.assign(new Error('EEXIST: workflow controller is locked by another process; retry after it completes'),{code:'EEXIST'});
+  await fs.rm(file,{force:true});
+ }
+ throw Object.assign(new Error('EEXIST: workflow controller lock could not be acquired; retry after the current operation completes'),{code:'EEXIST'});
+}
 export async function lock(root,action){
  const dir=safe(root,'.workflow');
  try{await fs.mkdir(dir);}catch(error){if(error.code!=='EEXIST')throw error;}
  const stat=await fs.lstat(dir);if(stat.isSymbolicLink()||!stat.isDirectory())throw Error('Unsafe .workflow directory');
- const file=safe(root,'.workflow/controller.lock');const handle=await fs.open(file,'wx');
+ const file=safe(root,'.workflow/controller.lock');
+ const handle=await acquireLock(file);
  try{await handle.writeFile(JSON.stringify({pid:process.pid,at:now()}));return await action();}
- finally{await handle.close();await fs.unlink(file);}
+ finally{await handle.close();await fs.rm(file,{force:true});}
 }
 const trees=['planning','docs/prd'];
 export async function transaction(root,action,options={}){
