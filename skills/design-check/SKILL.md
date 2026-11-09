@@ -1,6 +1,7 @@
 ---
 name: design-check
-description: Extract change-specific, implementable UI style constraints from a project's design contract, adopted design tokens, and approved high-fidelity references. Use before implementing or reviewing a UI change.
+description: Extract change-specific, implementable UI style constraints from a project's design contract, adopted design tokens, and approved high-fidelity references. Use before implementing or reviewing a UI change; do not use for full project design-system extraction (use extract-design-md). 适用于 UI 设计检查、样式约束提取和设计一致性评审。
+compatibility: Requires the full InStar plugin package; plugin-root design guidance and sibling Skills resolve from the installed plugin root.
 ---
 
 # Design Check
@@ -13,7 +14,9 @@ Use for a UI change when the user requests design analysis, before producing a U
 
 - Target project root and change ID, when the change is tracked.
 - Approved PRD/Spec and relevant `technical-design.md` context.
-- Project's configured or discovered canonical design document. Use `.instar-quality.json` `context.design` when set; otherwise follow the context discovery rules in [QUALITY.md](../../docs/QUALITY.md).
+- Project's configured or discovered canonical design document. Use `.instar-quality.json` `context.design` when set; otherwise follow the context discovery rules in [CONTEXT-AND-DISCOVERY.md](../../docs/CONTEXT-AND-DISCOVERY.md).
+- Project's configured or discovered design-system manifest. Use `.instar-quality.json` `context.designSystem` when set; otherwise discover a project-owned design-system manifest from the documented fixed candidates. A known project design-system directory is also a signal when no manifest exists, but cite concrete project files in `sources`. This manifest is optional and must not be confused with the plugin's advisory `design-guidance/` directory.
+- Project design sources take precedence over plugin examples. When the project has `context.design`, `context.designSystem`, a known design-system directory, or configured/discovered `context.tokens`, do not use plugin visual examples, theme prescriptions, or example component styling as design facts.
 - Project Design Token sources. Use `.instar-quality.json` `context.tokens` when supplied, or locate the existing token definitions and usage relevant to the changed UI. The token format and naming are project-owned.
 - Approved high-fidelity description: supplied Figma/export notes, screenshot or visual reference, annotated wireframe, or sufficiently detailed written interaction and appearance requirements.
 - Existing components and styles in the affected area.
@@ -22,21 +25,37 @@ If a source is missing, state that explicitly and continue only from available e
 
 ## Workflow
 
-1. Read the applicable project `AGENTS.md`, design contract, relevant architecture constraints, and the high-fidelity description. Resolve conflicts by following user requirements first, then project-owned approved rules; report unresolved conflicts.
+1. Read the applicable project `AGENTS.md`, design contract, design-system manifest when available, relevant architecture constraints, and the high-fidelity description. Resolve conflicts by following user requirements first, then project-owned approved rules; report unresolved conflicts.
 2. Inspect relevant token definitions and nearby component usage. Confirm each proposed token name exists and matches the intended semantic role. If no token fits, mark the value unresolved; do not add or edit tokens.
 3. Compare the reference with the current product patterns. Extract only constraints that matter to this change: layout, hierarchy, typography, spacing, color roles, component states, responsive behavior, accessibility, and interaction feedback.
-4. Select only applicable guidance from [InStar design guidance](../../design-system/DESIGN.md), [token review guidance](../../design-system/rules/tokens.md), the [theme references](../../design-system/themes/), and other linked rules. These references are advisory and cannot override the project.
+4. When the project has no design contract, design-system manifest, or token source, optional startup guidance may be selected from [InStar design guidance](../../design-guidance/DESIGN.md), [token review guidance](../../design-guidance/rules/tokens.md), and other linked rules. Read [theming guidance](../../design-guidance/rules/theming.md) only when the project explicitly supports multiple themes, tenant branding, or user-selectable appearance. When project design sources exist, use only the non-prescriptive accessibility, token-review, and review-checklist guidance, and never use plugin visual examples or concrete visual values. Plugin references are advisory and cannot override the project.
 5. Return a change-specific `Style Constraints` section for insertion into `planning/changes/<changeId>/technical-design.md`. Keep project-wide `DESIGN.md` and token definitions unchanged; when the user asks for a complete project-level visual design specification, hand off to [extract-design-md](../extract-design-md/SKILL.md).
 
 ## Output contract
 
 Return:
 
-- Sources read, with project paths and any missing sources.
+- Sources read, with project paths, source roles, and any missing sources. Identify the canonical design contract, design-system manifest, tokens, components/styles, and high-fidelity reference separately.
 - A concise style-constraints section containing visual hierarchy, concrete layout/typography/state behavior, responsive/accessibility constraints, and token mappings supported by actual project sources.
 - A token mapping table: UI element or role, existing token name, source path, and intended use. If tokens are absent or not adopted, state that no mapping is required and cite the observed project convention.
 - Open decisions and assumptions, clearly separated from approved constraints.
 - Reference comparison limits: state whether the source was a screenshot/Figma description/text and whether rendered browser comparison was performed.
+
+For a tracked UI change, also return a machine-recordable handoff:
+
+```json
+{
+  "constraints": "Concrete hierarchy, layout, typography, state, responsive and accessibility rules for this change",
+  "coverage": ["hierarchy", "layout", "states", "tokens", "responsive", "accessibility"],
+  "sources": [
+    {"path": "project-relative source path actually read", "role": "design-contract"}
+  ]
+}
+```
+
+`coverage` must list all six categories. The constraints text must state when a category is not applicable and why. Each source role must be one of `design-contract`, `design-system`, `tokens`, `component`, or `reference`. The controller validates the role against the file type, rejects sensitive/generated paths and symlinks, and computes `sha256`, `bytes`, and media `type`; do not provide or invent those metadata fields. Legacy string sources are normalized for compatibility, but new handoffs must use the structured form. A later content change invalidates the design approval and requires `design-check` and `write-design` to run again.
+
+Record `trace-skill` with skill `design-check`, stage `design`, one invocation ID, `started`, then `completed`; pass the handoff to `write-design` as `designCheck`. A UI workflow cannot write its technical design without this evidence. If no high-fidelity reference, token source, or design-system manifest exists, say so in the handoff rather than inventing values.
 
 The output is an input to the tracked technical design; it is not approval to implement. Do not write directly to project `DESIGN.md`, token files, or review-approved planning artifacts.
 
@@ -53,4 +72,4 @@ Read project instructions, source, styles, token definitions, planning artifacts
 
 ## Audit
 
-Record source paths, token paths and names actually verified, unresolved items, and visual evidence used. Distinguish project requirements from InStar advisory guidance.
+Record source paths, whether `context.designSystem` was configured or discovered, token paths and names actually verified, unresolved items, and visual evidence used. Distinguish project requirements from InStar advisory guidance.

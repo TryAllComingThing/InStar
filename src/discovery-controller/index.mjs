@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {discoveryContext,sourcePath} from './context.mjs';
 import {validateDiscoveredSpec,normalizeDiscoveredSpec} from '../openspec-min/src/discovery/validate.js';
-import {fs,safe,read,json,hash,identifier,atomic,putJson,lock,transaction,restore,projectRoot,requireText,exists,now} from '../workflow-controller/files.mjs';
+import {fs,safe,read,json,hash,identifier,atomic,putJson,lock,transaction,restore,recoverPending,projectRoot,requireText,exists,now} from '../workflow-controller/files.mjs';
 import {redactText} from '../shared/redaction.mjs';
 import {MarkdownParser} from '../openspec-min/src/diff/parsers/markdown-parser.js';
 
@@ -98,11 +98,8 @@ export async function run(input) {
     return lock(root,async()=>{
       const record = await json(root,'.workflow/pending.json');
       if (record.id !== input.transactionId) throw Error('Recovery transaction mismatch');
-      await restore(root,record);
-      await putJson(root,`${record.backup}/result.json`,{...record,status:'recovered',reason:input.reason});
-      await fs.unlink(safe(root,'.workflow/pending.json'));
-      return {recovered:record.id};
-    });
+      return recoverPending(root,record,input.reason);
+    },input.action);
   }
   if (input.preview !== undefined && typeof input.preview !== 'boolean') throw Error('preview must be boolean');
   const context = await discoveryContext(input);
@@ -133,5 +130,5 @@ export async function run(input) {
       await putJson(context.project,reportPath,report);
       return {status:'PASS',project:context.project,reportPath,...report};
     });
-  });
+  },input.action);
 }

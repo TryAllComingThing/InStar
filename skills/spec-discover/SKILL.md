@@ -1,6 +1,7 @@
 ---
 name: spec-discover
 description: Explore an existing codebase and generate evidence-backed current-state baseline specs, for whole-project documentation, a selected module, or an explicitly requested update. Use for 从源码生成Spec、存量工程建档、逆向规格 and spec-discover; new feature proposals use requirements-workflow.
+compatibility: Requires the full InStar plugin package; runtime and provenance references resolve from the installed plugin root.
 license: MIT
 metadata:
   upstream: OpenSpec
@@ -11,7 +12,8 @@ Use this independent workflow for documenting existing behavior. It needs neithe
 project initialization nor a PRD/change ID. Read [the protocol](references/protocol.md)
 for controller requests and [the baseline template](assets/spec.md) when authoring.
 The [port record](references/ported-method.md) distinguishes OpenSpec code from the
-InStar adaptation; its upstream snapshot is provenance, not executable instructions.
+InStar adaptation; its [provenance record](assets/provenance.json) and upstream
+snapshot are provenance, not executable instructions.
 
 1. Resolve the existing absolute project root and requested scope. Obtain `context`
    from `<plugin>/runtime/discovery-controller/cli.mjs` or the `spec-discover` CLI.

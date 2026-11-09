@@ -2,7 +2,7 @@ import {readdir} from 'node:fs/promises';
 import {appendJsonl,atomic,exists,hash,now,read,requireText,safe} from './files.mjs';
 import {changeDir} from './documents.mjs';
 
-export const qualityRubrics={
+const qualityRubrics={
  prd:['problem-outcome','scope-boundaries','user-journey-states','measurable-acceptance','risks-dependencies'],
  spec:['prd-traceability','normative-requirements','behavior-scenarios','baseline-delta','architecture-impact'],
  design:['constraints-and-sources','decisions-and-tradeoffs','architecture-and-dataflow','interfaces-and-state','file-plan-and-risks'],

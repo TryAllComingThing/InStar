@@ -1,6 +1,7 @@
 ---
 name: quality-evaluation
-description: Run a structured semantic quality assessment of a tracked PRD, Spec, technical design, or task list, with evidence bound to the exact artifact version.
+description: Run a structured semantic quality assessment of a tracked PRD, Spec, technical design, or task list, with evidence bound to the exact artifact version. Use after drafting or revising a tracked document and before human review; do not use as code review or approval. 适用于 PRD、Spec、技术设计和任务清单的语义质量评测。
+compatibility: Requires the full InStar plugin package; evaluation rubrics resolve from the installed plugin root.
 ---
 
 # Quality Evaluation

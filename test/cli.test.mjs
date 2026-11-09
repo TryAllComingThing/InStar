@@ -8,12 +8,19 @@ import {spawnSync} from 'node:child_process';
 import {Readable} from 'node:stream';
 import {MAX_JSON_INPUT_BYTES,readBoundedFile,readBoundedStdin} from '../runtime/shared/bounded-input.mjs';
 const cli=fileURLToPath(new URL('../runtime/workflow-controller/cli.mjs',import.meta.url));
+const bin=fileURLToPath(new URL('../bin/instar.mjs',import.meta.url));
 function invoke(args,input){return spawnSync(process.execPath,[cli,...args],{input,encoding:'utf8'});}
 test('CLI reports usage and malformed JSON as JSON errors with nonzero exit',()=>{
  for(const [args,input] of [[[],undefined],[['-'],'{broken']]){
   const result=invoke(args,input);
   assert.equal(result.status,1);assert.equal(result.stdout,'');
   assert.equal(typeof JSON.parse(result.stderr).error,'string');
+ }
+});
+test('friendly CLI help exits zero for every public entry',()=>{
+ for(const args of [['--help'],['doctor','--help'],['snapshot','-h'],['verify','--help'],['review','--help'],['ci','--help'],['spec-discover','--help'],['status','--help']]){
+  const result=spawnSync(process.execPath,[bin,...args],{encoding:'utf8'});
+  assert.equal(result.status,0,`${args.join(' ')}\n${result.stderr}`);assert.match(result.stdout,/Usage:/);
  }
 });
 test('CLI accepts request files and stdin; preview leaves the project untouched',async t=>{
@@ -36,4 +43,15 @@ test('shared CLI readers stop after the configured byte limit',async t=>{
  await writeFile(file,Buffer.alloc(MAX_JSON_INPUT_BYTES+1,0x20));
  await assert.rejects(readBoundedFile(file),/Input exceeds 8388608 byte limit/);
  await assert.rejects(readBoundedStdin(Readable.from([Buffer.alloc(MAX_JSON_INPUT_BYTES),Buffer.from('x')])),/Input exceeds 8388608 byte limit/);
+});
+
+test('status CLI renders the active workflow without mutating it',async t=>{
+ const temp=await mkdtemp(path.join(tmpdir(),'instar-status-'));
+ t.after(()=>rm(temp,{recursive:true,force:true}));
+ assert.equal(invoke(['-'],JSON.stringify({action:'initialize',project:temp})).status,0);
+ const started=invoke(['-'],JSON.stringify({action:'start',project:temp,changeId:'status-test',ui:false,stack:'backend',document:'# PRD\nStatus fixture.'}));
+ assert.equal(started.status,0,started.stderr);
+ const result=spawnSync(process.execPath,[bin,'status','--project',temp,'--change','status-test','--json'],{encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);const view=JSON.parse(result.stdout);
+ assert.equal(view.summary.changeId,'status-test');assert.match(view.markdown,/Stage: prd/);
 });

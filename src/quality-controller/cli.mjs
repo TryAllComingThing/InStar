@@ -1,9 +1,11 @@
 import {run} from './index.mjs';
 import {redactText} from '../shared/redaction.mjs';
-import {parseFriendlyArgs} from './friendly-cli.mjs';
+import {parseFriendlyArgs,usageFor} from './friendly-cli.mjs';
 import {readBoundedFile,readBoundedStdin} from '../shared/bounded-input.mjs';
 try {
   const args = process.argv.slice(2);
+  if(args.includes('--help')||args.includes('-h')){console.log(`${usageFor(args[0])}\n       node <plugin>/runtime/quality-controller/cli.mjs <request.json|->`);process.exitCode=0;}
+  else {
   if (['init','adopt'].includes(args[0])) throw Error('Project scaffolding and quality-configuration initialization have been removed; use your project template and maintain .instar-quality.json in the project.');
   const shortcut = await parseFriendlyArgs(args);
   if (shortcut) {
@@ -17,5 +19,6 @@ try {
   const result = await run(JSON.parse(text));
   console.log(JSON.stringify(result,null,2));
   if(result.status==='BLOCK') process.exitCode=1;
+  }
   }
 } catch(error) { console.error(JSON.stringify({status:'BLOCK',error:redactText(error.message)})); process.exitCode=1; }

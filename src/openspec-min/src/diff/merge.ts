@@ -32,7 +32,7 @@ import { FileSystemUtils } from '../utils/file-system.js';
 // Types
 // -----------------------------------------------------------------------------
 
-export interface SpecUpdate {
+interface SpecUpdate {
   /** Capability id relative to the specs root, forward-slash separated (e.g. "web" or "platform/session-layout"). */
   id: string;
   /** Allowed root for the delta source. */
@@ -229,6 +229,22 @@ export async function buildUpdatedSpec(
     );
   }
 
+  if (plan.malformedRenames.length > 0) {
+    const first = plan.malformedRenames[0];
+    throw new Error(
+      `${specName} validation failed - unrecognized RENAMED content on line ${first.line}: "${first.text}". ` +
+        'Use only FROM:/TO: pairs in the documented form.'
+    );
+  }
+
+  if (plan.skippedHeaders.length > 0) {
+    const first = plan.skippedHeaders[0];
+    throw new Error(
+      `${specName} validation failed - non-canonical heading "### ${first.header}" on line ${first.line}. ` +
+        'Use exactly "### Requirement: <name>".'
+    );
+  }
+
   // A well-formed requirement written outside every delta section is not
   // applied. Say so here as well as in validate: archive is the last point at
   // which the author can still notice, and the block reads exactly like one
@@ -237,10 +253,9 @@ export async function buildUpdatedSpec(
     const where = orphan.section
       ? `under "## ${orphan.section}"`
       : 'above the first "## " section';
-    warn(
-      `${specName} - requirement "${orphan.name}" (line ${orphan.line}) is ${where}, ` +
-        `which is not a delta section, so it was not applied. ` +
-        `Move it under ADDED/MODIFIED/REMOVED/RENAMED Requirements.`
+    throw new Error(
+      `${specName} validation failed - requirement "${orphan.name}" (line ${orphan.line}) is ${where}, ` +
+        'which is not a delta section. Move it under ADDED/MODIFIED/REMOVED/RENAMED Requirements.'
     );
   }
 
@@ -421,6 +436,13 @@ export async function buildUpdatedSpec(
 
   // Extract requirements section and build name->block map
   const parts = extractRequirementsSection(targetContent);
+  if (parts.unmatched.some((line) => line.trim())) {
+    const first = parts.unmatched.find((line) => line.trim())!;
+    throw new Error(
+      `${specName}: content between requirements cannot be attributed safely: "${first.trim()}". ` +
+        'Use only canonical requirements and their scenarios inside ## Requirements.'
+    );
+  }
   const nameToBlock = new Map<string, RequirementBlock>();
   for (const block of parts.bodyBlocks) {
     nameToBlock.set(normalizeRequirementName(block.name), block);
@@ -1124,7 +1146,7 @@ function readableOverview(skeleton: string, specName: string): string | null {
  * invents the Purpose for a brand-new main spec either way, and the author's
  * own wording beats a placeholder they then have to hand-edit.
  */
-export function buildSpecSkeleton(specFolderName: string, changeName: string, purpose?: string): string {
+function buildSpecSkeleton(specFolderName: string, changeName: string, purpose?: string): string {
   const titleBase = specFolderName;
   const purposeBody =
     purpose?.trim() ||

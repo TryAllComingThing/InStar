@@ -1,177 +1,201 @@
-# InStar 插件体系方案
+# 插件架构
 
-## 一、插件定位
+## 1. 定位
 
-InStar 是面向前后端协同软件交付的 Codex 编排插件，包含 Vue 3 + TypeScript 前端专项能力，以及可配置的跨语言工程验证：
+InStar 是 Codex 插件层的软件交付编排器。它把“人类可审批的文档状态机”和“项目自有验证命令”连接起来，不把模型判断包装成不可变事实，也不替代宿主沙箱、Git、CI 或组织权限系统。
 
-```text
-需求理解 → PRD 编写与评审 → Spec 探索、设计与任务拆解
-→ 代码实现 → 本地验证 → AI 质量 Review
-→ 功能分支提交与 GitHub PR → CI 检查与审计
-```
+核心原则：
 
-插件负责流程编排、状态管理、质量门禁和交付协调，不实现具体的 ESLint、测试、安全扫描或 CI 引擎。
+1. **编排而非执行**：质量命令由项目提供，InStar 负责调用、记录和校验。
+2. **证据先于结论**：报告绑定源码、配置、文档和 artifact 指纹。
+3. **人工审批独立于 AI Review**：Reviewer 发现不能自动转化为批准。
+4. **按需加载上下文**：Skill、standards、design-guidance 只在相关任务读取。
+5. **失败显式**：缺少证据、stale、BLOCK、锁冲突和事务中断不静默吞掉。
 
-## 二、核心设计原则
-
-### 1. 插件只做编排
-
-插件负责解析需求、生成计划、编写 PRD、编写和校验 Spec、拆解任务、调用实现流程、按需调研工程方案和系统化调试、调用项目验证脚本、执行 AI Review、准备功能分支和 Pull Request、读取 CI 结果、读取项目规范，以及输出报告和审计日志。
-
-插件不负责实现 ESLint、TypeScript、测试或安全扫描规则，不替代项目 CI，不推送主分支，不自动合并 PR，不部署生产，也不管理生产密钥、SSO 或 GitHub 身份。
-
-### 2. 人工确认优先
-
-PRD、Spec、代码实施和最终产品验收均需要人工确认。PRD、Spec 或上下文发生变化后，旧的批准记录和验证报告自动失效。
-
-### 3. npm 作为唯一包管理器
-
-插件运行时、验证流程和文档统一使用 npm：
-
-```text
-npm install
-npm run dev
-npm run lint
-npm run typecheck
-npm test
-npm run build
-```
-
-## 三、插件目录结构
+## 2. 目录与职责
 
 ```text
 InStar/
-├── .codex-plugin/plugin.json       # 唯一安装清单
-├── plugin.json                     # 团队工程索引
-├── bin/instar.mjs                  # 人类友好 CLI
-├── skills/                         # 需求、Spec、实现和质量技能
-├── commands/                       # /doctor、/design-check
-├── hooks/                          # hooks.json 和质量 Hook
-├── assets/                         # 插件策略元数据
-├── agents/                         # Subagent 角色契约（Markdown）
-├── templates/agents/               # 项目级 Codex Subagent TOML 注册配置
-├── design-system/                  # Skills 使用的设计规则与主题参考
-├── src/                            # 源码
-├── runtime/                        # 构建运行时
-├── docs/                           # 使用、测试和架构文档
-├── logs/                           # 审计日志目录
-└── test/                           # 自动化测试
+├── .codex-plugin/plugin.json   # Codex 唯一安装清单
+├── plugin.json                 # 工程索引（非安装清单）
+├── assets/                     # 维护者声明性策略（不随 release 发布）
+├── bin/instar.mjs              # 人类友好 CLI 分派
+├── commands/                   # 项目命令提示词
+├── skills/                     # 21 个 Skill 入口与引用资源
+├── agents/                     # Markdown Reviewer 角色契约
+├── templates/                  # 项目初始化模板、Agent TOML、质量模板
+├── standards/                  # 工程规范参考
+├── design-guidance/            # 设计审查与按需主题参考
+├── src/                        # 控制器、共享模块、openspec-min 源码
+├── runtime/                    # 构建后可运行 JS 与打包依赖
+├── release/                    # 可安装 marketplace 与插件包
+├── hooks/                      # PreToolUse / SessionEnd Hook
+├── test/                       # 控制器、CLI、发现、移植和发布测试
+└── docs/                       # 本文档集
 ```
 
-`.codex-plugin/plugin.json` 是唯一安装清单，根目录 `plugin.json` 仅作为工程索引。
+`.codex-plugin/plugin.json` 才是安装清单；根 `plugin.json` 与 `assets/policy.json` 是仓库维护者索引/声明性策略，不随 release 发布；`release/` 由 `scripts/release.mjs` 生成，不应手工当成源码编辑。
 
-## 四、Skill 能力体系
-
-### 1. 需求与上下文
-
-- `initialize-project`：初始化项目工作流目录和审查角色；不强制创建重复的架构、设计、状态或经验文件。
-- `requirements-workflow`：整理需求目标、范围、约束、依赖、风险和反馈。
-- `write-a-prd`：生成目标、场景、范围、验收标准、边界和风险组成的 PRD。
-
-### 2. Spec 工作流
-
-- `spec-explore`：分析现有代码、影响范围、技术路径和风险。
-- `spec-discover`：独立探索存量工程，生成带源码证据的 `planning/specs/<capability>/spec.md`，支持指定模块及显式更新；不要求 PRD 或实施流程。宿主模型负责语义分析，`discovery-controller` 负责清单、指纹、预览、证据校验和事务捕获，文档引擎复用 OpenSpec 主规格解析与校验。
-- `spec-propose`：将需求转换为可执行 Spec 和场景。
-- `spec-verify`：校验 Spec 结构、需求覆盖、场景和验收标准。
-- `spec-design`：生成模块边界、数据流、组件关系和接口设计。
-- `spec-tasks`：按依赖拆分实施任务并关联验收条件。
-
-### 3. 实现与质量
-
-- `engineering-implement`：在授权后按确认的 PRD、Spec 和任务实现后端及跨栈代码。
-- `frontend-implement`：在授权后按确认的 PRD、Spec 和任务实现 UI/Vue 代码。
-- `design-check`：读取项目设计规范、真实 Token 来源和获批的高保真说明，为当前 UI 变更生成可执行的 Style Constraints 与有来源的 Token 映射；不改写项目长期设计文档或 Token。
-- `engineering-verify`：按 schema 3 配置直接运行项目已有的前后端检查命令。
-- `frontend-verify`：兼容旧项目并调用 npm lint、typecheck、test、build、Vite 检查、依赖检查和可选 E2E/视觉回归。
-- `quality-gate`：执行架构、类型、组件边界、Vue 反模式、设计约束和 AI 代码 Review。
-- `context-optimizer`：按需审计和改善项目指令与工程上下文。
-- `engineering-research`：实现前核对现有方案、锁定版本和官方资料。
-- `systematic-debugging`：按证据复现、定位并修复故障。
-- `ci`：准备功能分支、推送、创建或复用 PR、读取 CI、上传 Review 报告并定位失败原因。
-
-本次变更的技术方案存放在 `planning/changes/<changeId>/technical-design.md`；项目长期设计规范由项目选择自己的规范路径。Spec 和技术方案上下文会读取适用的 `AGENTS.md`、配置或发现的架构/设计文档、项目 `standards/` 文档和目录概览，并将这些输入纳入上下文指纹。可在 `.instar-quality.json` 的 `context.architecture`、`context.design` 中指定路径；未配置时按 `docs/engineering/`、`docs/architecture/`、`docs/design/`、旧 `.context/` 顺序发现。缺少这些文档不会阻断工作；项目自行维护架构规则，InStar 不强制采用特定架构模式。
-
-`design-check` 面向单次变更，结合项目设计文档、已有 Token、PRD/Spec 和人工确认的高保真参考，输出 `technical-design.md` 的 Style Constraints。`extract-design-md` 面向整个已有前端项目，归纳色彩、字体、间距、组件、布局和响应式行为，按请求更新项目根目录 `DESIGN.md`，保留人工内容并标注源码证据与解释。插件内 `design-system/`（含企业、批发、深色主题说明）是可选建议材料，不会复制成目标项目设计系统或引入主题引擎。`initialize-project` 可将四个角色契约安装为项目 `.codex/agents/*.md`，并在保留现有 TOML 内容的前提下追加缺失的 `.codex/config.toml` 注册项；损坏配置或角色名冲突会报告，不静默覆盖。Codex 只在受信任项目加载该配置。Doctor 会检查 TOML 解析、注册项和角色文件，但不能判断宿主信任状态。Token 来源解析由质量检查与 Spec 上下文共用，缺失、链接或非普通文件均会一致报错。
-
-插件只调用外部质量工具，不实现这些工具本身。
-
-## 五、项目边界
-
-InStar 不生成 Vue/后端工程、脚手架、工程模板或质量配置，也不向目标仓库复制 `assets/`、`standards/` 或 `design-system/` 内容。团队通过自己的项目模板与工程工具创建仓库；项目需自行维护 `.instar-quality.json`，schema 3 可映射任意本地可执行验证命令。`initialize-project` 仅初始化需求与 Spec 工作流目录、规则和 Agent 配置。
-
-## 六、人类友好 CLI
-
-日常使用不需要记忆 JSON：
-
-```sh
-node <plugin>/bin/instar.mjs doctor
-node <plugin>/bin/instar.mjs snapshot
-node <plugin>/bin/instar.mjs verify --profile full
-node <plugin>/bin/instar.mjs review --review-file ./review.json
-node <plugin>/bin/instar.mjs ci prepare --title "feat: example"
-node <plugin>/bin/instar.mjs ci status
-```
-
-`ci publish --title "..." --confirm` 才会推送功能分支并创建或更新 PR。Review 文件必须匹配 `snapshot` 输出的指纹。
-
-可使用 `--project` 指定项目目录；不传时默认使用当前目录。底层 JSON CLI 保留给自动化、CI、测试和 IDE 集成。
-
-## 七、Command 与 Hook
-
-`/doctor` 用于检查已配置或发现的项目上下文、npm 依赖、项目脚本、锁文件、CI 配置和外部质量脚本。上下文文档缺省时显示 INFO。
-
-Hook 配置固定在 `hooks/hooks.json`：
-
-- `pre-commit-check`：提交前验证和 Review，失败默认阻止提交。
-- `session-close`：生成 `logs/` 会话审计日志；只有显式配置并提供真实摘要时才更新项目状态或经验文件。
-- `pre-pr-check`：创建 PR 前检查完整验证、最新 Review 和 AI 溯源。
-
-Hook 不主动调用网络或 AI。
-
-## 八、上下文与产物契约
+## 3. 分层架构
 
 ```text
-AGENTS.md                         项目指令入口（项目拥有）
-项目架构与设计文档                 项目自行维护和配置
-.instar-quality.json               路径映射与质量工具配置
-reports/                           验证、Review、CI 和设计检查报告
-logs/                              执行日志、Hook 审计和会话摘要
+┌─────────────────────────────────────────────────────────────┐
+│ Codex / 用户                                                 │
+│ 自然语言、命令、人工审批、授权                                    │
+└───────────────┬─────────────────────────────────────────────┘
+                │ Skills / Commands / Hooks
+┌───────────────▼─────────────────────────────────────────────┐
+│ 编排层                                                       │
+│ workflow-controller  quality-controller  discovery-controller │
+│ CI orchestration     status/visualize     evaluation/usage     │
+└───────┬──────────────────────┬──────────────────────┬────────┘
+        │                      │                      │
+┌───────▼────────┐    ┌────────▼────────┐    ┌────────▼────────┐
+│ 文档引擎        │    │ 共享安全/证据层  │    │ 项目执行环境      │
+│ openspec-min   │    │ canonical/hash  │    │ Git              │
+│ diff / parser  │    │ redaction       │    │ project commands │
+│ schema / lock  │    │ profile contract│    │ reports/ logs/   │
+└───────┬────────┘    │ token/usage     │    │ gh / CI          │
+        │             └────────┬────────┘    └────────┬────────┘
+        └──────────────────────┴──────────────────────┘
+                               │
+                   目标项目文件系统与审批记录
 ```
 
-上下文文件可以留在项目已有位置；InStar 优先读取配置路径，其次发现常用文档路径，并兼容旧 `.context/`。会话状态与经验默认不持久化到项目规范文件；需要时可显式设置 `context.sessionState`、`context.lessons`，仅记录本次提供的内容。
+### 3.1 Skills 层
 
-报告绑定 Git HEAD、base 分支、工作区、暂存区和项目上下文指纹。代码或上下文变化后，旧报告自动失效。
+Skill 是给模型的操作协议：读取什么、何时调用控制器、如何评审、如何报告。它们不包含业务工具实现，也不能替代控制器门禁。Skill 通过 `trace-skill` 记录开始/结束；完成 trace 是 UI 设计、实现/验证时序等门禁的输入之一，但仍是代理自报证据。
 
-## 九、安全与 GitHub 边界
+### 3.2 控制器层
 
-插件运行在 `workspace-write` 沙盒中，禁止修改 `~/.ssh`、`~/.aws`、`.env.production`、SSO 配置和生产密钥。
+- `workflow-controller`：change 状态、阶段、审批、人工反馈、任务证据、Reviewer/Skill trace、源码快照、归档。
+- `quality-controller`：配置解析、snapshot、验证命令、Review、doctor、提交/PR 检查和 CI 编排。
+- `discovery-controller`：源码清单、上下文哈希、证据校验、预览/捕获、基线更新和事务。
 
-CI 允许功能分支推送、Pull Request 创建、CI 状态读取和 Review 报告上传；禁止推送主分支、Force Push、自动合并和生产部署。认证由 GitHub/宿主环境负责，插件不保存凭据。
+### 3.3 文档引擎
 
-发现密钥泄露时，CI 直接返回 BLOCK。
+`openspec-min` 是一个独立 npm workspace，构建为 `runtime/openspec-min/`。它只处理规划文档：
 
-## 十、发布和验证
+- Markdown 解析、代码围栏屏蔽、需求/场景识别。
+- ADDED/MODIFIED/REMOVED/RENAMED 合并与冲突拒绝。
+- 五个固定 API 和规划根目录布局。
+- 排他锁和事务快照，不执行应用代码。
 
-维护者使用：
+### 3.4 共享模块
 
-```sh
-npm ci
-npm test
-npm run release
-npm run test:release
-```
+| 模块 | 职责 |
+| --- | --- |
+| `canonical.mjs` | 稳定序列化哈希、文件流式 SHA-256、大小限制 |
+| `profile-contract.mjs` | 固定 `commit`/`implementation`/`full` 与报告名 |
+| `redaction.mjs` | 报告写入前的常见秘密脱敏与长度边界 |
+| `bounded-input.mjs` | CLI JSON/stdin 8 MiB 上限 |
+| `token-sources.mjs` | 设计 Token 路径校验与发现 |
+| `agent-config.mjs` | 项目 TOML Agent 注册的安全合并 |
+| `usage-telemetry.mjs` | Codex session JSONL 的 Token/API 读取 |
 
-验证覆盖 Skill、资源链接、清单、Hook、CLI、运行时、发布包、工作流初始化、失败路径和安全边界。
+## 4. 关键数据流
 
-完整交付闭环为：
+### 4.1 受控工作流
 
 ```text
-需求 → PRD → Spec → technical-design.md + tasks.md 实施计划评审/授权 → 代码实现
-→ npm 本地验证 → AI Review → 功能分支推送
-→ Pull Request → CI 检查 → 审计归档
+Skill 读取 state/context
+  → 人类或 Skill 生成文档
+  → controller 写入规划目录（锁 + 事务）
+  → pendingReview.hash 绑定当前内容
+  → 人类提供 reviewHash + decision
+  → 下一阶段；任何文档/源码变化使旧审批失效
 ```
 
-InStar 面向小团队的开发质量工作流，不提供组织身份治理、签名策略分发或集中审计服务。GitHub/`gh` 负责认证和仓库权限，CI 与分支保护负责共享合并门禁；InStar 负责执行本地检查、汇总证据和提示用户授权外部操作。
+状态保存在 `planning/workflows/<changeId>.json`；每次成功变更追加 `.workflow/traces/<changeId>.jsonl`，同时写入 `.workflow/traces.jsonl` 兼容聚合文件；完成后的状态副本写入 `planning/archive/<changeId>/workflow.json`。
 
-主分支合并和生产部署由人工及组织级 CI/分支保护完成。
+### 4.2 质量验证
+
+```text
+snapshot → 运行项目 profile 命令
+  → 每个 check 生成/绑定 artifact
+  → 报告写入 reports/engineering-verify-<profile>.json
+  → workflow 校验报告 id、configHash、snapshot、checkDefinitions、artifactHash
+  → 质量检查与 Review 绑定最终 sourceHash
+```
+
+控制器只保存命令摘要、退出码、耗时、输出哈希和 artifact 位置，不持久化完整命令参数和原始输出，避免秘密扩散。
+
+### 4.3 源码发现
+
+```text
+context（只读清单 + baseline + instruction）
+  → 代理阅读源码/测试
+  → capture preview（校验证据行、摘录、reviewedFiles）
+  → capture 应用（事务写入 planning/specs + discovery report）
+```
+
+清单是覆盖范围提示，不是语义证明。超过预算时显式失败或要求缩小 scope。
+
+### 4.4 PR/CI
+
+```text
+full gate + quality-gate + provenance
+  → 生成 reports/pr-body.md
+  → 用户 --confirm 后发布功能分支/PR
+  → 检查 PR head/base 与提交 SHA
+  → 读取 required checks 与失败 run/job
+  → 状态 PENDING/PASS/BLOCK；不无限轮询
+```
+
+## 5. 状态与存储
+
+| 路径 | 所有者 | 作用 |
+| --- | --- | --- |
+| `.instar.json` | 目标项目 | 初始化版本、安装 `stack` 与 managed 文件记录 |
+| `.instar-quality.json` | 目标项目 | 质量命令、上下文、CI 配置 |
+| `AGENTS.md` | 目标项目 | 项目规则；初始化仅追加受控标记块 |
+| `.codex/config.toml` 与 `.codex/agents/` | 目标项目 | 项目级 Reviewer 注册与配置 |
+| `planning/specs/` | 文档引擎 | 基线 Spec |
+| `planning/changes/<id>/` | 文档引擎 | proposal、delta specs、设计、任务 |
+| `planning/workflows/` | 工作流控制器 | change 状态 |
+| `planning/archive/` | 文档引擎 | 已归档 change 和状态 |
+| `docs/prd/` | 工作流控制器 | PRD 文件 |
+| `reports/`、`logs/` | 各控制器 | 验证、Review、CI、语义评测、会话审计 |
+| `.workflow/` | 控制器 | 锁、journal、事务快照、trace、usage |
+
+目标项目是唯一业务产物存放处；插件安装目录不能被当作项目根目录。
+
+## 6. 并发、事务与恢复
+
+- 工作流和发现操作使用 `.workflow/controller.lock` 排他锁。
+- 质量操作使用 `logs/.quality.lock` 排他锁。
+- 文档引擎自身使用 `planning/.lock`。
+- 工作流写入前把 `planning/` 与 `docs/prd/` 备份到 `.workflow/transactions/<uuid>/before`，并通过 `.workflow/pending.json` 记录未完成事务。
+- 普通异常尝试回滚；进程崩溃、断电和外部编辑器并发写入不承诺原子恢复。
+- 恢复必须核对 transactionId、reason 和锁 PID；不得删除活跃进程的锁。
+
+## 7. 构建与发布
+
+```text
+src/*.mjs ──npm run build──► runtime/*.mjs
+src/openspec-min/*.ts ─────► runtime/openspec-min/*.js + 依赖
+skills/templates/... ──────► runtime assets / release
+release.mjs ──────────────► release/plugins/instar + marketplace.json
+```
+
+`npm test` 先构建，再执行 `scripts/check.mjs` 和测试；`npm run release` 还会复制发布包并执行隔离搬迁 smoke test。`release/` 不应回写到源码。
+
+## 8. 安全与信任边界
+
+- 文件操作限制在目标项目根目录内，拒绝符号链接和路径穿越。
+- 质量命令对 POSIX 和 Windows 原生可执行文件使用直接 `spawn`；Windows `.cmd`/`.bat` 经受控 `cmd.exe` 包装并拒绝 shell 元字符。命令参数不持久化；敏感环境变量会被过滤；可选 allowlist 限制可执行文件。
+- 输入 JSON、报告、artifact 和快照有大小/数量上限。
+- 报告持久化前进行常见 secret redaction，但不是完整 DLP。
+- Hook 是本机辅助门禁，不是不可绕过的安全边界；团队门禁应放在 CI/分支保护。
+- Reviewer trace、审批记录和 provenance 是本地可编辑状态，不提供身份认证或加密证明。
+
+## 9. 设计取舍
+
+| 取舍 | 原因 | 代价 |
+| --- | --- | --- |
+| 固定三个 profile | 统一门禁命名，减少 DSL 扩散 | 不支持任意 profile 继承 |
+| 报告与 artifact 强绑定 | 防止复用旧 PASS、替换证据 | 报告变多，旧严格报告会失效 |
+| Git + 文件指纹 | 可审计、可解释、无需外部服务 | 不防恶意本地篡改，不证明用户身份 |
+| 事务快照 | 控制器错误可恢复 | 备份可能包含敏感规划内容 |
+| Skill 自报 trace | 可观察模型实际流程 | 不是密码学执行证明 |
+| 项目自有命令 | 跨语言、离线、可移植 | 项目必须自己安装和维护工具 |

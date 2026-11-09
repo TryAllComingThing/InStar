@@ -33,3 +33,45 @@ export function mergeAgentRegistrations(existingText, desired) {
   parseProjectAgentConfig(text || '');
   return { text, registered, added: additions.length, conflicts };
 }
+
+function removeAgentTable(text, name) {
+  const lines = text.split('\n');
+  const header = new RegExp(`^\\[agents\\.${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\]\\s*(?:#.*)?$`);
+  const start = lines.findIndex(line => header.test(line));
+  if (start < 0) return text;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index++) {
+    if (/^\s*\[/.test(lines[index])) { end = index; break; }
+  }
+  const before = lines.slice(0, start);
+  const after = lines.slice(end);
+  while (before.length && !before[before.length - 1].trim()) before.pop();
+  while (after.length && !after[0].trim()) after.shift();
+  if (before.length && after.length) before.push('');
+  return `${[...before, ...after].join('\n')}${text.endsWith('\n') ? '\n' : ''}`;
+}
+
+export function removeAgentRegistrations(existingText, roles, expected = {}) {
+  const parsed = parseProjectAgentConfig(existingText || '');
+  const current = parsed.agents || {};
+  const removed = [], conflicts = [];
+  let text = existingText || '';
+  for (const name of roles) {
+    const currentRole = current[name];
+    if (currentRole === undefined) continue;
+    const expectedFile = expected[name] || `agents/${name}.toml`;
+    if (currentRole?.config_file !== expectedFile) {
+      conflicts.push({ role: name, existing: currentRole?.config_file || null, expected: expectedFile });
+      continue;
+    }
+    const next = removeAgentTable(text, name);
+    if (next === text) {
+      conflicts.push({ role: name, existing: currentRole?.config_file || null, expected: expectedFile, reason: 'Registration uses a TOML layout that cannot be removed safely; remove it manually' });
+      continue;
+    }
+    text = next;
+    removed.push(name);
+  }
+  parseProjectAgentConfig(text || '');
+  return { text, removed, conflicts };
+}

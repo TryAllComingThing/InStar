@@ -1,0 +1,11 @@
+{
+  "source": "OpenSpec explore workflow module snapshot",
+  "upstreamRepository": "https://github.com/Fission-AI/OpenSpec",
+  "upstreamPath": "src/core/templates/workflows/explore.ts",
+  "upstreamUrl": "https://github.com/Fission-AI/OpenSpec/blob/main/src/core/templates/workflows/explore.ts",
+  "observedHead": "9111a7654d7800391459431fff4eaf66e33a3d2e",
+  "retrievedAt": "2026-10-09",
+  "retrievalNote": "The commit-pinned download timed out; observedHead records the upstream HEAD seen during retrieval, while snapshotSha256 identifies the exact content.",
+  "license": "MIT",
+  "snapshotSha256": "41f98bbf9e139d270d0e7bf4364feff264680ca253b32bf11032db4b12c2117d"
+}

@@ -1,6 +1,7 @@
 ---
 name: write-a-prd
-description: Draft or revise a product PRD with user outcomes, scope, system behavior and acceptance criteria before specification authoring across frontend, backend and full-stack changes.
+description: Draft or revise a product PRD with user outcomes, scope, system behavior and acceptance criteria before specification authoring across frontend, backend and full-stack changes. Use for PRD creation or revision rounds; do not use for Spec, design, implementation, or source-only baseline discovery. 适用于编写 PRD、修订 PRD 和整理产品需求。
+compatibility: Requires the full InStar plugin package; the controller protocol resolves from the installed plugin root.
 ---
 
 Read the request, available product context, and relevant existing requirements. Separate confirmed decisions, assumptions, and unresolved questions. Ask only for missing decisions that materially affect scope or acceptance; do not ask users to repeat available facts.

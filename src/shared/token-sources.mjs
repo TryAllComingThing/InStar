@@ -1,10 +1,13 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
-export const tokenCandidates = [
+const tokenCandidates = [
   'design-tokens.json', 'tokens.json', 'tokens.css', 'src/tokens.css',
   'src/styles/tokens.css', 'src/styles/design-tokens.css',
-  'src/design-system/tokens.css', 'styles/tokens.css'
+  'src/design-system/tokens.css', 'styles/tokens.css',
+  'design-system/tokens.css', 'frontend/src/styles/tokens.css',
+  'frontend/src/styles/design-tokens.css', 'frontend/src/design-system/tokens.css',
+  'frontend/design-system/tokens.css'
 ];
 
 function normalizeRelative(value) {
@@ -13,7 +16,10 @@ function normalizeRelative(value) {
   }
   const parts = value.split(/[\\/]/).filter(part => part && part !== '.');
   if (!parts.length) throw Error('Token source path is empty');
-  return parts.join('/');
+  const relative=parts.join('/');
+  if(/(^|\/)(\.ssh|\.aws)(\/|$)|(^|\/)\.env(?:\.|$)/.test(relative))throw Error('Token source must not be a sensitive path');
+  if(/(^|\/)(\.git|node_modules|\.instar|reports|logs|planning|dist|build|coverage|\.next|\.nuxt|vendor)(\/|$)/.test(relative))throw Error('Token source must not be a generated or managed path');
+  return relative;
 }
 
 async function inspect(root, relative) {

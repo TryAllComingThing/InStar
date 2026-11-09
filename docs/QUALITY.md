@@ -1,57 +1,25 @@
-# InStar v2.4 质量编排协议
+# 质量、证据与安全
 
-InStar 将需求/Spec 文档引擎、项目上下文治理和质量/交付编排分层。插件调用项目已有脚本和外部工具，不实现 ESLint、测试、安全扫描或 CI 引擎。
+## 1. 设计目标
 
-## 项目配置
+InStar 的质量层解决三个问题：
 
-InStar 不创建前后端工程、不分发工程模板，也不提供项目质量配置初始化命令。目标项目应自行维护 `.instar-quality.json`、项目自己的验证命令、Git 仓库和所需报告目录。`initialize-project` 属于需求/Spec 工作流初始化，只准备工作流上下文和 Agent 配置。
+1. 用统一的配置映射项目已有的 lint、format、test、build、security、browser、accessibility、keyboard 和 dependencies 检查。
+2. 把检查结果、代码快照、配置和评审绑定成不可随意复用的证据。
+3. 在提交、PR 和受控工作流审批前阻止 stale、缺失或未通过的证据。
 
-## 质量动作
+它不实现扫描规则，也不保证一次 PASS 覆盖所有风险。项目必须自己安装工具、维护脚本和维护 `.instar-quality.json`。
 
-| Action | 作用 |
-| --- | --- |
-| `engineering-verify` | schema 3 项目按配置运行任意本地前后端检查；记录命令、结果与代码快照 |
-| `frontend-verify` | schema 1/2 兼容入口：commit profile 执行 lint/typecheck/dependencies；full profile 额外执行 test/build/vite-build，以及已配置的安全扫描、E2E 和视觉回归 |
-| `quality-gate` | 17 项 AI Review（含按风险适用的安全/性能维度）；已配置的 Vue 工具才执行，其他专项适配器可选 |
-| `ai-provenance` | 绑定 HEAD、sessionId、summary 和 aiGenerated |
-| `pre-commit-check` | 校验 commit profile 与 Review |
-| `pre-pr-check` | 只接受 full profile、最新 Review 和 provenance |
-| `ci` | 准备或执行功能分支推送、PR 和 CI 查询 |
-| `doctor` | 检查上下文、依赖、CI 和外部质量脚本 |
+## 2. `.instar-quality.json`
 
-Review 必须提供完整 17 项检查证据。外部工具由 `.instar-quality.json` 映射到项目脚本，脚本缺失或非零退出即 BLOCK。安全与性能维度按变更风险评估；不适用时记录 NA 和原因。后续可增加结构化 JSON 适配器，当前退出码仍是基础门禁。
+配置文件位于目标项目根目录，必须是 Git 仓库根目录。当前支持：
 
-## 上下文
+- `schemaVersion: 1/2`：旧版 npm 前端验证与 npm script 适配器。
+- `schemaVersion: 3`：直接执行可配置命令，支持前后端和非 npm 技术栈。
 
-项目规范由项目维护，InStar 负责发现、注入、校验新鲜度和汇总检查结果，不强制项目采用 FSD 或特定模块架构。插件 `standards/` 与 `design-system/` 是 Skill 可按任务引用的建议，不是项目事实源，也不自动成为 BLOCK 门禁。InStar 不安装主题实现、视觉快照或架构扫描器。规则来源职责如下：
+schema 1/2 仍可读取和执行，但 `doctor` 会返回 `quality-config-version` WARN，因为它们不能提供 schema 3 的严格命令证据。应在下一个大版本移除兼容支持前迁移到 schema 3；迁移后重新生成验证报告，不能复用旧证据。
 
-- `AGENTS.md`：适用目录内的工作指令；越靠近目标目录的规则越具体。
-- 架构与设计文档是项目所有的可选输入。通过 `.instar-quality.json` 的 `context.architecture`、`context.design` 配置；未配置或设为 `null` 时依次发现根目录、`docs/engineering/`、`docs/architecture/` 或 `docs/design/` 中的文档，最后兼容旧 `.context/ARCHITECTURE.md`、`.context/DESIGN.md`。
-- Design Token 来源也是可选项目输入，可通过 `context.tokens` 配置一个相对路径或路径数组；未配置时只发现常见 Token 文件名。Doctor 与 Spec 上下文共用安全解析：缺失、符号链接、目录或工作区外路径均不能作为有效来源，配置路径无效会阻断检查；没有配置且未发现时报告 INFO。`design-check` 按需读取并映射实际存在的 Token，不会强制引入 Token 体系。
-- 会话状态与教训默认关闭。需要持久化时，可将 `context.sessionState`、`context.lessons` 指向项目内的 Markdown 文件；SessionEnd 只追加本次明确提供的摘要/有证据教训，不生成占位文字。
-
-例如，项目已有自己的规范目录时只需映射路径，不必复制文档：
-
-```json
-{
-  "context": {
-    "architecture": "docs/architecture/system-overview.md",
-    "design": "product/design-guidelines.md",
-    "tokens": ["src/styles/tokens.css"],
-    "sessionState": null,
-    "lessons": null
-  }
-}
-```
-- `standards/`：项目可选的工程标准。技术方案和 Spec 阶段读取 Markdown、JSON、YAML 文档，并纳入上下文指纹。
-
-### 项目质量配置
-
-`.instar-quality.json` 是单仓库的质量工具配置，用于映射项目检查命令、基础分支、上下文文档、超时和 CI 检查。schema 1/2 使用 npm scripts；schema 3 可用直接命令适配多语言工具链。它不是组织策略服务，也不提供身份认证或组织级策略继承。配置属于项目本身，质量结果会绑定相关配置和规范文件的快照指纹。
-
-当前解析器兼容 `schemaVersion` 1、2 和 3；不会自动改写项目配置。1/2 为 npm 前端验证格式。3 必须定义 commit/full profiles 和 `tools.checks`，并可通过 `verification.inputs` 声明 Git 忽略但影响检查的本地输入。每条检查提供直接命令及参数；命令不经 shell 启动，不支持命令拼接。配置命令及参数由项目维护者负责审查，只使用项目已有本地工具。环境变量敏感项过滤是启发式规则，不是完整 allowlist 或安全隔离，宿主 OS 沙盒才是执行边界。旧配置可继续使用，未知/不完整版本会明确报错。
-
-示例（后端仓库可将 `go`、`pytest`、`mvn`、`cargo` 等项目已有命令配置在此；示例仅展示 Go）：
+### 2.1 schema 3 示例
 
 ```json
 {
@@ -59,72 +27,206 @@ Review 必须提供完整 17 项检查证据。外部工具由 `.instar-quality.
   "baseRef": "main",
   "verification": {
     "profiles": {
-      "commit": ["go-vet"],
-      "full": ["go-vet", "go-test", "migration-check"]
-    },
-    "inputs": [".local-generation/openapi.yaml"]
+      "commit": ["lint-check", "format-check", "typecheck-check", "test-check"],
+      "implementation": [
+        "lint-check",
+        "format-check",
+        "typecheck-check",
+        "test-check",
+        "browser-check"
+      ],
+      "full": ["security-check", "a11y-check", "keyboard-check"]
+    }
   },
   "tools": {
     "checks": {
-      "go-vet": { "command": "go", "args": ["vet", "./..."] },
-      "go-test": { "command": "go", "args": ["test", "./..."] },
-      "migration-check": { "command": "./scripts/check-migrations", "args": [], "timeoutMs": 180000 }
+      "lint-check": {"kind": "lint", "command": "npm", "args": ["run", "lint"]},
+      "format-check": {"kind": "format", "command": "npm", "args": ["run", "format:check"]},
+      "typecheck-check": {"kind": "typecheck", "command": "npm", "args": ["run", "typecheck"]},
+      "test-check": {"kind": "test", "command": "npm", "args": ["test"]},
+      "browser-check": {"kind": "browser", "command": "npm", "args": ["run", "test:browser"]},
+      "security-check": {"kind": "security", "command": "node", "args": ["scripts/security-check.mjs"]},
+      "a11y-check": {"kind": "accessibility", "command": "node", "args": ["scripts/a11y-check.mjs"]},
+      "keyboard-check": {"kind": "keyboard", "command": "node", "args": ["scripts/keyboard-check.mjs"]}
     }
+  },
+  "review": {"framework": "vue", "language": "typescript"},
+  "context": {
+    "architecture": "docs/engineering/ARCHITECTURE.md",
+    "design": "docs/design/DESIGN.md",
+    "designSystem": "design-system/DESIGN.md",
+    "tokens": ["src/styles/tokens.css"]
   }
 }
 ```
 
-项目可调用 `engineering-verify` Skill 或执行 `node <plugin>/bin/instar.mjs verify --project <repo> --profile full`。自定义 profile 的必需检查均失败即 BLOCK，且源码在验证期间改变也会 BLOCK。数据库迁移命令必须指向项目提供的 disposable/CI 数据库，不得连生产环境。后端仓库如需 PR 自动门禁，还需将真实 CI check 配置到分支保护；本地验证不能替代远端检查。
+示例中的 `typecheck-check` 是项目扩展检查；工作流最小必需集仍是 `lint`、`format`、`test`（UI 加 `browser`），见下表。
 
-`verification.inputs` 用于把 Git 忽略但会影响构建/测试的本地生成输入纳入源码快照；目录会递归纳入，拒绝符号链接、敏感路径以及超过 10,000 文件或 256 MiB 的输入。不要将密钥文件作为验证输入。未显式列出的 Git 忽略文件不在快照内。验证报告记录已通过的检查 ID 和“配置检查通过”的范围说明；PASS 不证明项目维护者选取的检查覆盖了所有风险。
+### 2.2 检查字段
 
-团队的 GitHub 身份、仓库权限和合并门禁由 GitHub/`gh`、CI 与分支保护提供；InStar 只要求外部提交/PR 操作有明确的用户授权，并编排、检查和汇总结果。普通团队无需配置组织公钥、签名策略或身份服务。
+每个 `tools.checks.<id>` 支持：
 
-`design-check` 在 UI 变更需要落地样式约束时读取项目设计文档、配置或发现的 Token 来源，以及经确认的高保真说明/参考；输出本次变更的 Style Constraints 和带来源的 Token 映射。插件内 `design-system/` 与主题说明仅供参考，不会覆盖项目规则，也不会作为项目 Token 定义。
+| 字段 | 要求 |
+| --- | --- |
+| `kind` | `lint`、`format`、`typecheck`、`test`、`build`、`security`、`browser`、`accessibility`、`keyboard`、`dependencies` |
+| `command` | 工作区相对或 PATH 中已有命令；不接受 shell 拼接 |
+| `args` | 字符串数组；总大小和单项大小有上限；不会持久化到报告 |
+| `cwd` | 可选工作区相对目录 |
+| `timeoutMs` | 1–600000 ms |
+| `artifact` | 可选；必须是 `reports/` 下的工作区相对路径 |
 
-`extract-design-md` 用于从已有前端实现整理完整的视觉设计说明，并按请求写入项目根目录 `DESIGN.md`。它保留人工章节和源码命名，区分可观察事实、设计解释与未确认内容，不修改应用代码。
+POSIX 和 Windows 原生可执行文件使用直接 `spawn`；Windows 的 `.cmd`/`.bat`（包括 `npm` 等 shim）需要经 `cmd.exe` 启动，控制器会逐项加引号并拒绝包含 `"`、`%`、`!`、CR/LF/NUL 的命令或参数。这是受控启动，不表示支持管道、重定向、变量展开或命令拼接。环境变量中的常见 Token、密码、DSN、GitHub/AWS/云凭据和注入相关变量会被过滤，但这不是完整的安全隔离；运行不可信项目应使用宿主沙箱或容器。
 
-### 项目级 Subagents
+可设置 `INSTAR_HOOK_ALLOWED_COMMANDS=npm,node` 对质量命令的可执行文件做 allowlist。设置后，未列出的可执行文件会返回 `BLOCK ECOMMANDNOTALLOWED`；按 basename 比较并忽略 Windows 的 `.exe`/`.cmd`/`.bat`/`.com` 后缀。还可设置 `INSTAR_HOOK_ALLOWED_CHECKS=lint,test,build`，只允许指定检查 ID 或 npm script；未列出的检查返回 `BLOCK ECHECKNOTALLOWED`。这些变量只能限制可执行文件和检查名，不能证明 npm script 或参数内容安全，也不能替代宿主沙箱与项目信任。
 
-`initialize-project` 会在用户明确初始化工作流时，将 architect、developer、ui-reviewer、code-reviewer、spec-reviewer、frontend-reviewer 六种角色配置安装到项目 `.codex/agents/`，并在 `.codex/config.toml` 注册。前四种角色另有 Markdown 角色契约；后两种的指令内嵌在 TOML。已有合法 TOML 会保留原文并只追加缺少的角色；同名角色指向其他配置时报告冲突，不覆盖。无效 TOML 不会被改写。Doctor 会报告已注册/缺失角色、配置解析错误和角色文件状态。Codex 只在项目受信任时加载项目级配置，因此初始化成功不等于宿主已启用这些角色。
+### 2.3 上下文与 CI 字段
 
-插件侧的工程参考遵循通用规则 + 按需扩展的组织方式：`standards/languages/` 按仓库实际语言选择；`standards/api/` 覆盖 HTTP API 设计与安全；`standards/database/` 覆盖数据建模、迁移和 PostgreSQL 注意事项。它们依据 ECC 的分层规则思路整理，并以语言官方资料、OpenAPI、IETF HTTP RFC 和 OWASP 指引作为外部参考；它们是可供 Skill 使用的建议，不替代项目约定或自动化工具。
+- `context.architecture`、`context.design`：项目已有规范路径。
+- `context.designSystem`：可选的项目设计系统 Markdown 清单（`DESIGN.md`、`README.md` 或 `index.md`）；未配置时按固定候选发现。已知 design-system 目录存在但没有清单时，只作为项目设计系统信号，不读取目录内容；此时 `doctor` 报 `WARN` 并提示配置 `context.designSystem` 或补充清单。
+- `context.tokens`：字符串或字符串数组；缺失、目录、符号链接或越界路径会报错。
+- `context.sessionState`、`context.lessons`：可选的 Markdown 会话/经验文件。
+- `ci.repo`、`ci.host`、`ci.remote`、`ci.base`、`ci.allowedHosts`、`ci.requiredChecks`：PR 发布和检查所需。
+- `qualityPolicy`：旧版可选强制检查覆盖与 waiver；`Q-07 evidence integrity` 不可豁免。
 
-规范冲突必须显式报告，不静默选择。缺少可选来源时沿用项目现有代码模式并说明未定义项。文档被截断时必须检查相关原文后再确定路径或约束。SessionEnd 始终写入 `logs/` 审计摘要；只有配置 `context.sessionState` 或 `context.lessons` 且本次提供了真实摘要/有证据教训时，才追加到项目文档。Session summary 不应包含密钥、内部凭据或未经审查的外部文本。
+## 3. 三个固定 profile
 
-Spec 阶段审查需求与显式架构规则是否冲突；技术方案阶段生成 `technical-design.md` 的 Architecture、Project Constraints 和 File Change Plan；实现前再次读取目标路径适用规范。项目长期设计文档不会被每次变更自动改写。
+命名固定为 `commit`、`implementation`、`full`，报告名固定：
 
-旧版 npm 项目可选择配置架构检查适配器：在 `.instar-quality.json` 设置 `tools.architecture` 为 `package.json` 中的 npm script 名称。schema 3 项目可将架构检查直接列入 `tools.checks` 和适用 profile。已配置的脚本必须成功，才可通过质量门禁；未配置时仅标记 INFO。InStar 不实现架构扫描规则。例如：
+```text
+reports/engineering-verify-<profile>.json
+```
+
+工作流要求：
+
+| Profile | 时序 | 必需 kind |
+| --- | --- | --- |
+| `implementation` | 实现审批前 | `lint`、`format`、`test`；UI 加 `browser` |
+| `full` | 实现审批后、验收前 | `security`；UI 加 `accessibility`、`keyboard` |
+| `commit` | 提交前 | 项目配置；工作流本身不要求验收 |
+
+`full` 是扩展门，不是整个 implementation 的重复超集。同一源码和检查定义已覆盖的 browser 不必在 full 原样重复；新增发布构建、跨浏览器或不同旅程时可以新增检查。
+
+## 4. 严格证据与 manual 证据
+
+### 4.1 schema 3 strict
+
+当项目存在 schema 3 配置并定义对应 profile 时：
+
+- 必须有稳定的 PASS/PASS_WITH_WAIVERS 报告；
+- `kind`、`profile`、报告 ID、时间戳必须匹配；
+- `snapshot.fingerprint` 必须匹配当前源码/配置/上下文；
+- `configHash`、`checkDefinitions` 必须匹配；
+- 每个 profile check 必须有唯一 `reports/` artifact 和 64 位 SHA-256；
+- 提交的 `checkId`、`kind`、`reportId`、`artifact` 必须与报告一致；
+- artifact 重新哈希必须一致，不能复用或替换；
+- 报告上限 8 MiB，artifact 上限 32 MiB。
+
+UI artifact 还必须是可解析且语义有效的 JSON：`browser` 声明 `kind:"browser"`、`status:"PASS"`、`tool:"playwright"`、`headless:true` 和非空 journeys，且每个 journey 为 `status:"PASS"`；`accessibility` 声明 `kind:"accessibility"`、`tool:"playwright-axe"`、`routesScanned>=1`，violations/incomplete 为空，并包含至少同等数量的无违规 `results`；`keyboard` 声明 `kind:"keyboard"` 和非空 journey（含 route、非空 steps、expectedFocus、actualFocus），且 PASS 要求 `actualFocus===expectedFocus`。`{status:"passed"}`、自相矛盾的键盘 PASS 或只截图不算通过。
+
+schema 3 strict 一旦被 workflow 接受，后续删除配置会阻断，防止降级规避。
+
+### 4.2 schema 1/2 manual
+
+旧版 npm 配置（schema 1/2）仍可用于 `frontend-verify` 命令，但受控工作流的严格证据不成立。此时检查必须显式标注：
 
 ```json
 {
-  "tools": {
-    "architecture": "quality:architecture"
-  }
+  "source": "manual",
+  "manualReason": "external evidence checked by the human reviewer",
+  "artifact": "reports/manual/test-result.json"
 }
 ```
 
-同时在项目 `package.json` 中定义该脚本，并让它调用项目选择的检查器。`doctor` 会报告脚本是否可运行。
+实现审批始终要求存在 `.instar-quality.json` 和当前快照的 `reports/quality-gate.json`；没有配置不会降级为“无需质量门”。schema 1/2 配置下的检查使用带原因的 manual 绑定。manual artifact 仍必须位于 `reports/`、是普通非空文件、每个检查唯一。manual 不表示工具未运行，只表示控制器没有 schema 3 报告可供强绑定；不能把它描述成自动化 PASS。strict 模式开始后删除或降级配置会阻断。
 
-旧版 npm 项目可选配置安全扫描适配器：在 `.instar-quality.json` 设置 `tools.security` 为 `package.json` 中已存在的扫描脚本名称。它只在 `frontend-verify full` 运行；缺失脚本、非零退出、超时或检查期间源码变化都会阻断该次验证。schema 3 项目将安全扫描作为命名检查放入 `tools.checks` 并列入 `verification.profiles.full`。命令参数会运行但不会写入报告；不要把密码、DSN 或带凭据 URL 放在命令参数中。没有配置时 `doctor` 仅报告 INFO，不能把人工 Review 描述为 SAST/SCA 已通过。例如：
+## 5. 验证执行语义
 
-```json
-{
-  "tools": {
-    "security": "quality:security"
-  }
-}
+`engineering-verify`/`frontend-verify` 会：
+
+1. 解析配置并检查 Git 根目录、baseRef、工作区、暂存区和上下文。
+2. 生成 snapshot；配置中的 `verification.inputs` 可加入被 Git 忽略但影响检查的输入。
+3. 按 profile 顺序运行检查；失败、超时或检查期间源码变化立即 BLOCK。超时会终止检查的整个进程组，不只终止直接子进程。
+4. 为 schema 3 检查生成 `reports/evidence/<profile>/<reportId>/<checkId>.json`，或在项目指定 `artifact` 时使用项目路径。项目指定的 artifact 会在命令启动前删除，命令必须重新生成它，避免旧 PASS 文件被复用。
+5. 保存报告；失败重跑会用 BLOCK 覆盖此前的 PASS，避免旧结果被误认为最新。
+
+报告记录命令、退出码、耗时、输出哈希、快照和检查定义，不持久化完整输出和参数。Vite 旧流程可能复核 build manifest；依赖检查使用锁文件和已安装依赖。受控文件读写会对最终文件使用 no-follow 句柄，并比较打开前后的父目录 `dev/ino` 与打开文件身份；发现替换会以 `EPATHCHANGED` 失败，写入内容和重命名只在验证通过后继续。Node 没有跨平台 `openat` 接口，无法把目录解析与最后一次系统调用合并为不可分割操作；针对恶意并发目录替换的绝对保证仍需宿主沙箱或容器。
+
+## 6. AI 质量 Review
+
+`quality-gate` 的新评审使用 `schemaVersion: 2`，必须提供：
+
+- `reviewer`；
+- 当前 snapshot 的 `fingerprint`；
+- `executionMode: subagent` 或 `main-agent-fallback`（fallback 还需原因）；
+- 本次适用检查的完整 `checks`；
+- 每项 `status`、`evidence` 和适用时的文件/行 `references`；
+- findings 与 unverified 项。
+
+通用检查：
+
+```text
+correctness, maintainability, architecture, security, performance,
+naming, types, component-boundaries, design, accessibility
 ```
 
-项目在 `package.json` 自行实现 `quality:security`，选择工具和范围；InStar 不安装扫描器、不上传源码、不提供扫描规则。脚本应在本地可用、离线执行并以非零退出表示扫描失败。若安全扫描是 CI 合并要求，还须将其真实 GitHub check 名称列入 `ci.requiredChecks`；`tools.security` 本身不声明远端必需检查。误报应在项目工具配置/策略中有审查记录，不能吞掉扫描错误以制造通过结果。
+`review.framework: vue` 会追加 `watch-cleanup`、`v-for-key`、响应性解构、props、computed 纯度、卸载清理、异步组件、懒加载路由等专项；`review.language: python|java|go` 会追加 API 契约、输入验证、授权、错误处理、数据一致性、事务、并发、可观测性等后端专项。
 
+Review 必须阅读实际变更与调用链；工具退出码不能替代审查。适用检查缺失、BLOCK、引用文件不存在或报告 stale 都会阻止门禁。Review 不是 architect/code-reviewer/security-reviewer/frontend-reviewer/ui-reviewer 的替代品。设计和 Review 证据应说明是否复用了已有组件、Token、布局和交互模式，以及偏离原因；控制器只能证明来源与指纹，不能替代这项判断。
 
-## GitHub 边界
+## 7. 快照与证据指纹
 
-`ci` 只允许功能分支，检查远端 URL、base、HEAD、PR head/base 和项目配置的 required checks；禁止主分支推送、force push、自动合并和生产部署。执行提交、推送或创建 PR 仍需用户明确授权；身份和仓库权限由 GitHub/`gh` 认证提供，InStar 不建立团队身份系统。发布报告前应脱敏并限制长度；真实 GitHub 联调需要项目配置仓库、认证和允许的 host。
+质量快照至少组合：
 
-Hook 使用官方 `PreToolUse` 与 `SessionEnd`，作为本地质量反馈辅助；它不是不可绕过的安全边界。团队共享门禁应由 CI 和分支保护执行。Hook 不主动联网调用 AI。
+- Git HEAD/base、索引、工作区和未跟踪源文件；
+- `.instar-quality.json`、`package.json`；
+- 实际读取的 `AGENTS.md`、架构/设计文档、Token 来源；
+- 项目策略/标准指纹；
+- 配置中的额外 verification inputs。
 
-## 清单和发布
+编排层再绑定：
 
-`.codex-plugin/plugin.json` 是唯一安装清单；根 `plugin.json` 是工程索引。Hook 路径为 `hooks/hooks.json`。设计 Skill 包括 `design-check`（单次变更样式约束）和 `extract-design-md`（完整项目视觉设计说明）。`runtime/` 与 `release/` 是构建产物，发布前必须通过 source/runtime/release 一致性检查，并确认 TOML 解析器随运行时打包。
+```text
+report id + report hash + config hash + check definition hash
++ artifact hash + source tree hash + review fingerprint
+```
+
+源码、上下文、配置或证据发生变化后，旧报告和审批不能复用。
+
+## 8. 浏览器与可访问性
+
+| 证据 | 作用 | 门禁 |
+| --- | --- | --- |
+| Headless Playwright 功能旅程 | 关键流程回归 | UI implementation 必需 |
+| Playwright + axe-core | 自动化可访问性扫描 | UI full 必需 |
+| 键盘/焦点旅程 | 可访问性人工或自动化补充 | 不能由 axe 自动替代 |
+| Headed Chrome | 人工视觉/交互检查 | 可选 |
+| Page-load smoke | 快速反馈 | 可选，不替代上两项 |
+
+`templates/quality/a11y-check.mjs` 对空路由、导航异常、登录重定向和 axe `incomplete` 都 fail-closed；它只覆盖 axe。`templates/quality/keyboard-check.mjs` 按 route、按键步骤和预期焦点选择器生成独立的 keyboard artifact，焦点不匹配或缺少 Playwright 时失败。浏览器、可访问性与键盘 artifact 必须分开。同一 source snapshot、配置和检查定义已覆盖的 browser 旅程不应在 full 原样重跑；复用证据仍必须绑定当前快照，源码变化后自动失效。`doctor` 会以 WARN 报告 implementation 与 full 重复配置的 browser check。
+
+## 9. 提交、PR 与 CI
+
+- `pre-commit-check`：检查暂存一致性、commit profile、最新 quality-gate 和报告。
+- `pre-pr-check`：要求 full gate、最新 Review、AI provenance 和当前快照。
+- `commit`：要求功能分支、授权、消息、暂存一致；默认不推主分支；`force:true` 只能豁免本地验证失败，不能绕过 PR。
+- `ci prepare`：不联网，生成可审阅的 PR 正文。
+- `ci publish`：要求 `--confirm`、合法 repo/host/remote/base、允许 host、匹配的 review/provenance；推送功能分支并创建或复用 PR。
+- `ci status`：只认精确 PR head/base；required check 缺失/重复/pending/失败分别为 BLOCK/PENDING/BLOCK；不无限轮询。
+
+认证由 `gh`、Git 和分支保护负责；InStar 不保存凭据。required check 名称必须与真实 GitHub check 一致。
+
+## 10. 证据信任边界
+
+- `trace-skill`、`trace-agent`、Review 报告、usage 和 workflow 审批状态都是本地可审计记录；哈希证明内容与绑定关系一致，不证明执行者身份或审批人身份。
+- `reviewerSessionId`、`executionMode`、Gateway/宿主日志能提高可追溯性，但仍可能由本地维护者修改。它们是流程证据，不是加密签名。
+- 团队级门禁必须由远端 CI、分支保护、artifact 存储和组织身份/权限系统承担；本地 Hook 只做辅助阻断。
+- 需要强保证时，应在 CI 对精确 commit SHA 重新运行检查，并验证远端 required check、 reviewer 身份和 artifact 来源。
+
+## 11. Hook 边界
+
+`hooks/hooks.json` 注册：
+
+- `PreToolUse`（当前 1800 秒超时）：只在可识别的独立 `git commit` 或 `gh pr create` 前调用质量检查；复杂 shell、管道、`cd`、`git -C`、`--repo` 等组合会拒绝。检查会执行 `.instar-quality.json` 配置的项目命令，因此属于项目代码执行，不是 OS 沙箱。
+- `SessionEnd`（当前 10 秒超时）：并发写会话审计和导入可用 Token/API usage，避免一个慢路径阻塞另一个；只有显式配置并提供真实摘要/经验时才更新项目上下文。宿主可能在超时后终止它，不能把耗时操作或唯一证据写入放在这里。
+
+项目必须先被 Codex 信任，项目级配置和 Hook 才会加载。需要额外限制 `PreToolUse` 执行的可执行文件时，可在宿主环境设置 `INSTAR_HOOK_ALLOWED_COMMANDS`。Hook 不主动联网调用模型。它是最佳努力的本地辅助门禁，不能替代远端 CI、分支保护或组织身份系统。

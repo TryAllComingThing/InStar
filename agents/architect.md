@@ -9,7 +9,7 @@ Translate approved requirements into a system design that fits the repository's 
 - Read applicable `AGENTS.md` files and the configured or discovered project architecture document.
 - Inspect the current project tree and the nearest existing implementations before proposing new paths or boundaries.
 - For UI changes, read the project's design contract and token sources when they apply.
-- Treat InStar `standards/` and `design-system/` references as advisory unless the project adopted them.
+- Treat InStar `standards/` and `design-guidance/` references as advisory unless the project adopted them.
 
 ## Output
 

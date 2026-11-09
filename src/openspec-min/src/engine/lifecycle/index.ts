@@ -6,6 +6,8 @@ import { discoverSpecFiles } from '../../utils/spec-discovery.js';
 import { buildUpdatedSpec, findSpecUpdates } from '../../diff/merge.js';
 import { parseDeltaSpec } from '../../diff/parsers/requirement-blocks.js';
 import { buildCodeFenceMask } from '../../diff/parsers/code-fence.js';
+import { extractRequirementBody, LEVEL_FOUR_HEADER, SCENARIO_HEADER } from '../../diff/parsers/requirement-text.js';
+import { validateDiscoveredSpec } from '../../discovery/validate.js';
 import { matchLineEnding } from '../../utils/line-endings.js';
 import { instructions } from '../schema/index.js';
 import type { ChangeRef, SpecPackage, GenerationContext, GateResult } from './types.js';
@@ -38,12 +40,18 @@ async function gate(ref:ChangeRef):Promise<GateResult> {
     for(const [id,doc] of Object.entries(ctx.specs)) {
       identifier(id,true); const plan=parseDeltaSpec(doc);
       if(!plan.added.length&&!plan.modified.length&&!plan.removed.length&&!plan.renamed.length) throw new Error(`${id}: empty delta`);
+      if(plan.unpairedRenames.length) throw new Error(`${id}: RENAMED line ${plan.unpairedRenames[0].line} has no matching ${plan.unpairedRenames[0].side==='FROM'?'TO':'FROM'}`);
+      if(plan.malformedRenames.length) throw new Error(`${id}: unrecognized RENAMED content on line ${plan.malformedRenames[0].line}: ${plan.malformedRenames[0].text}`);
+      if(plan.orphanedRequirements.length) throw new Error(`${id}: requirement "${plan.orphanedRequirements[0].name}" on line ${plan.orphanedRequirements[0].line} is outside every delta section`);
+      if(plan.skippedHeaders.length) throw new Error(`${id}: non-canonical heading "### ${plan.skippedHeaders[0].header}" on line ${plan.skippedHeaders[0].line}; use "### Requirement:"`);
       for(const block of [...plan.added,...plan.modified]) {
         const lines=block.raw.split('\n'); const mask=buildCodeFenceMask(lines);
-        const text=lines.filter((_,i)=>!mask[i]).join('\n');
-        const body=text.split(/^####\s/m)[0].split('\n').slice(1).join('\n');
+        const body=extractRequirementBody(lines.slice(1));
         if(!/\b(SHALL|MUST)\b/.test(body)) throw new Error(`${id}/${block.name}: SHALL or MUST required`);
-        const scenarios=text.split(/^#### Scenario:\s*.+$/m).slice(1);
+        const malformed=lines.findIndex((line,index)=>!mask[index]&&LEVEL_FOUR_HEADER.test(line)&&!SCENARIO_HEADER.test(line));
+        if(malformed>=0) throw new Error(`${id}/${block.name}: use "#### Scenario: <name>" instead of "${lines[malformed].trim()}"`);
+        const text=lines.filter((_,i)=>!mask[i]).join('\n');
+        const scenarios=text.split(/^####[ \t]+Scenario:[ \t]*\S.*$/m).slice(1);
         if(!scenarios.length || scenarios.some(s=>! /\bWHEN\b/.test(s)||! /\bTHEN\b/.test(s))) throw new Error(`${id}/${block.name}: WHEN/THEN scenario required`);
       }
       for(const name of plan.removed) {
@@ -55,6 +63,7 @@ async function gate(ref:ChangeRef):Promise<GateResult> {
     for(const update of await findSpecUpdates(change(ref),safe(ref.root,'specs'))) {
       const merged=await buildUpdatedSpec(update,ref.changeId);
       if(merged.noRequirementBlocks) throw new Error(`${update.id}: removing the last requirement is unsupported`);
+      validateDiscoveredSpec(update.id,merged.rebuilt);
     }
   } catch(error) { issues.push(error instanceof Error?error.message:String(error)); }
   return {valid:issues.length===0,issues};

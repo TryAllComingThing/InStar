@@ -2,6 +2,8 @@
 
 - Match test level to behavior: unit tests for isolated logic, integration tests for component boundaries and persistence, and end-to-end tests for critical user journeys.
 - Test observable behavior and important invariants rather than private implementation details.
+- For component tests, verify accessible semantics, user interactions, state changes, and important responsive behavior. Use realistic keyboard and pointer interactions; a snapshot alone is not a behavioral assertion.
+- For end-to-end and visual tests, cover user-critical flows and approved visual states. Keep fixtures stable, review screenshot diffs at the intended viewport and theme, and never update baselines automatically in pull request CI.
 - Include success, invalid input, authorization, empty, failure, and relevant concurrency cases.
 - Make tests deterministic and isolated; control clocks, randomness, network access, and external services explicitly.
 - Keep fixtures representative and minimal. Avoid real credentials and production data.

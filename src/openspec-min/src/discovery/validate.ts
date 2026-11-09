@@ -44,7 +44,7 @@ export function validateDiscoveredSpec(name: string, document: string) {
       throw new Error(`Exactly one ## ${section} section is required`);
     }
   }
-  const body = visible.split(/^## Requirements\s*$/m)[1].split(/^## /m)[0];
+  const body = visible.split(/^##[ \t]+Requirements[ \t]*$/m)[1].split(/^#{1,2}[ \t]+/m)[0];
   if (/^### (?!Requirement: )/m.test(body) || /^#### (?!Scenario: )/m.test(body)) {
     throw new Error('Use ### Requirement: and #### Scenario: headings');
   }

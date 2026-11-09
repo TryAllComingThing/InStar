@@ -1,6 +1,7 @@
 ---
 name: ci
 description: Push a verified feature branch to GitHub, create or update its PR, publish Review evidence and inspect CI for the exact reviewed commit, without pushing the default branch or deploying production.
+compatibility: Requires the full InStar plugin package; plugin-root documentation and sibling Skills resolve from the installed plugin root.
 ---
 
 # GitHub 交付编排
@@ -13,7 +14,7 @@ description: Push a verified feature branch to GitHub, create or update its PR, 
 
 允许质量 CLI、Git 功能分支提交/非强制推送、已有 gh 认证；宿主须允许配置的精确 GitHub/企业 GitHub 域名。只做编排，不管理凭据或 SSO。
 
-1. 将本次范围内改动暂存；检查工作树与暂存内容一致。需要提交时使用 action commit，提供 message、authorization 确认字段、aiGenerated。按项目 schema 运行完整的配置验证（schema 3 使用 engineering-verify；旧 Vue/npm 项目使用 frontend-verify）和 quality-gate。显式要求豁免时才设置 force:true 和 reason；豁免仅对应本次本地提交，不能通过 PR 门禁。authorization 是用户确认输入，不是身份凭证；GitHub 身份由 gh 登录态验证。
+1. 将本次范围内改动暂存；检查工作树与暂存内容一致。需要提交时使用 action commit，提供 message、authorization 确认字段、aiGenerated。按项目 schema 运行完整的配置验证（schema 3 使用 engineering-verify；旧版 npm/Vite 前端项目使用 frontend-verify）和 quality-gate。显式要求豁免时才设置 force:true 和 reason；豁免仅对应本次本地提交，不能通过 PR 门禁。authorization 是用户确认输入，不是身份凭证；GitHub 身份由 gh 登录态验证。
 2. 最终提交后重新运行配置的 full 验证、quality-gate，并记录 ai-provenance（aiGenerated、sessionId、summary）。报告绑定 HEAD/base/工作树/暂存区。不得把提交前报告直接用于提交后的 PR。
 3. action ci / phase prepare 生成可审阅的 reports/pr-body.md。检查标题、影响范围、会话摘要和报告是否可公开；这一步不联网。
 4. 用户明确授权后 phase publish，传 title、body 和 authorization 确认字段。适配器检查远端/默认分支/基线后推送精确 SHA 到功能分支，创建或复用相同 head/base 的 PR；AI 生成变更须有 ai-generated 标签。缺少仓库标签时报告问题，不擅自修改标签策略。实际身份与仓库权限由 GitHub/gh 处理。

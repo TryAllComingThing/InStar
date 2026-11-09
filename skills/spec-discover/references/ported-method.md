@@ -2,7 +2,7 @@
 
 Source: [Fission-AI/OpenSpec explore workflow](https://github.com/Fission-AI/OpenSpec/blob/main/src/core/templates/workflows/explore.ts),
 downloaded 2026-10-09 from the official raw endpoint. The unmodified source is
-retained as [upstream-explore.ts](upstream-explore.ts), SHA-256
+retained as [upstream-explore.ts](../assets/upstream-explore.ts), SHA-256
 `41f98bbf9e139d270d0e7bf4364feff264680ca253b32bf11032db4b12c2117d`.
 The upstream HEAD observed during retrieval was `9111a7654d7800391459431fff4eaf66e33a3d2e`;
 the commit-pinned download timed out, so the snapshot's content hash is the exact

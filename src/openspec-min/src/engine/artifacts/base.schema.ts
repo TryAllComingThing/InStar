@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { VALIDATION_MESSAGES } from './constants.js';
 
-export const ScenarioSchema = z.object({
+const ScenarioSchema = z.object({
   // Header text without `####`, the closing `#` run, and the `Scenario:`
   // prefix. Optional so objects built outside the parser still validate.
   name: z.string().optional(),

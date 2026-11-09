@@ -14,7 +14,10 @@ interface ActiveFence {
 }
 
 function getFenceMarker(line: string): ActiveFence | null {
-  const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+  // CommonMark only opens a fenced code block at up to three spaces of
+  // indentation. Treating arbitrary indentation as a fence let a four-space
+  // indented example hide real headings from every structure check.
+  const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
   if (!fenceMatch) {
     return null;
   }
@@ -26,7 +29,7 @@ function getFenceMarker(line: string): ActiveFence | null {
 }
 
 function isClosingFence(line: string, activeFence: ActiveFence): boolean {
-  const fenceMatch = line.match(/^\s*(`{3,}|~{3,})\s*$/);
+  const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
   return Boolean(
     fenceMatch &&
     fenceMatch[1][0] === activeFence.marker &&

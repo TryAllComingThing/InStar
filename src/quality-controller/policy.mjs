@@ -15,7 +15,7 @@ export function evaluateQualityPolicy(p,profile,checks,snapshot,clock=new Date()
  for(const entry of mandatory){
   const actual=checks.find(c=>c.id===entry.checkId);
   if(actual?.status==='PASS'){results.push({category:entry.category,checkId:entry.checkId,status:'PASS'});continue;}
-  const w=(p.waivers||[]).find(w=>w.category===entry.category&&w.checkId===entry.checkId&&w.scopeFingerprint===snapshot.head&&Date.parse(w.expiresAt)>clock.getTime());
+  const w=(p.waivers||[]).find(w=>w.category===entry.category&&w.checkId===entry.checkId&&w.scopeFingerprint===snapshot.fingerprint&&Date.parse(w.expiresAt)>clock.getTime());
   if(w){waivers.push({category:w.category,checkId:w.checkId,reason:w.reason,approvedBy:w.approvedBy,expiresAt:w.expiresAt,scopeFingerprint:w.scopeFingerprint,risk:w.risk,compensatingControl:w.compensatingControl,rawStatus:actual?.status||'NOT_RUN'});results.push({category:entry.category,checkId:entry.checkId,status:'WAIVED',rawStatus:actual?.status||'NOT_RUN'});}
   else results.push({category:entry.category,checkId:entry.checkId,status:actual?.status==='BLOCK'?'FAIL':'BLOCKED',rawStatus:actual?.status||'NOT_RUN'});
  }

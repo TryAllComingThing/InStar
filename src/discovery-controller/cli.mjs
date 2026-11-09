@@ -4,7 +4,9 @@ import {run} from './index.mjs';
 import {redactText} from '../shared/redaction.mjs';
 import {readBoundedFile,readBoundedStdin} from '../shared/bounded-input.mjs';
 
-export async function parseDiscoveryArgs(args,cwd=process.cwd()) {
+const usage='Usage: instar spec-discover [--project <path>] [--scope <path>]... [--input <request.json> [--preview]]';
+
+async function parseDiscoveryArgs(args,cwd=process.cwd()) {
   if (!args.length) return {action:'context',project:path.resolve(cwd)};
   if (args.length === 1 && !args[0].startsWith('--')) {
     let data = '';
@@ -35,6 +37,7 @@ export async function parseDiscoveryArgs(args,cwd=process.cwd()) {
 }
 
 export async function main(args=process.argv.slice(2)) {
+  if(args.includes('--help')||args.includes('-h')){console.log(usage);return;}
   try { console.log(JSON.stringify(await run(await parseDiscoveryArgs(args)),null,2)); }
   catch(error) { console.error(JSON.stringify({status:'BLOCK',error:redactText(error.message)})); process.exitCode=1; }
 }

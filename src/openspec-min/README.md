@@ -4,11 +4,11 @@
 
 ## 范围与移植结论
 
-目标清单中的 `src/engine`、`src/store`、`src/diff` 在原仓库并不存在，属于本包重新划分的边界。原版合并来自 `src/core/specs-apply.ts`，不是 CLI，也不是模型生成代码的功能。本包抽取其中 `buildUpdatedSpec`、解析器及相关辅助函数，保留新增、修改、删除、重命名、重复冲突、场景丢失保护和 Purpose 合并规则；删除终端输出和原来的文件写入、能力退役函数。上游原始来源与抽取边界记录在 [`spec-explore` 的 upstream 说明](../../skills/spec-explore/references/upstream.md)。
+目标清单中的 `src/engine`、`src/store`、`src/diff` 在原仓库并不存在，属于本包重新划分的边界。原版合并来自 `src/core/specs-apply.ts`，不是 CLI，也不是模型生成代码的功能。本包抽取其中 `buildUpdatedSpec`、解析器及相关辅助函数，保留新增、修改、删除、重命名、重复冲突、场景丢失保护和 Purpose 合并规则；删除终端输出和原来的文件写入、能力退役函数。上游原始来源与抽取边界记录在 [`spec-explore` 的 upstream 说明](../../skills/spec-explore/assets/upstream.md)。
 
 原版整个归档实现包含交互和复杂存储逻辑，因此本包重新实现单根目录的创建与归档。不能将整个生命周期称作“100% 原版”。空能力退役目前拒绝，不能删除最后一个 requirement 后直接归档。
 
-本目录为独立交付包。原仓库仅作移植对照，未原地删除。包内没有 CLI、终端询问、代码执行器、代码扫描、视图、多存储选择、外置 explore 指令或模型服务依赖。只保留实际使用的 utils，不整体复制原 utils 目录。`artifact-templates/` 保留四份工件 Markdown 模板；固定流水线在 `src/engine/schema/`，验证数据结构位于 `src/engine/artifacts/`。
+本目录为独立交付包。原仓库仅作移植对照，未原地删除。包内没有 CLI、终端询问、代码执行器、代码扫描、视图、多存储选择、外置 explore 指令或模型服务依赖。只保留实际使用的 utils，不整体复制原 utils 目录。`artifact-templates/` 保留 proposal、spec、technical-design、tasks 四份工件 Markdown 模板；固定流水线在 `src/engine/schema/`，验证数据结构位于 `src/engine/artifacts/`。
 
 ## 使用
 

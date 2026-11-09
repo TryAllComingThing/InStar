@@ -1,6 +1,6 @@
 // Verify the actual release in a relocated directory, without installing dependencies.
 import assert from 'node:assert/strict';
-import {mkdtemp,cp,mkdir,rm,readFile,writeFile,readdir,access,lstat,readlink} from 'node:fs/promises';
+import {mkdtemp,cp,mkdir,rm,readFile,writeFile,readdir,access,lstat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -9,8 +9,8 @@ const source=fileURLToPath(new URL('../release/',import.meta.url));
 const sourceRoot=fileURLToPath(new URL('../',import.meta.url));
 async function sameTree(left,right,label){
  const ls=await lstat(left),rs=await lstat(right);
- assert.equal(rs.isSymbolicLink(),ls.isSymbolicLink(),`${label}: entry type drift`);
- if(ls.isSymbolicLink()){assert.equal(await readlink(right),await readlink(left),`${label}: link drift`);return;}
+ assert(!ls.isSymbolicLink(),`${label}: source symlink is not allowed`);
+ assert(!rs.isSymbolicLink(),`${label}: packaged symlink is not allowed`);
  if(ls.isFile()){assert(rs.isFile(),`${label}: packaged entry is not a file`);assert.deepEqual(await readFile(right),await readFile(left),`${label}: content drift`);return;}
  assert(ls.isDirectory(),`${label}: unsupported source entry`);assert(rs.isDirectory(),`${label}: packaged entry is not a directory`);
  const a=(await readdir(left,{withFileTypes:true})).filter(e=>e.name!=='.DS_Store').sort((x,y)=>x.name.localeCompare(y.name));
@@ -28,12 +28,15 @@ try {
  assert.equal(entry.source.source,'local');assert.equal(entry.source.path,'./plugins/instar');
  const plugin=path.join(temp,'plugin'),project=path.join(temp,'project');
  await cp(path.resolve(source,entry.source.path),plugin,{recursive:true});await mkdir(project);
- for(const name of ['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','agents','templates','standards','design-system','docs','.codex-plugin','hooks','commands','assets','logs','bin'])await sameTree(path.join(sourceRoot,name),path.join(plugin,name),`release/${name}`);
+ for(const name of ['LICENSE','THIRD-PARTY-NOTICES.md','README.md','runtime','skills','agents','templates','standards','design-guidance','docs','.codex-plugin','hooks','commands','bin'])await sameTree(path.join(sourceRoot,name),path.join(plugin,name),`release/${name}`);
  const manifest=JSON.parse(await readFile(path.join(plugin,'.codex-plugin/plugin.json'),'utf8'));
  assert.equal(manifest.name,'instar');
- await assert.rejects(access(path.join(plugin,'assets/templates')),{code:'ENOENT'});
+ await assert.rejects(access(path.join(plugin,'plugin.json')),{code:'ENOENT'});
+ await assert.rejects(access(path.join(plugin,'assets')),{code:'ENOENT'});
+ await assert.rejects(access(path.join(plugin,'logs')),{code:'ENOENT'});
  assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,21);
- for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','agents/architect.md','agents/developer.md','agents/ui-reviewer.md','agents/code-reviewer.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
+ for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','agents/architect.md','agents/developer.md','agents/ui-reviewer.md','agents/code-reviewer.md','agents/security-reviewer.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/shared/usage-telemetry.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','technical-design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
+ await assert.rejects(access(path.join(plugin,'runtime/openspec-min/artifact-templates/design.md')),{code:'ENOENT'});
  function call(input){
   const r=spawnSync(process.execPath,[path.join(plugin,'runtime/workflow-controller/cli.mjs'),'-'],{cwd:temp,input:JSON.stringify({project,...input}),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
   assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);
@@ -50,12 +53,16 @@ try {
   evidence:{search:[{requirement:'Search items',path:'search.js',startLine:1,endLine:1,excerpt:'items.filter(item => item.includes(q))'}]},reviewedFiles:['search.js'],limitations:['Release fixture; no model inference tested']});
  assert.equal(discovery.status,'PASS');assert.match(await readFile(path.join(project,'planning/specs/search/spec.md'),'utf8'),/Discovery evidence/);
  await assert.rejects(access(path.join(project,'.instar.json')),{code:'ENOENT'});
- await access(path.join(plugin,'skills/spec-discover/references/upstream-explore.ts'));
+ await access(path.join(plugin,'skills/spec-discover/assets/upstream-explore.ts'));
+ for(const [manifestFile,snapshotFile] of [['skills/spec-explore/assets/provenance.json','skills/spec-explore/assets/upstream.md'],['skills/spec-discover/assets/provenance.json','skills/spec-discover/assets/upstream-explore.ts']]){
+  const provenance=JSON.parse(await readFile(path.join(plugin,manifestFile),'utf8'));
+  assert.match(provenance.snapshotSha256,/^[a-f0-9]{64}$/);assert.equal(provenance.license,'MIT');await access(path.join(plugin,snapshotFile));
+ }
  await access(path.join(plugin,'runtime/openspec-min/LICENSE'));
  assert.ok(call({action:'initialize'}).created.length);
  assert.deepEqual(call({action:'initialize'}).created,[]);
  const changeId='release-smoke';
- const state=call({action:'start',changeId,document:'# PRD\n发布包隔离测试：订单筛选。'});
+ const state=call({action:'start',changeId,ui:false,stack:'backend',document:'# PRD\n发布包隔离测试：订单筛选。'});
  call({action:'trace-skill',changeId,skill:'write-a-prd',event:'started',invocationId:'release-smoke-prd-1',stage:'prd',summary:'Drafting release smoke PRD'});
  const criteria=['problem-outcome','scope-boundaries','user-journey-states','measurable-acceptance','risks-dependencies'].map(id=>({id,status:'PASS',reason:'Covered in smoke fixture',evidence:['订单筛选']}));
  const evaluation=call({action:'evaluate-quality',changeId,expectedVersion:state.version,stage:'prd',evaluator:'release smoke fixture',criteria});
@@ -63,6 +70,8 @@ try {
  call({action:'trace-skill',changeId,skill:'write-a-prd',event:'completed',invocationId:'release-smoke-prd-1',stage:'prd',summary:'Smoke PRD drafted'});
  const pending=call({action:'submit-prd',changeId,expectedVersion:state.version});
  assert.equal(pending.pendingApproval,'prd');
+ const status=spawnSync(process.execPath,[path.join(plugin,'bin/instar.mjs'),'status','--project',project,'--change',changeId,'--json'],{cwd:temp,encoding:'utf8',env:{...process.env,NODE_PATH:''}});
+ assert.equal(status.status,0,status.stderr);assert.match(JSON.parse(status.stdout).markdown,/Pending approval: prd/);
  const events=(await readFile(path.join(project,'.workflow/traces.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
  assert.deepEqual(events.map(x=>x.type),['workflow-action','skill-invocation','quality-evaluation','skill-invocation','workflow-action']);
  assert.equal(call({action:'state',changeId}).version,pending.version);

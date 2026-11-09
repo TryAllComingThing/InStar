@@ -3,10 +3,10 @@
  *
  * The requirement reader used to be implemented twice — once for main specs
  * (`MarkdownParser.parseRequirements`) and once for change deltas
- * (`Validator.extractRequirementText` / `countScenarios`) — and the two drifted
- * apart. These helpers are the single source of truth for requirement-body
- * extraction, scenario counting, and `SHALL`/`MUST` detection in
- * `validate <change>`, `validate <spec>`, and `archive`.
+ * (`Validator.extractRequirementText`) — and the two drifted apart. These
+ * helpers are the single source of truth for requirement-body extraction and
+ * `SHALL`/`MUST` detection in `validate <change>`, `validate <spec>`, and
+ * `archive`.
  */
 
 // Re-exported so existing importers keep working; the single implementation
@@ -20,18 +20,20 @@ const METADATA_LINE = /^\*\*[^*]+\*\*:/;
 /** Any markdown header line — the boundary where a requirement body ends. */
 const HEADER_LINE = /^#{1,6}\s/;
 
-/**
- * A level-4 header. Deliberately matches ANY `####` header, not only
- * `#### Scenario:` — the spec path treats every level-4 child of a requirement
- * as a scenario, so the delta counter must too (parity). The delta/loss path
- * reuses this exact constant via `scenarioHeaderAt` in requirement-blocks.ts;
- * keep both paths on it rather than reintroducing a separate `Scenario:` regex.
- * A header alone is not yet a scenario on either path: see hasScenarioBody.
- */
-export const SCENARIO_HEADER = /^####\s+/;
+/** Any level-4 heading, used only to diagnose non-canonical children. */
+export const LEVEL_FOUR_HEADER = /^####[ \t]+/;
 
-/** A header at scenario level or above (`#` to `####`): where a scenario body ends. */
-const SCENARIO_BODY_END = /^#{1,4}\s/;
+/**
+ * The one canonical scenario heading. A `#### Edge case` is not a scenario;
+ * accepting it as one made gate, parser and discovery disagree about what the
+ * document meant. A header alone is not yet a scenario: see hasScenarioBody.
+ */
+export const SCENARIO_HEADER = /^####[ \t]+Scenario:[ \t]*\S/;
+
+/** Whether a header title (without its leading markers) is a scenario title. */
+export function isScenarioTitle(title: string): boolean {
+  return /^Scenario:[ \t]*\S/.test(title);
+}
 
 /**
  * Whether a scenario's body has content. The spec path
@@ -99,35 +101,4 @@ export function extractRequirementBody(bodyLines: string[]): string {
  */
 export function extractRequirementText(headerTitle: string, bodyLines: string[]): string {
   return extractRequirementBody(bodyLines) || headerTitle.trim();
-}
-
-/**
- * Count the real scenarios in a requirement block: `#### ` headers on non-fenced
- * lines whose body has content. A `#### Scenario:` that lives inside a fenced
- * example is not a real scenario and is not counted.
- */
-export function countScenarios(bodyLines: string[]): number {
-  return readScenarioBodies(bodyLines).filter(hasScenarioBody).length;
-}
-
-/** Count the `#### ` headers in a requirement block that have no body under them. */
-export function countEmptyScenarios(bodyLines: string[]): number {
-  return readScenarioBodies(bodyLines).filter((body) => !hasScenarioBody(body)).length;
-}
-
-/**
- * The body of each scenario in a requirement block. A body runs to the next
- * non-fenced header of level 4 or above, the boundary the spec path uses, so a
- * fenced block or a deeper `#####` header is part of it.
- */
-function readScenarioBodies(bodyLines: string[]): string[] {
-  const mask = buildCodeFenceMask(bodyLines);
-  const bodies: string[] = [];
-  for (let i = 0; i < bodyLines.length; i++) {
-    if (mask[i] || !SCENARIO_HEADER.test(bodyLines[i])) continue;
-    let end = i + 1;
-    while (end < bodyLines.length && (mask[end] || !SCENARIO_BODY_END.test(bodyLines[end]))) end++;
-    bodies.push(bodyLines.slice(i + 1, end).join('\n'));
-  }
-  return bodies;
 }

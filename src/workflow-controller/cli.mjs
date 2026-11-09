@@ -1,3 +1,6 @@
+// Official JSON entrypoint for workflow automation. It is executed directly by
+// docs/USAGE.md, test/cli.test.mjs and scripts/smoke-release.mjs; the absence of
+// a static import from another controller module is expected. Do not remove.
 import {run} from './index.mjs';
 import {readBoundedFile,readBoundedStdin} from '../shared/bounded-input.mjs';
 try {

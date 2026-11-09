@@ -8,12 +8,8 @@ description: >-
   the user wants to reverse-engineer a design system from an existing codebase, audit
   the visual language of a project, extract design tokens from source files, or
   understand the styling patterns in a frontend repo — even if they just say "what
-  does this app look like?" or "pull out the design from this code."
-allowed-tools:
-  - "Bash"
-  - "Read"
-  - "Write"
-  - "web_fetch"
+  does this app look like?" or "pull out the design from this code." 适用于从源码提取
+  设计系统、审查视觉语言、提取 Design Token 或梳理前端样式规范。
 ---
 
 # Extract Design System from Frontend Code
@@ -25,8 +21,8 @@ files, without needing to build or render the application.
 
 ## Why This Exists
 
-The `design-md` skill works from rendered HTML. But often you have a codebase
-and want to understand its design system before you can even run the app —
+Some design extraction workflows start from rendered HTML. Often you only have
+a codebase and want to understand its design system before you can even run the app —
 maybe dependencies are missing, the build is broken, or you just want a quick
 audit. This skill reads the source files themselves: stylesheets, component
 files, theme configs, and Tailwind setups. It's faster and works anywhere.
@@ -265,14 +261,21 @@ Synthesize the extraction into actionable prompts for Stitch:
 
 ### Phase 3: Write the DESIGN.md
 
-Assemble everything into the standard DESIGN.md format. Write to the project root DESIGN.md path, `./DESIGN.md` (create the file if it does not exist).
+Assemble everything into the standard DESIGN.md format. Write to the project root
+DESIGN.md path, `./DESIGN.md` (create the file if it does not exist).
+
+Before writing, read any existing `./DESIGN.md`. Preserve authored sections and
+project-specific notes unless the user explicitly asks for a full replacement.
+Summarize the intended changes and, when practical, show a diff before overwriting
+the file. Do not silently discard content that this source-only extraction cannot
+reproduce.
 
 > [!IMPORTANT]
-> You **MUST** include the YAML frontmatter at the top of the file with `name` and `colors` mapping, exactly as shown in the example at [examples/DESIGN.md](examples/DESIGN.md). This structured data is required for other skills to parse the design system.
+> You **MUST** include the YAML frontmatter at the top of the file with `name` and `colors` mapping, exactly as shown in the example at [assets/DESIGN.md](assets/DESIGN.md). This structured data is required for other skills to parse the design system.
 >
 > Failure to include this YAML block with at least the core color tokens is a failure to use this skill correctly.
 
-Use the format from the example at [examples/DESIGN.md](examples/DESIGN.md) as your template. The file must start with the YAML block, followed by the markdown sections:
+Use the format from the example at [assets/DESIGN.md](assets/DESIGN.md) as your template. The file must start with the YAML block, followed by the markdown sections:
 
 ```markdown
 # Design System

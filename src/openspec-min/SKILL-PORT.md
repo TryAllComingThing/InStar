@@ -6,14 +6,14 @@
 
 | 原版来源（相对 OpenSpec-main） | 移植落点（相对 openspec-min） | 方式 |
 |---|---|---|
-| `skills/openspec-propose/SKILL.md` | `src/skills/propose/SKILL.md` | 移植请求澄清、上下文约束、依赖重读、工件生成及输出检查流程；按 Spec 评审节点拆分原一键全工件流程 |
-| `schemas/spec-driven/schema.yaml` 的 proposal、specs instruction | `src/skills/propose/references/authoring.md` | 从原段落抽取，保留能力划分、行为契约、四种增量、完整 MODIFIED、长度规则、Purpose 和示例 |
-| 同文件 design instruction | `src/skills/design/references/authoring.md` | 抽取完整正文，调整可选设计为固定必选、Migration Plan 空场景说明 |
-| 同文件 tasks instruction | `src/skills/tasks/references/authoring.md` | 抽取完整正文及两个示例，仅适配当前 API 的严格 checkbox 格式与指纹规则 |
-| `skills/openspec-verify-change/SKILL.md` | `src/skills/verify/SKILL.md` | 移植选择、证据处理、报告、优先级和增量操作语义；将检查对象限定为文档 |
+| `skills/openspec-propose/SKILL.md` | `src/skills/openspec-min-propose/SKILL.md` | 移植请求澄清、上下文约束、依赖重读、工件生成及输出检查流程；按 Spec 评审节点拆分原一键全工件流程 |
+| `schemas/spec-driven/schema.yaml` 的 proposal、specs instruction | `src/skills/openspec-min-propose/references/authoring.md` | 从原段落抽取，保留能力划分、行为契约、四种增量、完整 MODIFIED、长度规则、Purpose 和示例 |
+| 同文件 design instruction | `src/skills/openspec-min-design/references/authoring.md` | 抽取完整正文，调整可选设计为固定必选、Migration Plan 空场景说明 |
+| 同文件 tasks instruction | `src/skills/openspec-min-tasks/references/authoring.md` | 抽取完整正文及两个示例，仅适配当前 API 的严格 checkbox 格式与指纹规则 |
+| `skills/openspec-verify-change/SKILL.md` | `src/skills/openspec-min-verify/SKILL.md` | 移植选择、证据处理、报告、优先级和增量操作语义；将检查对象限定为文档 |
 | `schemas/spec-driven/templates/*.md` | 各技能的 `assets/*.md` | 使用本包已净化的四份模板副本，使技能目录可以单独携带 |
 | `skills/openspec-explore/SKILL.md` | 插件根目录 `skills/spec-explore/SKILL.md` | 保留探索姿态、发现方法、图示、对话示例及捕获授权边界，替换 CLI 集成 |
-| 同上完整原版 | 插件根目录 `skills/spec-explore/references/upstream.md` | 逐字保存，仅供来源对照，不作为运行指令 |
+| 同上完整原版 | 插件根目录 `skills/spec-explore/assets/upstream.md` | 逐字保存，仅供来源对照，不作为运行指令 |
 
 原版并不存在独立的 design/tasks SKILL.md。因此这两个技能的入口包装是适配代码，核心写作指令来自原 schema，不能称为复制了不存在的技能文件。
 

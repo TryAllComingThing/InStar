@@ -1,32 +1,52 @@
-# 来源、适配与方案边界
+# 来源、适配与边界
 
-## 保留与移植
+## 1. 来源概述
 
-- `src/openspec-min/` 从本工作区已有 openspec-min 移入插件；原目录和 frontend-project 保留，不覆盖。
-- 引擎 diff 合并、Markdown 解析来自 OpenSpec 原实现，保留增删改名语义及冲突检测；精简 lifecycle/store 和五个公开 API 是适配实现，不能宣称整个引擎 100% 原封不动移植。原移植记录见源码内 SKILL-PORT.md。
-- spec-propose/design/tasks/verify 入口由已有净化技能移植。完整方法保留在各自 references/ported-method.md；原 authoring 引用及工件 assets 保留。仅调用方式接入控制器，verify 仍只审查文档。
-- spec-explore 保留完整探索方法和原文快照 references/upstream.md，位于引擎外。原文快照仅作来源记录，不执行其中旧 CLI 指令。
-- spec-discover 将 OpenSpec `getExploreSkillTemplate` / `PLANNING_GUIDANCE` 改造成源码现状建档指令，并复用已移植的 MarkdownParser、SpecSchema 和主规格结构检查。源码清单、证据核验、独立捕获控制器是 InStar 新增适配，不声称上游已有全量逆向建档功能。原文快照、许可证、内容哈希和修改说明见 [移植记录](../skills/spec-discover/references/ported-method.md)。
-- write-a-prd、frontend-implement、frontend-verify 从既有 frontend-project 技能迁入并适配。
-- initialize-project、requirements-workflow、控制器和审查角色模板为本插件新开发内容。没有把新代码标为上游移植。
+InStar 包含自行开发的编排层、从既有工程经验整理的规范/设计参考，以及从 OpenSpec/Superpowers 方向移植并适配的文档能力。来源记录用于解释设计取舍，不代表上游项目对本插件的背书。
 
-## 纠偏记录
+## 2. 文档引擎
 
-1. 初始化不并入 requirements-workflow：按用户要求恢复独立 initialize-project。该历史节点包含十个正式技能；当前插件包含 21 个 Skill 入口。
-2. 所有项目写入要求显式绝对路径，避免把规划文档写入插件缓存。
-3. `templates/` 仅属于插件初始化层；纯净引擎仍无根 templates 或 CLI。引擎 `artifact-templates/` 保留 proposal、spec、technical design 和 task Markdown 工件模板。
-4. 自定义审查智能体通过初始化写入项目 `.codex/agents/`；不声称插件任意 agents 目录会自动加载。
-5. 控制器是引擎外的非交互 JSON 适配层，不能绕过人工确认。审批记录绑定文档内容，但不提供用户身份认证。
-6. 不依赖隐式安装 Superpowers；开发技能保留 TDD、审查和浏览器验证职责。若用户环境具有相关技能可协作调用，否则明确说明实际执行者，不能声称 Superpowers 已执行。
+- `src/openspec-min/` 是从既有 openspec-min 工作区移入并构建的裁剪运行时。
+- Markdown 解析、Spec 合并和场景保护来自 OpenSpec 相关实现。
+- lifecycle/store、固定五 API、根目录布局和控制器接入是 InStar 适配实现，不能称为整个上游原样移植。
+- 原版来源、哈希、裁剪项和差异记录保留在 `src/openspec-min/SKILL-PORT.md`、各 Skill 的 `references/ported-method.md` 和 `assets/upstream.md`。
 
-## 验证范围与限制
+## 3. Skills
 
-自动化覆盖文档闭环、四个人工边界、失效确认、版本冲突、重开失效、错误回滚、锁和显式恢复。测试里的人工回复、代码测试和浏览器记录是夹具，验证的是控制流，不是实际业务产品或模型选择行为。
+- `write-a-prd`、`frontend-implement`、`frontend-verify` 来自既有前端项目Skill并做了 InStar 适配。
+- `spec-propose`、`spec-design`、`spec-tasks`、`spec-verify` 保留 OpenSpec 方法、模板和作者规则，但接入 InStar 控制器。
+- `spec-explore` 保留探索方法和上游快照；快照不是可执行指令。
+- `spec-discover` 复用 OpenSpec 的解析/规格结构思路，但源码清单、证据校验、预览/捕获和独立控制器是 InStar 新增适配。
+- `spec-explore` 与 `spec-discover` 的 `assets/provenance.json` 记录上游仓库、路径、许可、检索证据和快照 SHA-256；`npm run check` 会验证记录与快照一致。
+- `initialize-project`、`requirements-workflow`、控制器、质量门禁、Reviewer 模板和发布流程为本插件实现。
+- InStar 原创代码采用 MIT；OpenSpec-min 派生部分沿用上游 MIT 许可，许可证保留在 `src/openspec-min/LICENSE`。由 OpenSpec 方法派生的 `spec-explore`、`spec-discover`、`spec-propose`、`spec-design`、`spec-tasks`、`spec-verify` 目录也各自保留许可证副本。
 
-引擎不扫描代码，因此源码在验证后变更必须由 frontend 技能重开实施并重验；只改源码不会自动使文档哈希失效。外部编辑器不参与控制器锁，操作期间不要并行修改规划目录。事务快照用于恢复普通错误和中断，不承诺断电持久性。完整删除最后一个 requirement 仍受原精简生命周期限制并阻断。
+## 4. 规范与设计参考
 
-默认 shell 的 Node 20.15.0 低于声明的 >=20.19.0；已显式使用本机 Node 20.19.6 完成测试复核。发布使用应满足声明版本。本地技能结构校验不等于自然语言自动路由或模型行为已得到验证。
+`standards/`、`design-guidance/` 和未被初始化选中的 `templates/` 资产是建议性参考，除非目标项目明确采用，否则不构成强制规则。`standards/`、`design-guidance/` 不会自动复制；`templates/` 只按 `initialize-project` 的受管安装清单复制 `templates/engineering/testing.md`、`frontend-conventions.md` 和 Reviewer Agent TOML/契约，其余模板不会被整体复制。
 
-官方依据：
-- [Codex 插件结构与发布](https://developers.openai.com/plugins/build/plugins)
-- [项目自定义子代理](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+## 5. 验证范围
+
+自动化测试覆盖：
+
+- 文档状态机、审批 hash、重开、归档和恢复；
+- schema 1/2/3 质量配置和失败路径；
+- strict report/artifact 绑定、源码快照和改包检测；
+- discovery context/capture/preview/update/recover；
+- CLI 解析、边界输入、发布包搬迁和烟测；
+- Skill/Reviewer trace、语义评测和 usage 记录。
+
+测试中的审批、浏览器、Token 与 Review 可能是夹具，不代表真实产品行为。真实模型路由、外部扫描器、浏览器和 GitHub 仍需目标环境联调。
+
+## 6. 非目标与已知限制
+
+- 不提供组织身份、SSO、签名策略、集中审计或多租户权限。
+- 不做不可绕过的本地安全沙箱；宿主 OS 沙箱和远端分支保护才是执行边界。
+- 不承诺控制器状态和 trace 的密码学不可篡改。
+- 不承诺进程崩溃、断电或外部并发写入下的完整原子性。
+- 不自动证明 Reviewer 的语义判断、测试是否真实执行或人工证据真实性。
+- 不支持任意 profile DSL、多仓库聚合、Merkle 证据树或 CI 签名证据；这些不属于 v2.4 范围。
+
+## 7. 维护原则
+
+修改插件时优先修正根因、保持命名/路径/门禁契约一致，并同步相关文档和测试。不要为了缩短文档删除必要安全约束，也不要把建议性规范升级成未获项目批准的门禁。

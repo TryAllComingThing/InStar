@@ -190,9 +190,9 @@ test('standalone interrupted discovery can recover without initialization',async
 test('captured baseline works with existing workflow context and OpenSpec MODIFIED gate',async t=>{
   const project=await fixture(t);await run(await request(project));
   await workflow({action:'initialize',project});
-  const s=await workflow({action:'start',project,changeId:'new-search',document:'# PRD\nChange search behavior.'});
+  const s=await workflow({action:'start',project,changeId:'new-search',ui:false,stack:'backend',document:'# PRD\nChange search behavior.'});
   const pending=await workflow({action:'submit-prd',project,changeId:'new-search',expectedVersion:s.version});
-  await workflow({action:'approve',project,changeId:'new-search',expectedVersion:pending.version,reviewHash:pending.pendingReview.hash,confirmation:{text:'Approved fixture PRD',source:'test'}});
+  await workflow({action:'approve',project,changeId:'new-search',expectedVersion:pending.version,reviewHash:pending.pendingReview.hash,decision:'accept-record',confirmation:{text:'Approved fixture PRD',source:'test'}});
   const ctx=await workflow({action:'context',project,changeId:'new-search'});
   assert.match(ctx.context.baseline['orders/search'],/Discovery evidence/);
   const ref={root:path.join(project,'planning'),changeId:'modified-search'};

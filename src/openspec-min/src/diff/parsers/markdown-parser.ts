@@ -1,8 +1,9 @@
-import { Spec, Change, Requirement, Scenario, Delta, DeltaOperation } from '../../engine/artifacts/index.js';
-import { buildCodeFenceMask, extractRequirementText, hasScenarioBody } from './requirement-text.js';
+import type { Requirement, Scenario } from '../../engine/artifacts/base.schema.js';
+import type { Spec } from '../../engine/artifacts/spec.schema.js';
+import { buildCodeFenceMask, extractRequirementText, hasScenarioBody, isScenarioTitle } from './requirement-text.js';
 import { normalizeRequirementName, scenarioNameFromHeaderText } from './requirement-blocks.js';
 
-export interface Section {
+interface Section {
   level: number;
   title: string;
   content: string;
@@ -47,33 +48,6 @@ export class MarkdownParser {
       metadata: {
         version: '1.0.0',
         format: 'openspec',
-      },
-    };
-  }
-
-  parseChange(name: string): Change {
-    const sections = this.parseSections();
-    const why = this.findSection(sections, 'Why')?.content || '';
-    const whatChanges = this.findSection(sections, 'What Changes')?.content || '';
-    
-    if (!why) {
-      throw new Error('Change must have a Why section');
-    }
-    
-    if (!whatChanges) {
-      throw new Error('Change must have a What Changes section');
-    }
-
-    const deltas = this.parseDeltas(whatChanges);
-
-    return {
-      name,
-      why: why.trim(),
-      whatChanges: whatChanges.trim(),
-      deltas,
-      metadata: {
-        version: '1.0.0',
-        format: 'openspec-change',
       },
     };
   }
@@ -176,7 +150,7 @@ export class MarkdownParser {
     for (const scenarioSection of requirementSection.children) {
       // Store the raw text content of the scenario section. A header with no
       // body is not a scenario; the delta counter applies the same rule.
-      if (hasScenarioBody(scenarioSection.content)) {
+      if (isScenarioTitle(scenarioSection.title) && hasScenarioBody(scenarioSection.content)) {
         scenarios.push({
           name: scenarioNameFromHeaderText(scenarioSection.title),
           rawText: scenarioSection.content
@@ -187,39 +161,4 @@ export class MarkdownParser {
     return scenarios;
   }
 
-
-  protected parseDeltas(content: string): Delta[] {
-    const deltas: Delta[] = [];
-    const lines = content.split('\n');
-    
-    for (const line of lines) {
-      // Match both formats: **spec:** and **spec**:
-      const deltaMatch = line.match(/^\s*-\s*\*\*([^*:]+)(?::\*\*|\*\*:)\s*(.+)$/);
-      if (deltaMatch) {
-        const specName = deltaMatch[1].trim();
-        const description = deltaMatch[2].trim();
-        
-        let operation: DeltaOperation = 'MODIFIED';
-        const lowerDesc = description.toLowerCase();
-        
-        // Use word boundaries to avoid false matches (e.g., "address" matching "add")
-        // Check RENAMED first since it's more specific than patterns containing "new"
-        if (/\brename(s|d|ing)?\b/.test(lowerDesc) || /\brenamed\s+(to|from)\b/.test(lowerDesc)) {
-          operation = 'RENAMED';
-        } else if (/\badd(s|ed|ing)?\b/.test(lowerDesc) || /\bcreate(s|d|ing)?\b/.test(lowerDesc) || /\bnew\b/.test(lowerDesc)) {
-          operation = 'ADDED';
-        } else if (/\bremove(s|d|ing)?\b/.test(lowerDesc) || /\bdelete(s|d|ing)?\b/.test(lowerDesc)) {
-          operation = 'REMOVED';
-        }
-        
-        deltas.push({
-          spec: specName,
-          operation,
-          description,
-        });
-      }
-    }
-    
-    return deltas;
-  }
 }

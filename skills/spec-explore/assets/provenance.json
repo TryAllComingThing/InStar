@@ -1,0 +1,10 @@
+{
+  "source": "OpenSpec explore Skill snapshot",
+  "upstreamRepository": "https://github.com/Fission-AI/OpenSpec",
+  "upstreamPath": "skills/openspec-explore/SKILL.md",
+  "upstreamUrl": "https://github.com/Fission-AI/OpenSpec/blob/main/skills/openspec-explore/SKILL.md",
+  "retrievedAt": null,
+  "retrievalNote": "The exact retrieval date was not recorded for this snapshot; its content hash is the authoritative provenance identifier.",
+  "license": "MIT",
+  "snapshotSha256": "5bc03c568d0348c61b37f0647167252db5be1775ff5742ca9760b4e03ab9a5ac"
+}

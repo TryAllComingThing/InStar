@@ -1,6 +1,7 @@
 ---
 name: spec-explore
-description: Explore ideas, investigate problems, compare options, and clarify requirements as an external Superpowers thinking partner before or during an openspec-min change.
+description: Explore ideas, investigate problems, compare options, clarify requirements, and capture confirmed exploration as planning artifacts before or during an openspec-min change. Use for brainstorming, architecture tradeoffs, requirement discovery and option comparison; do not use for formal proposal/delta generation (use spec-propose), current-state source capture (use spec-discover), or implementation. 适用于方案探索、问题分析、需求澄清、技术选型讨论。
+compatibility: Requires the full InStar plugin package; sibling Skills and plugin-root references resolve from the installed plugin root.
 license: MIT
 metadata:
   author: openspec
@@ -19,17 +20,17 @@ That independent capture workflow needs no PRD and does not create an implementa
 
 ## Project architecture discovery
 
-For a tracked Spec workflow, first read the latest `state`, then request the workflow `context` while the change is in the Spec stage. Inspect `context.projectArchitecture.guidance`, `context.projectArchitecture.standards`, `context.instarReferences`, and `projectTree` before recommending module boundaries or file placement. The project context includes applicable `AGENTS.md` files, configured architecture/design paths from `.instar-quality.json`, or discovered documents in `docs/engineering/`, `docs/architecture/`, `docs/design/` and legacy `.context/`, plus supported documents under the project's `standards/` directory. These documents are optional; missing sources are reported as absent. Do not duplicate existing canonical documents, invent rules, or impose FSD, component layers, or framework conventions the project has not adopted. Treat `instarReferences` as optional guidance; user instructions and project-owned rules take precedence.
+For a tracked Spec workflow, first read the latest `state`, then request the workflow `context` while the change is in the Spec stage. If `context.emptyProject` or `context.explorationSkipped` is true, do not run architecture/reference exploration or require source citations; continue with the PRD, classification and Spec authoring gates. Otherwise inspect `context.projectArchitecture.guidance`, `context.projectArchitecture.standards`, `context.instarReferences`, and `projectTree` before recommending module boundaries or file placement. The project context includes applicable `AGENTS.md` files, configured architecture/design paths from `.instar-quality.json`, or discovered documents in `docs/engineering/`, `docs/architecture/`, `docs/design/` and legacy `.context/`, plus supported documents under the project's `standards/` directory. These documents are optional; missing sources are reported as absent. Do not duplicate existing canonical documents, invent rules, or impose FSD, component layers, or framework conventions the project has not adopted. Treat `instarReferences` as optional guidance; user instructions and project-owned rules take precedence.
 
 For architecture analysis, also consult the relevant plugin references in [InStar standards](../../standards/README.md), especially [architecture review principles](../../standards/architecture/overview.md). These are recommendations only; explicit user and project rules take precedence.
-When the request crosses language or domain boundaries, use only the matching pack from [language references](../../standards/languages/README.md), [API guidance](../../standards/api/DESIGN.md), or [database guidance](../../standards/database/DESIGN.md). Treat these as recommendations and record project-specific constraints separately.
+When the request crosses language or domain boundaries, use only the matching pack from [language references](../../standards/languages/README.md), the [API design specification](../../standards/api/api.md), or the [database schema](../../standards/database/schema.md) and [query](../../standards/database/query.md) specifications. Treat these as recommendations and record project-specific constraints separately.
 If repository instructions are contradictory, stale, or too broad to determine the applicable constraints, use [context-optimizer](../context-optimizer/SKILL.md) to map the source-of-truth documents before concluding the architecture analysis.
 
 Include an architecture impact summary in the exploration handoff using this shape:
 
 ```json
 {
-  "sourcesRead": ["docs/engineering/ARCHITECTURE.md", "standards/architecture/module-boundaries.md"],
+  "sourcesRead": ["docs/engineering/ARCHITECTURE.md", "standards/architecture/overview.md"],
   "affectedModules": [],
   "dependencyDirection": [],
   "crossModuleCalls": [],
@@ -52,7 +53,8 @@ existing change. Source investigation here is read-only and belongs to the
 external Superpowers environment, never to the document engine.
 
 The original complete prompt is retained byte-for-byte in
-[the upstream source snapshot](references/upstream.md) for provenance, not as
+[the upstream source snapshot](assets/upstream.md), with the
+[provenance record](assets/provenance.json), for provenance, not as
 additional instructions to execute. Use the single-root handoff below instead
 of that snapshot's CLI integration.
 
@@ -172,6 +174,12 @@ Think freely. When insights crystallize, you might offer:
 - Or keep exploring - no pressure to formalize
 
 If the user asks you to capture the exploration as a new change, that request is the confirmation required above. It covers scaffolding that change and creating the change artifacts the request names, and nothing else. This holds only when the request is theirs: a yes to an offer you made confirms only the scope your offer itself named, so name the change and the artifacts in the offer. Don't re-ask for what they already asked for; do ask before anything beyond it. Transition seamlessly into the requested capture:
+
+Discussion and confirmed exploration stay here. When the result must become a
+formal, reviewable proposal/delta package, hand off to
+[spec-propose](../spec-propose/SKILL.md) and follow its authoring rules. Capturing
+the current state of existing source instead belongs to
+[spec-discover](../spec-discover/SKILL.md).
 
 1. Resolve the explicit root, finalized PRD, and change name. Use the external
    spec-propose skill to call `createSpecChange` for proposal plus deltas;

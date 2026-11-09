@@ -2,6 +2,17 @@ import path from 'node:path';
 import {readBoundedFile,assertBoundedText} from '../shared/bounded-input.mjs';
 
 const usage = 'Usage: instar <doctor|snapshot|verify|review|ci> [options]';
+const commandUsage = {
+  doctor:'Usage: instar doctor [--project <path>]',
+  snapshot:'Usage: instar snapshot [--project <path>]',
+  verify:'Usage: instar verify [--project <path>] [--profile commit|full]',
+  review:'Usage: instar review [--project <path>] --review-file <review.json>',
+  ci:'Usage: instar ci prepare|publish|status [--project <path>] [--title <title>] [--confirm]'
+};
+
+export function usageFor(command) {
+  return commandUsage[command] || usage;
+}
 
 export async function parseFriendlyArgs(args, cwd = process.cwd()) {
   const [command, ...tokens] = args;

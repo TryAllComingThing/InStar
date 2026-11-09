@@ -1,6 +1,6 @@
-# PostgreSQL-specific guidance
+# PostgreSQL-specific design and query guidance
 
-Apply only when PostgreSQL is the actual target. Verify advice against the project's supported major version and current official documentation.
+Apply only when PostgreSQL is the actual target. Use it with the [database design specification](schema.md) and [query specification](query.md). Verify advice against the project's supported major version and current official documentation.
 
 - Use `timestamptz` for instants and define an application-level timezone policy; use `date` or `timestamp` only when the domain represents those concepts.
 - Use exact `numeric` or integer minor units for money; do not use binary floating-point for financial values.

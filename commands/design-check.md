@@ -1,5 +1,5 @@
 ---
-description: Extract UI style constraints from project design rules, tokens, and approved high-fidelity references.
+description: Legacy slash-command entry for the native design-check Skill; use the native Skill unless the user explicitly invokes this command.
 ---
 
-Use the `$design-check` Skill for the current project and change. Read the project's canonical design document and actual token sources, compare them with the approved high-fidelity description, and return a change-specific Style Constraints section suitable for `technical-design.md`. Do not edit project-wide design or token files.
+Delegate to the native `$design-check` Skill for the current project and change. Do not duplicate its workflow here or edit project-wide design or token files.

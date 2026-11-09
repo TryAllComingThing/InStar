@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "priorityPairs": [
+    ["requirements-workflow", "write-a-prd"],
+    ["spec-explore", "spec-propose"],
+    ["frontend-verify", "engineering-verify"],
+    ["design-check", "extract-design-md"],
+    ["quality-evaluation", "quality-gate"]
+  ],
+  "queries": [
+    {"query": "只补一段 PRD 验收标准，不要生成 Spec。", "shouldTrigger": true, "expected": "write-a-prd"},
+    {"query": "继续这个已有 change 的 Spec 阶段。", "shouldTrigger": true, "expected": "requirements-workflow"},
+    {"query": "把这份已批准 PRD 生成 proposal 和 delta specs。", "shouldTrigger": true, "expected": "spec-propose"},
+    {"query": "先讨论几个技术方案，不要生成 proposal。", "shouldTrigger": true, "expected": "spec-explore"},
+    {"query": "验证这个旧版 npm/Vite 前端项目的浏览器和 axe 证据。", "shouldTrigger": true, "expected": "frontend-verify"},
+    {"query": "验证这个 schema 3 后端服务的 lint 和 test。", "shouldTrigger": true, "expected": "engineering-verify"},
+    {"query": "只提取当前 UI 改动的 Style Constraints。", "shouldTrigger": true, "expected": "design-check"},
+    {"query": "从整个前端源码生成项目级 DESIGN.md。", "shouldTrigger": true, "expected": "extract-design-md"},
+    {"query": "对这份技术设计做语义质量评测。", "shouldTrigger": true, "expected": "quality-evaluation"},
+    {"query": "提交前对代码做架构、安全和正确性评审。", "shouldTrigger": true, "expected": "quality-gate"},
+    {"query": "这个需求需要从 PRD 到归档完整走一遍。", "shouldTrigger": true, "expected": "requirements-workflow"},
+    {"query": "修订 PRD 后继续等人工审批。", "shouldTrigger": true, "expected": "write-a-prd"},
+    {"query": "从现有源码生成订单模块现状 Spec。", "shouldTrigger": true, "expected": "spec-discover"},
+    {"query": "检查 proposal 和 delta spec 是否完整且兼容基线。", "shouldTrigger": true, "expected": "spec-verify"},
+    {"query": "把刚才的讨论正式写成 proposal。", "shouldTrigger": true, "expected": "spec-propose"},
+    {"query": "检查前端页面键盘焦点和可访问性。", "shouldTrigger": true, "expected": "frontend-verify"},
+    {"query": "运行工程验证并生成快照报告。", "shouldTrigger": true, "expected": "engineering-verify"},
+    {"query": "这个项目的 design-system 文档在哪里，提取完整设计系统。", "shouldTrigger": true, "expected": "extract-design-md"},
+    {"query": "只检查本次按钮改动的设计与 Token 约束。", "shouldTrigger": true, "expected": "design-check"},
+    {"query": "对这份 PRD 做语义评测，但不要跑代码评审。", "shouldTrigger": true, "expected": "quality-evaluation"},
+    {"query": "只解释这份 PRD 的一段，不要修改。", "shouldTrigger": false, "expected": null, "nearMiss": "write-a-prd"},
+    {"query": "只讨论方案，不要创建 change 或 proposal。", "shouldTrigger": false, "expected": null, "nearMiss": "spec-explore"},
+    {"query": "解释这个前端报错，不要跑浏览器验收。", "shouldTrigger": false, "expected": null, "nearMiss": "frontend-verify"},
+    {"query": "解释这个后端类型错误，不要生成验证报告。", "shouldTrigger": false, "expected": null, "nearMiss": "engineering-verify"},
+    {"query": "解释 DESIGN.md 里已有的一个 token，不要重新提取设计系统。", "shouldTrigger": false, "expected": null, "nearMiss": "extract-design-md"},
+    {"query": "解释质量门的报告格式，不要执行代码评审。", "shouldTrigger": false, "expected": null, "nearMiss": "quality-gate"}
+  ]
+}

@@ -57,3 +57,44 @@ test('concurrent writer is blocked without losing lock ownership',async t=>{
 test('task edits other than completion markers invalidate promotion',async t=>{
  const ref=await setup(t);await create(ref);await ready(ref);await writeFile(path.join(ref.root,'changes',ref.changeId,'tasks.md'),'- [x] 1.1 Skipped the original work');await assert.rejects(api.promoteToBaseline({...ref,accepted:true}),/Task content changed/);
 });
+test('requirements stop at a level-one appendix heading',async()=>{
+ const {extractRequirementsSection}=await import('../dist/src/diff/parsers/requirement-blocks.js');
+ const parts=extractRequirementsSection(`# Capability\n\n## Purpose\nA real purpose.\n\n## Requirements\n${requirement('Visible')}\n# Appendix\n\n### Requirement: Invisible\nThis SHALL not be parsed.\n`);
+ assert.deepEqual(parts.bodyBlocks.map(block=>block.name),['Visible']);
+});
+test('delta parsing rejects non-canonical headings and accepts lowercase rename markers',async()=>{
+ const {parseDeltaSpec}=await import('../dist/src/diff/parsers/requirement-blocks.js');
+ const plan=parseDeltaSpec(`## ADDED Requirements\n### Requirement: A\nThe system SHALL do A.\n### Notes\nThis is not a requirement.\n### Requirement: B\nThe system SHALL do B.\n`);
+ assert.equal(plan.added.length,2);
+ assert.deepEqual(plan.added.map(block=>block.name),['A','B']);
+ assert.equal(plan.added[0].raw.includes('This is not a requirement'),false);
+ assert.deepEqual(plan.skippedHeaders.map(item=>item.header),['Notes']);
+ const rename=parseDeltaSpec('## RENAMED Requirements\n- from: `### Requirement: Old`\n- to: `### Requirement: New`\n');
+ assert.deepEqual(rename.renamed,[{from:'Old',to:'New'}]);
+ assert.deepEqual(rename.unpairedRenames,[]);
+ const malformed=parseDeltaSpec('## RENAMED Requirements\n- rename Old to New\n');
+ assert.equal(malformed.malformedRenames.length,1);
+});
+test('gate rejects non-canonical scenarios and orphaned delta requirements',async t=>{
+ const ref=await setup(t);
+ await create(ref,`## ADDED Requirements\n${requirement().replace('#### Scenario: Success','#### Edge case: Success')}`);
+ const badScenario=await api.runSpecVerifyGate(ref);assert.equal(badScenario.valid,false);assert.match(badScenario.issues.join(' '),/Scenario/);
+ const orphan=await setup(t);
+ await create(orphan,`## ADDED Requirements\n${requirement('Visible')}\n## Notes\n${requirement()}`);
+ const badOrphan=await api.runSpecVerifyGate(orphan);assert.equal(badOrphan.valid,false);assert.match(badOrphan.issues.join(' '),/outside every delta section/);
+});
+test('four-space indented fences do not mask real requirement headers',async()=>{
+ const {extractRequirementsSection}=await import('../dist/src/diff/parsers/requirement-blocks.js');
+ const parts=extractRequirementsSection(`# Capability\n## Purpose\nA real purpose.\n## Requirements\n    \`\`\`\n### Requirement: Visible\nThe system SHALL remain visible.\n    \`\`\`\n`);
+ assert.deepEqual(parts.bodyBlocks.map(block=>block.name),['Visible']);
+});
+test('archive blocks a merged spec with a non-canonical scenario heading',async t=>{
+ const ref=await setup(t);await mkdir(path.join(ref.root,'specs/user-auth'),{recursive:true});
+ await writeFile(path.join(ref.root,'specs/user-auth/spec.md'),`# Authentication\n## Purpose\nUsers authenticate safely.\n## Requirements\n${requirement('Legacy').replace('#### Scenario: Success','#### Edge case: Success')}`);
+ await create(ref,`## ADDED Requirements\n${requirement('Login')}`);
+ const gate=await api.runSpecVerifyGate(ref);assert.equal(gate.valid,false);assert.match(gate.issues.join(' '),/Use ### Requirement: and #### Scenario/);
+});
+test('line-ending preservation keeps BOM and CR-only files byte-compatible',async()=>{
+ const {matchLineEnding}=await import('../dist/src/utils/line-endings.js');
+ assert.equal(matchLineEnding('a\nb\n','\uFEFFa\rb\r'),'\uFEFFa\rb\r');
+});

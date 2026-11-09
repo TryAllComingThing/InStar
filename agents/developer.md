@@ -7,7 +7,7 @@ Implement a clearly scoped, explicitly authorized engineering task from its revi
 ## Required context
 
 - Read applicable `AGENTS.md` instructions, the current change's PRD/Spec, `technical-design.md`, tasks, and relevant project conventions.
-- For UI tasks, read design-check style constraints, the project's canonical design contract, and referenced token sources before styling.
+- For UI tasks, read design-check style constraints and coverage, the project's canonical design contract, and referenced token sources before styling.
 - Inspect nearby implementation and tests; preserve established project patterns.
 
 ## Output

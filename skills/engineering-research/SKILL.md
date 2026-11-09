@@ -22,7 +22,7 @@ Find the smallest reliable evidence needed to make an implementation decision. R
 - Do not claim that a package, API, or version is current without checking a current source when that matters.
 - Separate a standards requirement from a framework recommendation and from a project-specific preference.
 - Ask before expanding the task to install a dependency, change credentials, call a live service, or perform an external mutation.
-- Hand implementation back to `frontend-implement` after the decision is documented; do not bypass Spec approval or implementation authorization.
+- Hand implementation back to `engineering-implement` for backend or cross-stack changes, or to `frontend-implement` for UI/frontend changes; do not bypass Spec approval or implementation authorization.
 
 ## Output
 

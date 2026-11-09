@@ -11,6 +11,7 @@ export interface RequirementsSectionParts {
   headerLine: string; // the '## Requirements' line
   preamble: string; // content between headerLine and first requirement block
   bodyBlocks: RequirementBlock[]; // parsed requirement blocks in order
+  unmatched: string[]; // non-canonical content between requirement blocks
   after: string;
 }
 
@@ -34,8 +35,17 @@ export function foldRequirementName(name: string): string {
   return normalizeRequirementName(name).toLowerCase().replace(/\s+/g, ' ');
 }
 
-/** The canonical requirement header the delta reader recognizes. */
-const REQUIREMENT_HEADER_REGEX = /^###\s*Requirement:\s*(.+)\s*$/i;
+/** The canonical requirement header every reader recognizes. */
+export const REQUIREMENT_HEADER_REGEX = /^###[ \t]+Requirement:[ \t]*(.+?)[ \t]*$/i;
+
+/** A level-3 heading, canonical or not. Any of them ends the current requirement. */
+const LEVEL_THREE_HEADER_REGEX = /^###[ \t]+/;
+
+/** A heading at or above the Requirements section (level 1 or 2). */
+const TOP_LEVEL_HEADER_REGEX = /^#{1,2}[ \t]+/;
+
+/** The canonical `## Requirements` heading. */
+const REQUIREMENTS_HEADING_REGEX = /^##[ \t]+Requirements[ \t]*$/i;
 
 /**
  * Extracts the Requirements section from a spec file and parses requirement blocks.
@@ -44,7 +54,7 @@ export function extractRequirementsSection(content: string): RequirementsSection
   const normalized = normalizeLineEndings(content);
   const lines = normalized.split('\n');
   const fenceMask = buildCodeFenceMask(lines);
-  const reqHeaderIndex = lines.findIndex((l, i) => !fenceMask[i] && /^##\s+Requirements\s*$/i.test(l));
+  const reqHeaderIndex = lines.findIndex((l, i) => !fenceMask[i] && REQUIREMENTS_HEADING_REGEX.test(l));
 
   if (reqHeaderIndex === -1) {
     // No requirements section; create an empty one at the end
@@ -55,14 +65,16 @@ export function extractRequirementsSection(content: string): RequirementsSection
       headerLine,
       preamble: '',
       bodyBlocks: [],
+      unmatched: [],
       after: '\n',
     };
   }
 
-  // Find end of this section: next line that starts with '## ' at same or higher level
+  // Find end of this section: the next level-1 or level-2 heading. A `#`
+  // appendix is a sibling of `## Requirements`, not requirement content.
   let endIndex = lines.length;
   for (let i = reqHeaderIndex + 1; i < lines.length; i++) {
-    if (!fenceMask[i] && /^##\s+/.test(lines[i])) {
+    if (!fenceMask[i] && TOP_LEVEL_HEADER_REGEX.test(lines[i])) {
       endIndex = i;
       break;
     }
@@ -75,10 +87,13 @@ export function extractRequirementsSection(content: string): RequirementsSection
   const isRequirementHeader = (cursor: number): boolean =>
     !sectionBodyMask[cursor] && REQUIREMENT_HEADER_REGEX.test(sectionBodyLines[cursor]);
   const isTopLevelHeader = (cursor: number): boolean =>
-    !sectionBodyMask[cursor] && /^##\s+/.test(sectionBodyLines[cursor]);
+    !sectionBodyMask[cursor] && TOP_LEVEL_HEADER_REGEX.test(sectionBodyLines[cursor]);
+  const isLevelThreeHeader = (cursor: number): boolean =>
+    !sectionBodyMask[cursor] && LEVEL_THREE_HEADER_REGEX.test(sectionBodyLines[cursor]);
 
   // Parse requirement blocks within section body
   const blocks: RequirementBlock[] = [];
+  const unmatched: string[] = [];
   let cursor = 0;
   let preambleLines: string[] = [];
 
@@ -91,7 +106,9 @@ export function extractRequirementsSection(content: string): RequirementsSection
   while (cursor < sectionBodyLines.length) {
     const headerLineCandidate = sectionBodyLines[cursor];
     if (!isRequirementHeader(cursor)) {
-      // Not a requirement header; skip line defensively
+      // Content between two canonical blocks belongs to no requirement. Keep it
+      // so callers can refuse a rewrite that would silently delete it.
+      unmatched.push(sectionBodyLines[cursor]);
       cursor++;
       continue;
     }
@@ -100,7 +117,12 @@ export function extractRequirementsSection(content: string): RequirementsSection
     cursor++;
     // Gather lines until next requirement header or end of section
     const bodyLines: string[] = [headerLineCandidate];
-    while (cursor < sectionBodyLines.length && !isRequirementHeader(cursor) && !isTopLevelHeader(cursor)) {
+    while (
+      cursor < sectionBodyLines.length &&
+      !isRequirementHeader(cursor) &&
+      !isLevelThreeHeader(cursor) &&
+      !isTopLevelHeader(cursor)
+    ) {
       bodyLines.push(sectionBodyLines[cursor]);
       cursor++;
     }
@@ -116,6 +138,7 @@ export function extractRequirementsSection(content: string): RequirementsSection
     headerLine,
     preamble,
     bodyBlocks: blocks,
+    unmatched,
     after: after.startsWith('\n') ? after : '\n' + after,
   };
 }
@@ -125,7 +148,7 @@ export function extractRequirementsSection(content: string): RequirementsSection
  * canonical `### Requirement:` header, recorded at the moment the delta reader
  * skips over it. Surfaced as an INFO note by `validate <change>` (#498).
  */
-export interface SkippedHeader {
+interface SkippedHeader {
   header: string; // header text without the leading ###
   section: string; // the ## section title as written
   line: number; // 1-based line number in the delta file
@@ -145,10 +168,16 @@ export interface SkippedHeader {
  * Recording them is what lets `validate` report the problem and `buildUpdatedSpec`
  * refuse, rather than guess a pairing and rewrite the spec from it.
  */
-export interface UnpairedRename {
+interface UnpairedRename {
   side: 'FROM' | 'TO';
   name: string; // requirement name as written
   line: number; // 1-based line number in the delta file
+}
+
+/** A non-empty line in RENAMED that is neither a FROM nor a TO entry. */
+interface MalformedRename {
+  line: number;
+  text: string;
 }
 
 /**
@@ -163,13 +192,13 @@ export interface UnpairedRename {
  * non-canonical `###` header INSIDE a delta section, has been reported as INFO
  * since #498 (`skippedHeaders`), while the costlier one said nothing at all.
  */
-export interface OrphanedRequirement {
+interface OrphanedRequirement {
   name: string; // requirement name as written
   section: string | null; // the `## ` section it sits under, or null above the first one
   line: number; // 1-based line number in the delta file
 }
 
-export interface DeltaPlan {
+interface DeltaPlan {
   added: RequirementBlock[];
   modified: RequirementBlock[];
   removed: string[]; // requirement names
@@ -180,6 +209,8 @@ export interface DeltaPlan {
   renamed: Array<{ from: string; to: string }>;
   /** FROM:/TO: lines in RENAMED that never formed a pair. */
   unpairedRenames: UnpairedRename[];
+  /** Non-empty RENAMED lines the reader could not recognize. */
+  malformedRenames: MalformedRename[];
   /** Canonical requirement blocks written outside every delta section. */
   orphanedRequirements: OrphanedRequirement[];
   skippedHeaders: SkippedHeader[]; // non-canonical ### headers the reader skipped
@@ -243,10 +274,12 @@ export function parseDeltaSpec(content: string): DeltaPlan {
   // pair with a TO in another: a FROM left pending at the end of one copy is
   // reported as unpaired rather than carried into the next.
   const unpairedRenames: UnpairedRename[] = [];
+  const malformedRenames: MalformedRename[] = [];
   const renamedPairs = renamedLookup.bodies.flatMap((body) =>
-    parseRenamedPairs(body, unpairedRenames)
+    parseRenamedPairs(body, unpairedRenames, malformedRenames)
   );
   unpairedRenames.sort((a, b) => a.line - b.line);
+  malformedRenames.sort((a, b) => a.line - b.line);
   skippedHeaders.sort((a, b) => a.line - b.line);
   return {
     added,
@@ -255,6 +288,7 @@ export function parseDeltaSpec(content: string): DeltaPlan {
     removedBlocks,
     renamed: renamedPairs,
     unpairedRenames,
+    malformedRenames,
     orphanedRequirements: findOrphanedRequirements(lines, fenceMask),
     skippedHeaders,
     sectionPresence: {
@@ -389,7 +423,8 @@ function parseRequirementBlocksFromSection(
   const { lines, fenceMask } = sectionBody;
   if (lines.length === 0) return [];
   const isRequirementHeader = (i: number): boolean => !fenceMask[i] && REQUIREMENT_HEADER_REGEX.test(lines[i]);
-  const isTopLevelHeader = (i: number): boolean => !fenceMask[i] && /^##\s+/.test(lines[i]);
+  const isTopLevelHeader = (i: number): boolean => !fenceMask[i] && TOP_LEVEL_HEADER_REGEX.test(lines[i]);
+  const isLevelThreeHeader = (i: number): boolean => !fenceMask[i] && LEVEL_THREE_HEADER_REGEX.test(lines[i]);
   const recordIfSkippedHeader = (index: number) => {
     if (!skipped || fenceMask[index]) return;
     const h3 = lines[index].match(/^###\s+(.+?)\s*$/);
@@ -416,11 +451,12 @@ function parseRequirementBlocksFromSection(
     const name = normalizeRequirementName(m[1]);
     const buf: string[] = [headerLine];
     i++;
-    while (i < lines.length && !isRequirementHeader(i) && !isTopLevelHeader(i)) {
-      recordIfSkippedHeader(i);
+    while (i < lines.length && !isRequirementHeader(i) && !isLevelThreeHeader(i) && !isTopLevelHeader(i)) {
       buf.push(lines[i]);
       i++;
     }
+    // A non-canonical level-3 heading is a boundary, not requirement prose.
+    // The outer seek records it and resumes at the next canonical header.
     blocks.push({ headerLine, name, raw: buf.join('\n').trimEnd() });
   }
   return blocks;
@@ -480,7 +516,8 @@ function parseRemovedNames(sectionBody: SectionBody): string[] {
  */
 function parseRenamedPairs(
   sectionBody: SectionBody,
-  unpaired?: UnpairedRename[]
+  unpaired?: UnpairedRename[],
+  malformed?: MalformedRename[]
 ): Array<{ from: string; to: string }> {
   const { lines, fenceMask, bodyStartLine } = sectionBody;
   if (lines.length === 0) return [];
@@ -495,8 +532,8 @@ function parseRenamedPairs(
     // The bullet stays optional, and any CommonMark marker is accepted: a rename
     // written with `*` or `+` used to match nothing at all, so the rename never
     // happened while archive still reported success.
-    const fromMatch = line.match(/^\s*[-*+]?\s*FROM:\s*`?###\s*Requirement:\s*(.+?)`?\s*$/);
-    const toMatch = line.match(/^\s*[-*+]?\s*TO:\s*`?###\s*Requirement:\s*(.+?)`?\s*$/);
+    const fromMatch = line.match(/^\s*[-*+]?\s*FROM:\s*`?###\s*Requirement:\s*(.+?)`?\s*$/i);
+    const toMatch = line.match(/^\s*[-*+]?\s*TO:\s*`?###\s*Requirement:\s*(.+?)`?\s*$/i);
     if (fromMatch) {
       if (pending) drop('FROM', pending.name, pending.line);
       pending = { name: normalizeRequirementName(fromMatch[1]), line: bodyStartLine + i };
@@ -508,6 +545,8 @@ function parseRenamedPairs(
       }
       pairs.push({ from: pending.name, to });
       pending = undefined;
+    } else if (line.trim() && !line.trim().startsWith('<!--')) {
+      malformed?.push({ line: bodyStartLine + i, text: line.trim() });
     }
   }
   if (pending) drop('FROM', pending.name, pending.line);
@@ -520,7 +559,7 @@ interface ScenarioBlock {
 }
 
 /** Both directions of the scenario-name comparison, plus the two totals. */
-export interface ScenarioNameDiff {
+interface ScenarioNameDiff {
   /** Names the current block has that the incoming block does not cover. */
   missing: string[];
   /** Names the incoming block introduces that the current block does not have. */
@@ -640,13 +679,13 @@ export function scenarioNameFromHeaderText(headerText: string): string {
 function parseScenarioBlocks(requirementRaw: string): ScenarioBlock[] {
   const lines = requirementRaw.replace(/\r\n?/g, '\n').split('\n');
   // A scenario is ANY non-fenced `#### ` header, matching the spec path's
-  // SCENARIO_HEADER / countScenarios (requirement-text.ts) exactly — not only
+  // SCENARIO_HEADER / MarkdownParser.parseScenarios exactly — not only
   // `#### Scenario:`. The two MUST agree: a level-4 child whose header is not
   // literally `Scenario:` (e.g. `#### Edge case`) is still a scenario the spec
-  // path counts, so a MODIFIED block that drops it would otherwise slip past
+  // path parses, so a MODIFIED block that drops it would otherwise slip past
   // this loss check and be deleted by archive with no error (the parity the
   // SCENARIO_HEADER comment warns not to break). A `####` inside a fenced
-  // example is masked out, matching countScenarios.
+  // example is masked out by the same fence-aware mask.
   const mask = buildCodeFenceMask(lines);
   const scenarios: ScenarioBlock[] = [];
   let index = 0;

@@ -14,6 +14,10 @@ config_file = "agents/ui-reviewer.toml"
 description = "Perform an independent read-only code review with file and line evidence."
 config_file = "agents/code-reviewer.toml"
 
+[agents.security-reviewer]
+description = "Review security boundaries and report file/line evidence without claiming a scanner passed."
+config_file = "agents/security-reviewer.toml"
+
 [agents.spec-reviewer]
 description = "Review proposal and delta specs against the PRD, baseline and project guidance."
 config_file = "agents/spec-reviewer.toml"

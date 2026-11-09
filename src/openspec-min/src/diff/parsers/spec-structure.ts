@@ -1,12 +1,12 @@
 import { buildCodeFenceMask } from './code-fence.js';
 import { normalizeRequirementName } from './requirement-blocks.js';
 
-const REQUIREMENTS_SECTION_HEADER = /^##\s+Requirements\s*$/i;
-const TOP_LEVEL_SECTION_HEADER = /^##\s+/;
+const REQUIREMENTS_SECTION_HEADER = /^##[ \t]+Requirements[ \t]*$/i;
+const TOP_LEVEL_SECTION_HEADER = /^#{1,2}[ \t]+/;
 const DELTA_HEADER = /^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\s*$/i;
-const REQUIREMENT_HEADER = /^###\s+Requirement:\s*(.+)\s*$/i;
+const REQUIREMENT_HEADER = /^###[ \t]+Requirement:[ \t]*(.+?)[ \t]*$/i;
 
-export interface MainSpecStructureIssue {
+interface MainSpecStructureIssue {
   kind: 'delta-header' | 'requirement-outside-requirements' | 'duplicate-requirement';
   line: number;
   header: string;

@@ -1,4 +1,5 @@
 import {promises as fs} from 'node:fs';
+import {constants as fsConstants} from 'node:fs';
 import path from 'node:path';
 import {createHash, randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
@@ -6,52 +7,65 @@ import {fileURLToPath} from 'node:url';
 import {resolveTokenSources} from '../shared/token-sources.mjs';
 import {parseProjectAgentConfig} from '../shared/agent-config.mjs';
 import {redactData,boundedText} from '../shared/redaction.mjs';
+import {readCodexSessionUsage} from '../shared/usage-telemetry.mjs';
+import {canonicalHash} from '../shared/canonical.mjs';
+import {assertProfileName,verificationReportKind,MAX_ARTIFACT_BYTES} from '../shared/profile-contract.mjs';
+import {acquireFileLock,releaseFileLock} from '../shared/file-lock.mjs';
+import {safePath as safe} from '../shared/path-safety.mjs';
+import {openVerified,readTextVerified,readBufferVerified,renameVerified,unlinkVerified} from '../shared/path-safety.mjs';
+import {runCommand} from '../shared/run-command.mjs';
 import {evaluateQualityPolicy,validateQualityPolicy} from './policy.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
-export const reviewItems = ['correctness','maintainability','architecture','security','performance','naming','types','component-boundaries','design','watch-cleanup','v-for-key','reactive-destructure','props','computed-purity','unmount-cleanup','async-component','lazy-route'];
-const universalReviewItems=['correctness','maintainability','architecture','security','performance','naming'];
-const vueReviewItems=reviewItems.filter(id=>!universalReviewItems.includes(id));
+export const reviewItems=['correctness','maintainability','architecture','security','performance','naming','types','component-boundaries','design','accessibility'];
+const vueReviewItems=['watch-cleanup','v-for-key','reactive-destructure','props','computed-purity','unmount-cleanup','async-component','lazy-route'];
 const backendReviewItems=['api-contract','input-validation','authorization','error-handling','data-consistency','transactions','concurrency','observability'];
-export function reviewItemsFor(c){
+export function reviewItemsFor(c={}){
  const language=(c.review?.language||'').toLowerCase(),framework=(c.review?.framework||'').toLowerCase();
- if(!language && !framework) return universalReviewItems; // fail closed on unknown stack: never assume Vue
+ if(!language && !framework) return reviewItems;
  const vue=framework==='vue', backend=['python','java','go'].includes(language);
- return [...new Set([...universalReviewItems,...(vue?vueReviewItems:[]),...(backend?backendReviewItems:[]),...(c.review?.extraChecks||[])])];
+ return [...new Set([...reviewItems,...(vue?vueReviewItems:[]),...(backend?backendReviewItems:[]),...(c.review?.extraChecks||[])])];
 }
-export const qualityTools = ['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint'];
-const verifyProfiles = {commit:['lint','typecheck','dependencies'],full:['lint','typecheck','test','build','dependencies','vite-build']};
+const qualityTools = ['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint'];
+const verifyProfiles = {commit:['lint','typecheck','dependencies'],implementation:['lint','typecheck','test','build'],full:['lint','typecheck','test','build','dependencies','vite-build']};
 function checksForProfile(c,profile){
- if(c.verification?.profiles?.[profile]) return c.verification.profiles[profile];
+ if(c.verification){const ids=c.verification.profiles?.[profile];if(!ids)throw Error(`Verification profile is not configured: ${profile}`);return ids;}
  const base=[...verifyProfiles[profile],...(profile==='full'&&c.tools?.security?['security-scan']:[]),...(profile==='full'&&c.scripts?.e2e?['e2e']:[]),...(profile==='full'&&c.scripts?.visual?['visual']:[])];
  return base;
 }
-const generated = name => /(^|\/)(reports|logs|node_modules|dist|coverage|\.git)(\/|$)/.test(name) || /^\.instar\/session\//.test(name) || /^\.context\/(PROJECT_STATE|LESSONS)\.md$/.test(name);
+const generated = name => /(^|\/)(reports|logs|node_modules|dist|coverage|\.git|\.workflow|planning)(\/|$)/.test(name) || /^docs\/prd\//.test(name) || /^\.instar\/session\//.test(name) || /^\.context\/(PROJECT_STATE|LESSONS)\.md$/.test(name);
 const sensitive = name => /(^|\/)(\.ssh|\.aws)(\/|$)|(^|\/)\.env(?:\.|$)/.test(name);
+const evidencePath = value => typeof value==='string' && value.startsWith('reports/') && !path.isAbsolute(value) && !value.split(/[\\/]/).includes('..') && !sensitive(value);
 const credentialEnv = key => /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION|(?:^|_)API_KEY$|ACCESS_KEY|PRIVATE_KEY|(?:DATABASE|DB|POSTGRES(?:QL)?|MYSQL|MONGO(?:DB)?|REDIS|JDBC|ODBC)_URL|(?:^|_)(?:DSN|URI|CONNECTION_STRING|CERTIFICATE)(?:_|$)|^GH_|^GITHUB_|^AWS_|^AZURE_|^GOOGLE_APPLICATION_CREDENTIALS$|^NPM_CONFIG_.*(?:AUTH|TOKEN|USERCONFIG|GLOBALCONFIG)|^SSH_AUTH_SOCK$|^GIT_|^(?:SSH)_ASKPASS$|^CODEX_HOME$|^(?:NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONHOME|RUBYOPT|PERL5OPT|LD_PRELOAD)$|^DYLD_)/i.test(key);
 function safeEnvironment(){return Object.fromEntries(Object.entries(process.env).filter(([key])=>!credentialEnv(key)));}
-export async function safe(root, relative) {
-  const dest = path.resolve(root, relative);
-  if (dest !== root && !dest.startsWith(root + path.sep)) throw Error('Path outside workspace');
-  let current = root;
-  for (const part of path.relative(root, dest).split(path.sep).filter(Boolean)) {
-    current = path.join(current, part);
-    try { if ((await fs.lstat(current)).isSymbolicLink()) throw Error(`Symlink forbidden: ${relative}`); }
-    catch (e) { if (e.code !== 'ENOENT') throw e; }
-  }
-  return dest;
+const commandKey = value => (process.platform==='win32'?path.win32.basename(value):path.basename(value)).toLowerCase().replace(/\.(?:exe|cmd|bat|com)$/,'');
+function commandIsAllowed(command){
+ const configured=process.env.INSTAR_HOOK_ALLOWED_COMMANDS;
+ if(configured===undefined)return true;
+ const allowed=new Set(configured.split(',').map(value=>commandKey(value.trim())).filter(Boolean));
+ return allowed.has(commandKey(command));
 }
-async function read(root, name) { return fs.readFile(await safe(root, name), 'utf8'); }
+function checkIsAllowed(id){
+ const configured=process.env.INSTAR_HOOK_ALLOWED_CHECKS;
+ if(configured===undefined)return true;
+ return new Set(configured.split(',').map(value=>value.trim()).filter(Boolean)).has(id);
+}
+async function read(root, name) { return readTextVerified(root, name); }
 async function json(root, name) { return JSON.parse(await read(root, name)); }
 async function exists(root, name) { try { await fs.access(await safe(root, name)); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 async function write(root, name, text, exclusive = false) {
   const dest = await safe(root, name);
   await fs.mkdir(path.dirname(dest), {recursive:true});
-  if (exclusive) return fs.writeFile(dest, text, {flag:'wx'});
-  const temp = await safe(root, `${name}.${randomUUID()}.tmp`);
-  try { await fs.writeFile(temp, text, {flag:'wx'}); await fs.rename(temp, dest); }
-  finally { await fs.rm(temp, {force:true}); }
+  const tempRelative=`${name}.${randomUUID()}.tmp`,relative=exclusive?name:tempRelative;
+  let stat;
+  try {
+   const flags=fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL;
+   const handle=await openVerified(root,relative,flags,0o600);
+   try{await handle.writeFile(text,'utf8');stat=await handle.stat();}finally{await handle.close();}
+   if(!exclusive){await renameVerified(root,tempRelative,name,stat);stat=null;}
+  }
+  finally { if(!exclusive&&stat)await unlinkVerified(root,tempRelative,stat).catch(()=>{}); }
 }
 function git(root, args) {
   const r = spawnSync('git', ['-c','core.fsmonitor=false', ...args], {cwd:root, encoding:'utf8', timeout:15000, maxBuffer:16*1024*1024});
@@ -66,27 +80,39 @@ async function config(root) {
   if (c.verification !== undefined) {
     if (c.schemaVersion < 3 || !c.verification.profiles || typeof c.verification.profiles !== 'object' || Array.isArray(c.verification.profiles) || !c.tools?.checks || typeof c.tools.checks !== 'object' || Array.isArray(c.tools.checks)) throw Error('Custom verification requires schemaVersion 3, verification.profiles and tools.checks');
     if(c.verification.inputs!==undefined&&(!Array.isArray(c.verification.inputs)||c.verification.inputs.some(value=>typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..'))||new Set(c.verification.inputs).size!==c.verification.inputs.length))throw Error('verification.inputs must be unique workspace-relative file or directory paths');
-    for (const profile of ['commit','full']) {
+    for (const profile of ['commit','full',...(c.verification.profiles.implementation?['implementation']:[])]) {
       const ids=c.verification.profiles[profile];
       if (!Array.isArray(ids) || !ids.length || ids.some(id=>typeof id!=='string'||!/^[a-z][a-z0-9-]{0,39}$/.test(id)) || new Set(ids).size!==ids.length) throw Error(`verification.profiles.${profile} must be a non-empty list of unique check ids`);
-      for(const id of ids){const spec=c.tools.checks[id];const argBytes=Array.isArray(spec?.args)?spec.args.reduce((sum,arg)=>sum+(typeof arg==='string'?Buffer.byteLength(arg):0),0):Infinity;if(!spec||typeof spec!=='object'||Array.isArray(spec)||typeof spec.command!=='string'||spec.command.length>256||spec.command.includes('\0')||!/^[-\w./]+$/.test(spec.command)||!Array.isArray(spec.args)||spec.args.length>128||argBytes>16384||spec.args.some(arg=>typeof arg!=='string'||arg.includes('\0')||Buffer.byteLength(arg)>2048)|| (spec.cwd!==undefined&&(typeof spec.cwd!=='string'||path.isAbsolute(spec.cwd)||spec.cwd.split(/[\\/]/).includes('..'))) || (spec.timeoutMs!==undefined&&(!Number.isInteger(spec.timeoutMs)||spec.timeoutMs<1||spec.timeoutMs>600000)))throw Error(`Invalid tools.checks.${id}`);}
+      for(const id of ids){const spec=c.tools.checks[id];const argBytes=Array.isArray(spec?.args)?spec.args.reduce((sum,arg)=>sum+(typeof arg==='string'?Buffer.byteLength(arg):0),0):Infinity;const command=spec?.command;const relativeCommand=typeof command==='string'&&/^[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)*$/.test(command)&&!command.split(/[\\/]/).includes('..');const safeCommand=typeof command==='string'&&command.length<=256&&!command.includes('\0')&&(relativeCommand||(path.isAbsolute(command)&&command===process.execPath));if(!spec||typeof spec!=='object'||Array.isArray(spec)||!safeCommand||!Array.isArray(spec.args)||spec.args.length>128||argBytes>16384||spec.args.some(arg=>typeof arg!=='string'||arg.includes('\0')||Buffer.byteLength(arg)>2048)|| (spec.cwd!==undefined&&(typeof spec.cwd!=='string'||path.isAbsolute(spec.cwd)||spec.cwd.split(/[\\/]/).includes('..'))) || (spec.timeoutMs!==undefined&&(!Number.isInteger(spec.timeoutMs)||spec.timeoutMs<1||spec.timeoutMs>600000)) || !['lint','format','typecheck','test','build','security','browser','accessibility','keyboard','dependencies'].includes(spec.kind))throw Error(`Invalid tools.checks.${id}`);}
+      for(const id of ids)if(c.tools.checks[id].artifact!==undefined&&!evidencePath(c.tools.checks[id].artifact))throw Error(`Invalid tools.checks.${id}.artifact`);
     }
   }
   if(c.schemaVersion===3&&([...qualityTools,'architecture','security','dependencies','ci-config','vite-build'].some(key=>c.tools?.[key]!==undefined)||c.scripts!==undefined))throw Error('schemaVersion 3 uses tools.checks and verification.profiles; legacy npm script adapters are not supported');
   if (c.tools?.architecture !== undefined && (typeof c.tools.architecture !== 'string' || !/^[\w:-]+$/.test(c.tools.architecture))) throw Error('tools.architecture must name a package.json script');
   if (c.tools?.security !== undefined && (typeof c.tools.security !== 'string' || !/^[\w:-]+$/.test(c.tools.security))) throw Error('tools.security must name a package.json script');
   if (c.timeoutMs !== undefined && (!Number.isInteger(c.timeoutMs) || c.timeoutMs < 1 || c.timeoutMs > 600000)) throw Error('timeoutMs must be between 1 and 600000');
-  if(c.context!==undefined){if(!c.context||typeof c.context!=='object'||Array.isArray(c.context))throw Error('context must be an object');for(const key of ['architecture','design','sessionState','lessons'])if(c.context[key]!==undefined&&c.context[key]!==null){const value=c.context[key];if(typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..'))throw Error(`context.${key} must be a workspace-relative path or null`);if(['sessionState','lessons'].includes(key)&&(!/\.md$/i.test(value)||sensitive(value)))throw Error(`context.${key} must be a non-sensitive Markdown path`);}if(c.context.tokens!==undefined&&c.context.tokens!==null){const files=Array.isArray(c.context.tokens)?c.context.tokens:[c.context.tokens];if(!files.length||files.some(value=>typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..')))throw Error('context.tokens must be a workspace-relative path, a non-empty path array, or null');}}
+  if(c.context!==undefined){if(!c.context||typeof c.context!=='object'||Array.isArray(c.context))throw Error('context must be an object');for(const key of ['architecture','design','designSystem','sessionState','lessons'])if(c.context[key]!==undefined&&c.context[key]!==null){const value=c.context[key];if(typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..'))throw Error(`context.${key} must be a workspace-relative path or null`);if(['architecture','design','designSystem'].includes(key)&&(!/\.md$/i.test(value)||sensitive(value)||generated(value)))throw Error(`context.${key} must be a non-sensitive, non-generated Markdown path`);if(['sessionState','lessons'].includes(key)&&(!/^\.instar\/session\/[^/]+\.md$/i.test(value)||sensitive(value)))throw Error(`context.${key} must stay under .instar/session/ and be a Markdown file`);}if(c.context.tokens!==undefined&&c.context.tokens!==null){const files=Array.isArray(c.context.tokens)?c.context.tokens:[c.context.tokens];if(!files.length||files.some(value=>typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..')||sensitive(value)||generated(value)))throw Error('context.tokens must be a workspace-relative, non-sensitive, non-generated path, a non-empty path array, or null');}}
   if(c.qualityPolicy!==undefined)validateQualityPolicy(c.qualityPolicy);
-  if(c.review!==undefined){if(!c.review||typeof c.review!=='object'||Array.isArray(c.review)||!['vue','react','none'].includes(c.review.framework||'none')||!['typescript','javascript','python','java','go'].includes(c.review.language||'typescript')|| (c.review.extraChecks!==undefined&&(!Array.isArray(c.review.extraChecks)||c.review.extraChecks.some(x=>typeof x!=='string'||!/^[a-z][a-z0-9-]{1,39}$/.test(x)))))throw Error('Invalid review configuration');}
+  if(c.review!==undefined){
+   const token=value=>typeof value==='string'&&/^[a-z][a-z0-9-]{1,39}$/.test(value);
+   if(!c.review||typeof c.review!=='object'||Array.isArray(c.review))throw Error('Invalid review configuration');
+   if(c.review.requireIndependentReview!==undefined||c.review.allowMainAgentFallback!==undefined)throw Error('review.requireIndependentReview and review.allowMainAgentFallback are not supported; configure reviewerPolicy.allowMainAgentFallback on workflow start instead');
+   if((c.review.framework!==undefined&&!token(c.review.framework))||(c.review.language!==undefined&&!token(c.review.language))||(c.review.extraChecks!==undefined&&(!Array.isArray(c.review.extraChecks)||c.review.extraChecks.some(x=>!token(x)))))throw Error('Invalid review configuration');
+  }
   return c;
 }
+export async function loadQualityConfig(root){return config(root);}
 async function projectContextFiles(root,c={}){
-  const result={architecture:c.context?.architecture??null,design:c.context?.design??null};
-  for(const key of ['architecture','design']){
+  const result={architecture:c.context?.architecture??null,design:c.context?.design??null,designSystem:c.context?.designSystem??null};
+  for(const key of ['architecture','design','designSystem']){
     if(result[key])continue;
-    const candidates=key==='architecture'?['ARCHITECTURE.md','docs/engineering/ARCHITECTURE.md','docs/architecture/ARCHITECTURE.md','docs/architecture.md','.context/ARCHITECTURE.md']:['DESIGN.md','docs/engineering/DESIGN.md','docs/design/DESIGN.md','docs/design.md','.context/DESIGN.md'];
+    const candidates=key==='architecture'?['ARCHITECTURE.md','docs/engineering/ARCHITECTURE.md','docs/architecture/ARCHITECTURE.md','docs/architecture.md','.context/ARCHITECTURE.md']:key==='design'?['DESIGN.md','docs/engineering/DESIGN.md','docs/design/DESIGN.md','docs/design.md','.context/DESIGN.md']:['design-system/DESIGN.md','design-system/README.md','design-system/index.md','docs/design-system/DESIGN.md','docs/design-system/README.md','docs/design-system/index.md','frontend/design-system/DESIGN.md','frontend/design-system/README.md','frontend/design-system/index.md','frontend/src/design-system/DESIGN.md','frontend/src/design-system/README.md','frontend/src/design-system/index.md','src/design-system/DESIGN.md','src/design-system/README.md','src/design-system/index.md'];
     for(const candidate of candidates)if(await exists(root,candidate)){result[key]=candidate;break;}
+  }
+  result.designSystemDirectory=null;
+  for(const dir of ['design-system','docs/design-system','frontend/design-system','frontend/src/design-system','src/design-system']){
+    try{const stat=await fs.lstat(await safe(root,dir));if(stat.isDirectory()&&!stat.isSymbolicLink()){result.designSystemDirectory=dir;break;}}
+    catch(error){if(error.code!=='ENOENT')throw error;}
   }
   result.tokenResolution=await resolveTokenSources(root,c.context?.tokens);
   result.tokens=result.tokenResolution.sources;
@@ -94,7 +120,7 @@ async function projectContextFiles(root,c={}){
 }
 async function guidanceFingerprint(root) {
   const c=await config(root),context=await projectContextFiles(root,c);
-  const names=new Set(['AGENTS.md','.context/AGENTS.md',...(context.architecture?[context.architecture]:[]),...(context.design?[context.design]:[]),...context.tokens]);
+  const names=new Set(['AGENTS.md','.context/AGENTS.md',...(context.architecture?[context.architecture]:[]),...(context.design?[context.design]:[]),...(context.designSystem?[context.designSystem]:[]),...context.tokens]);
   let scanned=0;
   async function walk(relative,depth){
     if(depth>16||scanned>=20000)throw Error('Project policy scan limit reached; reduce nested policy directories before quality checks');
@@ -112,8 +138,7 @@ async function guidanceFingerprint(root) {
   await walk('',0);
   const result=[];
   for(const name of [...names].sort()){
-    const file=await safe(root,name);
-    try{const stat=await fs.lstat(file);if(!stat.isFile())continue;result.push([name,digest(await fs.readFile(file))]);}
+    try{const handle=await openVerified(root,name,fsConstants.O_RDONLY);try{const stat=await handle.stat();if(!stat.isFile())continue;result.push([name,digest(await handle.readFile())]);}finally{await handle.close();}}
     catch(error){if(error.code!=='ENOENT')throw error;result.push([name,'missing']);}
   }
   return result;
@@ -152,19 +177,18 @@ export async function snapshot(root) {
   if (changed.some(sensitive)) throw Error('Sensitive path changed; review outside quality automation');
   const files = [];
   for (const name of names.filter(n=>!generated(n) && !sensitive(n))) {
-    const file = await safe(root, name);
-    try { const stat = await fs.stat(file); if (!stat.isFile()) throw Error(`Unsupported file: ${name}`); files.push([name, stat.mode, digest(await fs.readFile(file))]); }
+    try { const handle=await openVerified(root,name,fsConstants.O_RDONLY);try{const stat=await handle.stat();if(!stat.isFile())throw Error(`Unsupported file: ${name}`);files.push([name,stat.mode,digest(await handle.readFile())]);}finally{await handle.close();} }
     catch (e) { if(e.code !== 'ENOENT') throw e; files.push([name,'deleted']); }
   }
   // Include ignored governance files as well; they change review policy.
-  for (const name of ['.instar-quality.json','package.json',...['AGENTS.md','.context/AGENTS.md',context.architecture,context.design].filter(Boolean),...context.tokens]) {
+  for (const name of ['.instar-quality.json','package.json',...['AGENTS.md','.context/AGENTS.md',context.architecture,context.design,context.designSystem].filter(Boolean),...context.tokens]) {
     files.push([name, await exists(root,name) ? digest(await read(root,name)) : 'missing']);
   }
   const guidance=await guidanceFingerprint(root);
   return {tree,fingerprint:digest(JSON.stringify({head,base,files,guidance,index:git(root,['ls-files','--stage','-z']).split('\0').filter(entry=>entry && !generated(entry.slice(entry.indexOf('\t')+1)))})),head,base,baseRef:c.baseRef,changed};
 }
-async function save(root, kind, data) {
-  const report = {schemaVersion:1,kind,id:randomUUID(),at:now(),...redactData(data)};
+async function save(root, kind, data, id=randomUUID()) {
+  const report = {schemaVersion:1,kind,id,at:now(),...redactData(data)};
   const text = JSON.stringify(report,null,2)+'\n';
   await write(root, `reports/${kind}-${report.id}.json`, text, true);
   await write(root, `logs/${kind}-${report.id}.md`, `# ${kind}\n\nTime: ${report.at}\nStatus: ${report.status}\nReport: reports/${kind}-${report.id}.json\nFingerprint: ${report.snapshot?.fingerprint || 'not applicable'}\n`, true);
@@ -174,21 +198,40 @@ async function save(root, kind, data) {
 async function runScript(root, c, script) {
   const pkg = await json(root, 'package.json').catch(()=>({scripts:{}}));
   if (typeof script !== 'string' || !/^[\w:-]+$/.test(script) || !pkg.scripts?.[script]) return {script:script || null,status:'BLOCK',reason:'Required package script missing'};
+  if(!checkIsAllowed(script))return {script,status:'BLOCK',error:'ECHECKNOTALLOWED',reason:'Package script is not allowed by INSTAR_HOOK_ALLOWED_CHECKS'};
+  if(!commandIsAllowed(c.packageManager))return {script,status:'BLOCK',error:'ECOMMANDNOTALLOWED',reason:'Package manager is not allowed by INSTAR_HOOK_ALLOWED_COMMANDS'};
   const start = Date.now();
   // Scripts are project-owned and must run under the caller's sandbox. Offline flags
   // prevent package fetching, but are NOT an OS network isolation boundary.
   const timeoutMs=c.timeoutMs||120000;
   const env=safeEnvironment();
-  const r = spawnSync(c.packageManager, ['run',script], {cwd:root, encoding:'utf8', timeout:timeoutMs, maxBuffer:4*1024*1024,
+  const r = await runCommand(c.packageManager, ['run',script], {cwd:root, timeoutMs,
     env:{...env,CI:'true',npm_config_offline:'true',npm_config_update_notifier:'false',npm_config_audit:'false',npm_config_fund:'false'}});
   return {script,status:r.status === 0 && !r.error ? 'PASS':'BLOCK',exitCode:r.status,signal:r.signal,error:r.error?.code || null,durationMs:Date.now()-start,outputHash:digest((r.stdout||'')+(r.stderr||'')),reason:r.status === 0 ? 'Completed' : 'Command failed; rerun this script locally for diagnostics (raw output is not persisted)'};
 }
-async function runConfiguredCheck(root,c,id,spec){
+async function bindCheckArtifact(root,check,profile,reportId,id,spec){
+ const artifact=spec.artifact||`reports/evidence/${profile}/${reportId}/${id}.json`;
+ if(!spec.artifact)await write(root,artifact,JSON.stringify({schemaVersion:1,profile,reportId,checkId:id,kind:spec.kind,status:check.status,exitCode:check.exitCode,durationMs:check.durationMs,outputHash:check.outputHash,at:now()},null,2)+'\n',true);
+ const content=await readBufferVerified(root,artifact);
+ if(!content.length)throw Error(`Check artifact is empty: ${artifact}`);
+ if(content.length>MAX_ARTIFACT_BYTES)throw Error(`Artifact exceeds ${MAX_ARTIFACT_BYTES} byte limit`);
+ return {artifact,artifactHash:digest(content),artifactBytes:content.length};
+}
+
+async function runConfiguredCheck(root,c,profile,reportId,id,spec){
  const start=Date.now(),timeoutMs=spec.timeoutMs||c.timeoutMs||120000;
+ if(!checkIsAllowed(id))return {id,command:spec.command,status:'BLOCK',error:'ECHECKNOTALLOWED',durationMs:0,reason:'Configured check is not allowed by INSTAR_HOOK_ALLOWED_CHECKS'};
+ if(!commandIsAllowed(spec.command))return {id,command:spec.command,status:'BLOCK',error:'ECOMMANDNOTALLOWED',durationMs:0,reason:'Configured command is not allowed by INSTAR_HOOK_ALLOWED_COMMANDS'};
  const env=safeEnvironment();
  const cwd=spec.cwd?await safe(root,spec.cwd):root;if(cwd!==root&&!cwd.startsWith(root+path.sep))return {id,status:'BLOCK',reason:'Check working directory escapes project'};
- let r;try{r=spawnSync(spec.command,spec.args,{cwd,encoding:'utf8',timeout:timeoutMs,maxBuffer:4*1024*1024,env:{...env,CI:'true',npm_config_offline:'true',npm_config_update_notifier:'false',npm_config_audit:'false',npm_config_fund:'false'}});}catch(error){return {id,command:spec.command,status:'BLOCK',error:error.code||'SPAWN_ERROR',durationMs:Date.now()-start,reason:'Configured command could not be started'};}
- return {id,command:spec.command,status:r.status===0&&!r.error?'PASS':'BLOCK',exitCode:r.status,signal:r.signal,error:r.error?.code||null,durationMs:Date.now()-start,outputHash:digest((r.stdout||'')+(r.stderr||'')),reason:r.status===0?'Completed':'Command failed; rerun locally for diagnostics (raw output is not persisted)'};
+ if(spec.artifact)await fs.rm(await safe(root,spec.artifact),{force:true});
+ let r;try{r=await runCommand(spec.command,spec.args,{cwd,timeoutMs,env:{...env,CI:'true',npm_config_offline:'true',npm_config_update_notifier:'false',npm_config_audit:'false',npm_config_fund:'false'}});}catch(error){return {id,command:spec.command,status:'BLOCK',error:error.code||'SPAWN_ERROR',durationMs:Date.now()-start,reason:'Configured command could not be started'};}
+ const result={id,command:spec.command,status:r.status===0&&!r.error?'PASS':'BLOCK',exitCode:r.status,signal:r.signal,error:r.error?.code||null,durationMs:Date.now()-start,outputHash:digest((r.stdout||'')+(r.stderr||''))};
+ if(result.status==='PASS'){
+  try{Object.assign(result,await bindCheckArtifact(root,result,profile,reportId,id,spec));}
+  catch(error){return {...result,status:'BLOCK',reason:`Check artifact evidence is invalid: ${error.message}`};}
+ }
+ return {...result,reason:result.status==='PASS'?'Completed':'Command failed; rerun locally for diagnostics (raw output is not persisted)'};
 }
 async function saveUnifiedQualityReport(root,{profile,verification,policy,review}) {
   const file='reports/unified-quality.json';
@@ -209,33 +252,51 @@ async function saveUnifiedQualityReport(root,{profile,verification,policy,review
   return report;
 }
 async function verify(root, profile) {
-  if (!['full','commit'].includes(profile)) throw Error('profile must be full or commit');
-  const c = await config(root);const before = await snapshot(root), checks = [];
-  for (const id of checksForProfile(c,profile)) {
-    if(c.verification?.profiles?.[profile]){const check=await runConfiguredCheck(root,c,id,c.tools.checks[id]);checks.push(check);if(check.status!=='PASS')break;continue;}
+  assertProfileName(profile);
+  const c = await config(root);const before = await snapshot(root), checks = [], ids=checksForProfile(c,profile),reportId=randomUUID();
+  for (const id of ids) {
+    if(c.verification?.profiles?.[profile]){const check=await runConfiguredCheck(root,c,profile,reportId,id,c.tools.checks[id]);checks.push(check);if(check.status!=='PASS')break;continue;}
     const script=id==='security-scan'?c.tools.security:c.scripts?.[id] || (['dependencies','vite-build'].includes(id) ? c.tools?.[id] : id);
     const check = {id,...await runScript(root,c,script)}; checks.push(check);
     if (check.status !== 'PASS') break;
   }
   const after = await snapshot(root), stable = before.fingerprint === after.fingerprint;
-  const kind=c.verification?.profiles?.[profile]?`engineering-verify-${profile}`:`frontend-verify-${profile}`;
-  const policy=c.qualityPolicy?evaluateQualityPolicy(c.qualityPolicy,profile,[...checks,{id:'evidence-report',status:stable?'PASS':'BLOCK'}],before):null;
-  const status=!stable?'BLOCK':policy?.status||'BLOCK';
-  const result=await save(root,kind,{snapshot:before,status,checks,stable,qualityPolicy:policy||{status:'NOT_CONFIGURED',note:'Mandatory policy required; legacy verification cannot pass'},coverage:{basis:'mandatory-policy',profile,checkIds:checksForProfile(c,profile)}});
+  const configured=!!c.verification?.profiles?.[profile];
+  const kind=configured?verificationReportKind(profile):`frontend-verify-${profile}`;
+  const policy=c.qualityPolicy&&profile!=='implementation'?evaluateQualityPolicy(c.qualityPolicy,profile,[...checks,{id:'evidence-report',status:stable?'PASS':'BLOCK'}],before):null;
+  const status=!stable||checks.some(check=>check.status!=='PASS')||policy?.status==='FAIL'?'BLOCK':(profile==='implementation'||c.schemaVersion>=3)?(policy?.status||'PASS'):policy?.status||'BLOCK';
+  const result=await save(root,kind,{profile,snapshot:before,configHash:canonicalHash(c),checkDefinitions:configured?Object.fromEntries(ids.map(id=>[id,canonicalHash(c.tools.checks[id])])):null,status,checks,stable,qualityPolicy:policy||{status:'NOT_CONFIGURED',note:c.schemaVersion>=3?'Configured profile is authoritative; qualityPolicy is optional':'Mandatory policy required; legacy verification cannot pass'},coverage:{basis:configured?'project-configured-checks':'mandatory-policy',profile,checkIds:ids,note:configured?'Configured checks passed for this profile; the selected check set does not independently prove coverage of all risks.':undefined}},reportId);
   await saveUnifiedQualityReport(root,{profile,verification:result,policy,review:null});
   return result;
 }
-function validateReview(review,items=reviewItems) {
+async function validateReview(root,review,items=reviewItems) {
   if (!review || typeof review.reviewer !== 'string' || !review.reviewer.trim() || typeof review.fingerprint !== 'string') throw Error('Review requires reviewer and snapshot fingerprint');
+  if (review.schemaVersion !== undefined && ![1,2].includes(review.schemaVersion)) throw Error('Review schemaVersion must be 1 or 2');
+  if (review.schemaVersion === 2 && !['subagent','main-agent-fallback'].includes(review.executionMode)) throw Error('Review schemaVersion 2 requires executionMode subagent or main-agent-fallback');
   if (!Array.isArray(review.checks) || review.checks.length !== items.length || new Set(review.checks.map(c=>c.id)).size !== items.length) throw Error('Review checklist incomplete or duplicated');
   for (const id of items) {
     const item = review.checks.find(c=>c.id===id);
     if (!item || !['PASS','BLOCK','WARN','INFO','NA'].includes(item.status) || typeof item.evidence !== 'string' || !item.evidence.trim()) throw Error(`Missing review evidence: ${id}`);
+    if (review.schemaVersion === 2 && item.status !== 'NA') {
+      if (!Array.isArray(item.references) || !item.references.length) throw Error(`Review references required for code-level evidence: ${id}`);
+      for (const reference of item.references) {
+        if (!reference || typeof reference.path !== 'string' || !reference.path.trim()) throw Error(`Invalid review reference path: ${id}`);
+        if (reference.line !== undefined && (!Number.isInteger(reference.line) || reference.line < 1)) throw Error(`Invalid review reference line: ${id}`);
+        const full = await safe(root, reference.path); let stat;
+        try { stat = await fs.lstat(full); } catch (error) { if (error.code === 'ENOENT') throw Error(`Review reference does not exist: ${reference.path}`); throw error; }
+        if (!stat.isFile()) throw Error(`Review reference must be a regular file: ${reference.path}`);
+      }
+    }
   }
+  if (!Array.isArray(review.findings) || !Array.isArray(review.unverified)) throw Error('Review requires findings and unverified arrays');
+  for (const finding of review.findings) {
+    if (!finding || typeof finding !== 'object' || Array.isArray(finding) || !['critical','warning','suggestion'].includes(finding.severity) || typeof finding.message !== 'string' || !finding.message.trim()) throw Error('Invalid review finding');
+  }
+  for (const reason of review.unverified) if (typeof reason !== 'string' || !reason.trim()) throw Error('Review unverified items must be non-empty strings');
 }
 async function quality(root, review) {
   const c = await config(root);
-  validateReview(review,reviewItemsFor(c));
+  await validateReview(root,review,reviewItemsFor(c));
   review=redactData(review);
   const before = await snapshot(root);
   if (review.fingerprint !== before.fingerprint) throw Error('Review is stale');
@@ -249,11 +310,29 @@ async function quality(root, review) {
     ? {id:'architecture',...await runScript(root,c,c.tools.architecture)}
     : {id:'architecture',status:'INFO',reason:'No project architecture adapter configured; AI architecture review still applies'});
   const stable = before.fingerprint === (await snapshot(root)).fingerprint;
-  const blocked = !stable || checks.some(c=>c.status==='BLOCK') || review.checks.some(c=>c.status==='BLOCK');
-  const result=await save(root,'quality-gate',{snapshot:before,status:blocked?'BLOCK':review.checks.some(c=>c.status==='WARN')?'WARN':'PASS',checks,review,stable});
+  const blocked = !stable || checks.some(c=>c.status==='BLOCK') || review.checks.some(c=>c.status==='BLOCK') || review.findings.some(f=>f.severity==='critical'||f.severity==='warning') || review.unverified.length>0;
+  const result=await save(root,'quality-gate',{snapshot:before,configHash:canonicalHash(c),status:blocked?'BLOCK':review.checks.some(c=>c.status==='WARN')?'WARN':'PASS',checks,review,stable});
   await saveUnifiedQualityReport(root,{profile:null,verification:null,policy:null,review:result});
   return result;
 }
+
+export async function validateQualityGateReport(root,report){
+ const c=await config(root),current=await snapshot(root);
+ if(!report||report.kind!=='quality-gate'||typeof report.id!=='string'||!report.id.trim())throw Error('Quality-gate report requires kind and a non-empty id');
+ if(report.stable!==true||!['PASS','WARN'].includes(report.status))throw Error('Quality-gate report must be stable and passing');
+ if(report.snapshot?.fingerprint!==current.fingerprint||report.review?.fingerprint!==current.fingerprint)throw Error('Quality-gate evidence is stale; rerun it against the current source');
+ if(report.configHash!==canonicalHash(c))throw Error('Quality-gate evidence was produced with a different quality configuration; rerun it');
+ if(!Array.isArray(report.checks)||!report.checks.length)throw Error('Quality-gate report checks are missing');
+ if(report.review?.schemaVersion!==2)throw Error('Fresh quality-gate evidence with schemaVersion 2 code references is required before implementation approval');
+ await validateReview(root,report.review,reviewItemsFor(c));
+ if(report.review.checks.some(item=>item.status==='BLOCK'))throw Error('Quality-gate review contains blocking findings');
+ if(report.review.findings.some(item=>item.severity==='critical'||item.severity==='warning'))throw Error('Quality-gate review contains unresolved critical or warning findings');
+ if(report.review.unverified.length)throw Error('Quality-gate review left applicable checks unverified');
+ if(!qualityTools.filter(id=>c.tools?.[id]).every(id=>report.checks.some(item=>item.id===id&&item.status==='PASS')))throw Error('Quality-gate tool checks are incomplete');
+ if(c.tools?.architecture&&!report.checks.some(item=>item.id==='architecture'&&item.status==='PASS'))throw Error('Configured architecture check is missing or did not pass');
+ return {config:c,snapshot:current};
+}
+
 async function gate(root, profile) {
   const current = await snapshot(root), c = await config(root);
   const localKind=`${c.verification?'engineering':'frontend'}-verify-${profile}`;let local;
@@ -261,23 +340,44 @@ async function gate(root, profile) {
   if(!local)throw Error('Missing verification report');
   const review = await json(root,'reports/quality-gate.json');
   for (const r of [local,review]) if (!r.stable || !['PASS','WARN','PASS_WITH_WAIVERS'].includes(r.status) || r.snapshot?.fingerprint !== current.fingerprint) throw Error('Missing, failed or stale quality evidence; rerun the configured verification and quality-gate');
-  if (!['frontend-verify','engineering-verify'].includes(local.kind?.replace(/-(commit|full)$/,'')) || !['PASS','PASS_WITH_WAIVERS'].includes(local.status)) throw Error('Wrong verification profile');
+  if(local.kind!==localKind||local.profile!==profile||!['PASS','PASS_WITH_WAIVERS'].includes(local.status))throw Error('Wrong verification profile');
   const required = checksForProfile(c,profile);
-  if (!c.qualityPolicy) throw Error('Mandatory qualityPolicy missing; legacy verification cannot pass');
-  validateReview(review.review,reviewItemsFor(c));
-  if (review.review.fingerprint!==current.fingerprint || review.review.checks.some(c=>c.status==='BLOCK') || !qualityTools.filter(id=>c.tools?.[id]).every(id=>review.checks?.some(c=>c.id===id && c.status==='PASS'))) throw Error('Review checks incomplete');
-  if(c.tools?.architecture&&!review.checks?.some(c=>c.id==='architecture'&&c.status==='PASS'))throw Error('Configured architecture check is missing or did not pass');
-  {const policy=evaluateQualityPolicy(c.qualityPolicy,profile,[...local.checks,{id:'evidence-report',status:local.stable?'PASS':'BLOCK'}],current);if(!['PASS','PASS_WITH_WAIVERS'].includes(policy.status)||policy.status!==local.qualityPolicy?.status)throw Error('Mandatory quality checks or waivers are incomplete');}
+  const ids=Array.isArray(local.checks)?local.checks.map(item=>item?.id):[];
+  if(!Array.isArray(local.checks)||new Set(ids).size!==ids.length||required.some(id=>!ids.includes(id))||ids.some(id=>!required.includes(id)))throw Error('Verification report checks do not match the configured profile');
+  if(c.verification?.profiles?.[profile])for(const id of required)if(local.checkDefinitions?.[id]!==canonicalHash(c.tools.checks[id]))throw Error(`Verification check definition changed: ${id}`);
+  if(c.schemaVersion===3&&profile==='full'&&!required.some(id=>c.tools.checks[id]?.kind==='security'))throw Error('Full profile requires a security check');
+  if (c.schemaVersion<3&&!c.qualityPolicy) throw Error('Mandatory qualityPolicy missing; legacy verification cannot pass');
+  await validateReview(root,review.review,reviewItemsFor(c));
+  const toolChecks=Array.isArray(review.checks)?review.checks:[];
+  if (review.review.fingerprint!==current.fingerprint || review.review.checks.some(c=>c.status==='BLOCK') || !qualityTools.filter(id=>c.tools?.[id]).every(id=>toolChecks.some(c=>c.id===id && c.status==='PASS'))) throw Error('Review checks incomplete');
+  if(c.tools?.architecture&&!toolChecks.some(c=>c.id==='architecture'&&c.status==='PASS'))throw Error('Configured architecture check is missing or did not pass');
+  if(c.qualityPolicy){const policy=evaluateQualityPolicy(c.qualityPolicy,profile,[...local.checks,{id:'evidence-report',status:local.stable?'PASS':'BLOCK'}],current);if(!['PASS','PASS_WITH_WAIVERS'].includes(policy.status)||policy.status!==local.qualityPolicy?.status)throw Error('Mandatory quality checks or waivers are incomplete');}
   return {status:local.status,snapshot:current,localReport:local.id,reviewReport:review.id};
 }
 async function doctor(root) {
-  const c = await config(root), checks = [];
+  let c;
+  try { c = await config(root); }
+  catch(error) {
+    if(error.code==='ENOENT') return save(root,'doctor',{
+      status:'BLOCK',
+      checks:[{id:'quality-config',path:'.instar-quality.json',status:'BLOCK',reason:'No quality configuration was found; create .instar-quality.json from templates/quality/README.md before running doctor or verification.'}],
+      nextSteps:['Create .instar-quality.json with schemaVersion 3, verification.profiles and tools.checks.','Run doctor again after the configured commands exist in the project.','Do not treat a missing configuration as a PASS.']
+    });
+    throw error;
+  }
+  const checks = [];
   const context=await projectContextFiles(root,c);
   checks.push({id:'context:architecture',path:context.architecture,status:context.architecture?(await exists(root,context.architecture)?'PASS':'BLOCK'):'INFO',reason:context.architecture?undefined:'No project architecture document configured or discovered; architecture review uses available project instructions and code'});
   checks.push({id:'context:design',path:context.design,status:context.design?(await exists(root,context.design)?'PASS':'BLOCK'):'INFO',reason:context.design?undefined:'No project design document configured or discovered; design review uses available project guidance and code'});
+  const designSystemStatus=context.designSystem?(await exists(root,context.designSystem)?'PASS':'BLOCK'):context.designSystemDirectory?'WARN':'INFO';
+  const designSystemReason=context.designSystem?undefined:context.designSystemDirectory?`Project design-system directory was found (${context.designSystemDirectory}) but no manifest was discovered; configure context.designSystem or add DESIGN.md, README.md, or index.md so designCheck can bind the project-owned source`:'No project design-system manifest configured or discovered; token sources and project design guidance remain usable';
+  checks.push({id:'context:designSystem',path:context.designSystem,directory:context.designSystemDirectory,status:designSystemStatus,reason:designSystemReason});
   checks.push({id:'context:tokens',configured:context.tokenResolution.configured,discovered:context.tokenResolution.discovered,paths:context.tokenResolution.results,status:context.tokenResolution.problems.length?'BLOCK':context.tokens.length?'PASS':'INFO',reason:context.tokenResolution.problems.length?'Configured or discovered Token sources must be regular, workspace-local files without symlinks':context.tokens.length?undefined:'No project Design Token source configured or discovered; do not invent token mappings'});
+  if(c.schemaVersion<3)checks.push({id:'quality-config-version',status:'WARN',schemaVersion:c.schemaVersion,targetSchemaVersion:3,reason:'Legacy quality configuration remains readable, but it cannot provide schema 3 strict command evidence. Migrate to schemaVersion 3; compatibility support is planned for removal in the next major release.'});
   const agentConfigPath='.codex/config.toml';
-  const allExpected={architect:'agents/architect.toml',developer:'agents/developer.toml','ui-reviewer':'agents/ui-reviewer.toml','code-reviewer':'agents/code-reviewer.toml','spec-reviewer':'agents/spec-reviewer.toml','frontend-reviewer':'agents/frontend-reviewer.toml'};
+  let installationStack='fullstack';
+  try{const initialized=JSON.parse(await read(root,'.instar.json'));const scope=initialized.installationScope??initialized.stack;if(['frontend','backend','fullstack'].includes(scope))installationStack=scope;}catch(error){if(error.code!=='ENOENT')throw error;}
+  const allExpected=Object.fromEntries(Object.entries({architect:'agents/architect.toml',developer:'agents/developer.toml','ui-reviewer':'agents/ui-reviewer.toml','code-reviewer':'agents/code-reviewer.toml','security-reviewer':'agents/security-reviewer.toml','spec-reviewer':'agents/spec-reviewer.toml','frontend-reviewer':'agents/frontend-reviewer.toml'}).filter(([name])=>installationStack!=='backend'||!['ui-reviewer','frontend-reviewer'].includes(name)));
   const allRoleNames=Object.keys(allExpected);
   let agentStatus='INFO',agentDetails={registered:[],missing:allRoleNames};
   try{
@@ -285,15 +385,14 @@ async function doctor(root) {
     try{stat=await fs.lstat(configFile);}catch(error){if(error.code!=='ENOENT')throw error;}
     if(stat){
       if(!stat.isFile())throw Error('Project Codex config must be a regular file');
-      const parsed=parseProjectAgentConfig(await fs.readFile(configFile,'utf8'));
+      const parsed=parseProjectAgentConfig(await read(root,agentConfigPath));
       const expected=allExpected;
       const registered=[],missing=[];
       for(const [name,relative] of Object.entries(expected)){
         const item=parsed.agents?.[name];
         if(item?.config_file!==relative){missing.push(name);continue;}
-        const agentPath=`.codex/${relative}`,resolved=await safe(root,agentPath);let agentStat;
-        try{agentStat=await fs.lstat(resolved);}catch(error){if(error.code!=='ENOENT')throw error;}
-        if(!agentStat?.isFile())missing.push(name);else{parseProjectAgentConfig(await fs.readFile(resolved,'utf8'));registered.push(name);}
+        const agentPath=`.codex/${relative}`;
+        try{parseProjectAgentConfig(await read(root,agentPath));registered.push(name);}catch(error){if(error.code==='ENOENT'||error.code==='EISDIR')missing.push(name);else throw error;}
       }
       agentDetails={registered,missing};agentStatus=missing.length?'WARN':'PASS';
     }
@@ -302,7 +401,18 @@ async function doctor(root) {
   for(const [key,label] of [['sessionState','context:session-state'],['lessons','context:lessons']])if(c.context?.[key])checks.push({id:label,path:c.context[key],status:await exists(root,c.context[key])?'PASS':'WARN',reason:'Optional session context destination'});
   if(c.schemaVersion<3)for (const file of ['package.json','package-lock.json','node_modules']) checks.push({id:file,status:await exists(root,file)?'PASS':'WARN'});
   checks.push({id:'github-workflows',status:await exists(root,'.github/workflows')?'PASS':'INFO',reason:await exists(root,'.github/workflows')?undefined:'No repository GitHub workflow directory discovered'});
-  if(c.verification)checks.push({id:'configured-verification',status:'PASS',profiles:{commit:c.verification.profiles.commit,full:c.verification.profiles.full},reason:'Configured command profiles were inspected; doctor does not execute them'});
+  if(c.verification){
+    const kinds=ids=>[...new Set(ids.map(id=>c.tools.checks[id]?.kind).filter(Boolean))];
+    const profiles={commit:c.verification.profiles.commit,implementation:c.verification.profiles.implementation||null,full:c.verification.profiles.full};
+    const missing=[];
+    if(!profiles.implementation)missing.push('implementation profile');
+    else for(const kind of ['lint','format','test'])if(!kinds(profiles.implementation).includes(kind))missing.push(`implementation ${kind}`);
+    if(!kinds(profiles.full).includes('security'))missing.push('full security');
+    checks.push({id:'configured-verification',status:missing.length?'WARN':'PASS',profiles,kinds:{commit:kinds(profiles.commit),implementation:profiles.implementation?kinds(profiles.implementation):[],full:kinds(profiles.full)},missingKinds:missing,reason:missing.length?`Profile preflight is incomplete: ${missing.join(', ')}`:'Configured command profiles were inspected; doctor does not execute them'});
+    const implementationIds=profiles.implementation||[],fullIds=profiles.full||[];
+    const browserOverlap=implementationIds.filter(id=>fullIds.includes(id)&&c.tools.checks[id]?.kind==='browser');
+    checks.push({id:'browser-overlap',status:browserOverlap.length?'WARN':'PASS',checks:browserOverlap,reason:browserOverlap.length?`Browser checks already covered by implementation are repeated in full: ${browserOverlap.join(', ')}; reuse the same snapshot evidence or remove them from full unless they add new semantics`:'No browser check is repeated across implementation and full profiles'});
+  }
   // Semantic checks belong to the project's tools, not this orchestrator.
   for (const id of ['design-lint','dependencies','ci-config','vue-doctor']) {
     if(!c.tools?.[id]){checks.push({id,status:'INFO',reason:'Optional project adapter is not configured'});continue;}
@@ -330,14 +440,20 @@ async function close(root, input) {
   const c=await config(root);
   const log = `logs/session-${id}.md`;
   const updates=[];
-  await write(root,log,`# Session ${id}\n\n${stamp}\n\n${summary?`## Summary\n${summary}\n\n`:'No session summary supplied; no project state was inferred.\n\n'}${lessons?`## Evidence-backed lesson\n${lessons}\n\n`:'No evidence-backed lesson supplied; none was recorded.\n\n'}Status: pending\n`,true);
+  let telemetry=null,telemetryPath=null;
+  if(input.sessionId){
+   try{telemetry=await readCodexSessionUsage(input.sessionId);if(telemetry.available){telemetryPath=`reports/usage/sessions/${digest(input.sessionId).slice(0,16)}.json`;await write(root,telemetryPath,JSON.stringify(telemetry,null,2)+'\n');}}
+   catch(error){telemetry={available:false,reason:error.message};}
+  }
+  const telemetryLine=telemetryPath?`\n## Token / API usage\n${telemetryPath}\n\nTotal tokens: ${telemetry.usage.totalTokens}; API calls: ${telemetry.apiCalls}\n\n`:'';
+  await write(root,log,`# Session ${id}\n\n${stamp}\n\n${summary?`## Summary\n${summary}\n\n`:'No session summary supplied; no project state was inferred.\n\n'}${lessons?`## Evidence-backed lesson\n${lessons}\n\n`:'No evidence-backed lesson supplied; none was recorded.\n\n'}${telemetryLine}Status: pending\n`,true);
   for(const [key,body,label] of [['sessionState',summary,'Session summary'],['lessons',lessons,'Observed lesson']])if(body&&c.context?.[key]){
     const file=c.context[key],old=await exists(root,file)?await read(root,file):`# ${label}\n`;
     await write(root,file,`${old.trimEnd()}\n\n## ${stamp} (${id})\n${body}\n`);updates.push({label,file,body});
   }
-  await write(root,log,`# Session ${id}\n\n${stamp}\n\n${summary?`## Summary\n${summary}\n\n`:'No session summary supplied; no project state was inferred.\n\n'}${lessons?`## Evidence-backed lesson\n${lessons}\n\n`:'No evidence-backed lesson supplied; none was recorded.\n\n'}${updates.length?`## Project context updated\n${updates.map(item=>`- ${item.label}: \`${item.file}\``).join('\n')}`:'No project context files were changed.'}\n\nStatus: complete\n`);
+  await write(root,log,`# Session ${id}\n\n${stamp}\n\n${summary?`## Summary\n${summary}\n\n`:'No session summary supplied; no project state was inferred.\n\n'}${lessons?`## Evidence-backed lesson\n${lessons}\n\n`:'No evidence-backed lesson supplied; none was recorded.\n\n'}${telemetryLine}${updates.length?`## Project context updated\n${updates.map(item=>`- ${item.label}: \`${item.file}\``).join('\n')}`:'No project context files were changed.'}\n\nStatus: complete\n`);
   if(pending) await fs.unlink(await safe(root,'logs/pending-session.json'));
-  return {status:'PASS',log,contextUpdated:updates.map(({label,file})=>({label,file}))};
+  return {status:'PASS',log,contextUpdated:updates.map(({label,file})=>({label,file})),telemetry:telemetryPath?{path:telemetryPath,apiCalls:telemetry.apiCalls,totalTokens:telemetry.usage.totalTokens}:telemetry};
 }
 function requireText(value, name) { if(typeof value!=='string' || !value.trim()) throw Error(`${name} required`); return value; }
 async function provenance(root,input) {
@@ -358,10 +474,10 @@ function assertStaged(root) {
 async function commitCheck(root) {
   assertStaged(root);
   const local=await verify(root,'commit');
-  if(!['PASS','PASS_WITH_WAIVERS'].includes(local.status)) throw Error('Configured commit verification failed');
+  if(!['PASS','PASS_WITH_WAIVERS'].includes(local.status)) { const error=Error('Configured commit verification failed'); error.code='QUALITY_VALIDATION_FAILED'; throw error; }
   const old=await json(root,'reports/quality-gate.json');
   const review=await quality(root,old.review);
-  if(review.status==='BLOCK') throw Error('quality-gate failed');
+  if(review.status==='BLOCK') { const error=Error('quality-gate failed'); error.code='QUALITY_VALIDATION_FAILED'; throw error; }
   return gate(root,'commit');
 }
 async function commit(root,input) {
@@ -372,7 +488,7 @@ async function commit(root,input) {
   let waived=false;
   try { await commitCheck(root); }
   catch(error) {
-    if(input.force!==true) throw error;
+    if(input.force!==true || error.code!=='QUALITY_VALIDATION_FAILED') throw error;
     requireText(input.reason,'force reason');
     // Only validation failure is waived. Scope/path and snapshot checks still apply.
     await save(root,'commit-waiver',{status:'WARN',snapshot:before,reason:input.reason,failure:error.message});
@@ -404,16 +520,15 @@ export async function run(input) {
   const plugin = await fs.realpath(fileURLToPath(new URL('../../',import.meta.url)));
   if(root===plugin || root.startsWith(plugin+path.sep)) throw Error('Target project must not be inside the plugin installation');
   if(input.action==='snapshot') return snapshot(root);
-  let handle, lock;
+  let lockHandle;
   try {
-    lock=await safe(root,'logs/.quality.lock');
-    await fs.mkdir(path.dirname(lock),{recursive:true});
-    handle=await fs.open(lock,'wx');
-    await handle.writeFile(JSON.stringify({pid:process.pid,at:now(),action:input.action}));
+    const lock=await safe(root,'logs/.quality.lock');
+    lockHandle=await acquireFileLock(lock,{relative:'logs/.quality.lock',action:input.action,label:'Quality'});
     try { return await dispatch(root,input); }
     catch(error) {
       // Never leave a prior PASS as the latest result after a failed recheck.
-      const verificationKinds=input.action==='engineering-verify'?[`engineering-verify-${input.profile==='commit'?'commit':'full'}`]:['local-verify','frontend-verify'].includes(input.action)?[`frontend-verify-${input.profile==='commit'?'commit':'full'}`,`engineering-verify-${input.profile==='commit'?'commit':'full'}`]:[];
+      const failedProfile=['commit','implementation','full'].includes(input.profile)?input.profile:'full';
+      const verificationKinds=input.action==='engineering-verify'?[`engineering-verify-${failedProfile}`]:['local-verify','frontend-verify'].includes(input.action)?[`frontend-verify-${failedProfile}`,`engineering-verify-${failedProfile}`]:[];
       const kinds=[...verificationKinds,...(['quality-gate','doctor','pre-pr-check'].includes(input.action)?[input.action]:[])];
       for(const kind of kinds) {
         try { await save(root,kind,{status:'BLOCK',stable:false,reason:error.message}); }
@@ -423,9 +538,8 @@ export async function run(input) {
     }
   } catch(error) {
     if(input.action==='session-close') return {status:'WARN',reason:error.message};
-    if(error.code==='EEXIST') throw Error('Quality operation already running; inspect logs/.quality.lock before recovery');
     throw error;
   } finally {
-    if(handle) { await handle.close(); await fs.unlink(lock); }
+    if(lockHandle) await releaseFileLock(lockHandle);
   }
 }

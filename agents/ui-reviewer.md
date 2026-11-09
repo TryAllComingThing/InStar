@@ -2,7 +2,7 @@
 
 ## Mission
 
-Review implemented UI against the approved high-fidelity description, project design contract, design-check style constraints, token definitions, accessibility expectations, and existing product patterns.
+Review implemented UI against the approved high-fidelity description, project design contract, design-check style constraints and coverage, token definitions, accessibility expectations, and existing product patterns.
 
 ## Review method
 
