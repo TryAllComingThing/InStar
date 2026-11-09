@@ -67,6 +67,10 @@ async function normalizeDesignReuse(root,value){
   return {kind,name,...(file?{path:file,contentHash}:{}),...(note?{note}:{})};
  }));
 }
+function normalizeDesignReuseReason(value){
+ if(value===undefined||value===null)return null;
+ return boundedText(requireText(value,'designReuseReason'),2000);
+}
 function requiredImplementationKinds(s){return requiredWorkflowKinds('implementation',s.ui);}
 function requiredExtendedKinds(s){return requiredWorkflowKinds('full',s.ui);}
 function evidenceSourceHash(record){return record?.sourceHash||(record?.sourceSnapshot?hash(record.sourceSnapshot):null);}
@@ -90,9 +94,9 @@ async function assertSpecReview(root,s){
 async function rejectPending(root,s,feedback){
  const kind=s.pendingApproval;if(!kind)throw Error('No pending review');clearPending(s);s.stage={prd:'prd',spec:'spec',design:'design',tasks:'tasks',implementation:s.schemaVersion>=5?'implementation':'tasks',acceptance:'implementation'}[kind];s.feedback=feedback;
  const dir=changeDir(root,s.changeId);
- if(kind==='prd'){for(const name of ['proposal.md','technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});s.taskEvidence={};delete s.specReview;delete s.gate;delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designReuse;delete s.verification;for(const key of ['spec','design','tasks','implementation','acceptance'])delete s.approvals[key];}
- if(kind==='spec'){for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designReuse;s.taskEvidence={};delete s.verification;for(const key of ['design','tasks','implementation','acceptance'])delete s.approvals[key];}
- if(kind==='design'){for(const name of ['tasks.md','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designReuse;s.taskEvidence={};delete s.verification;for(const key of ['tasks','implementation','acceptance'])delete s.approvals[key];}
+ if(kind==='prd'){for(const name of ['proposal.md','technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});s.taskEvidence={};delete s.specReview;delete s.gate;delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designReuse;delete s.designReuseReason;delete s.verification;for(const key of ['spec','design','tasks','implementation','acceptance'])delete s.approvals[key];}
+ if(kind==='spec'){for(const name of ['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designReuse;delete s.designReuseReason;s.taskEvidence={};delete s.verification;for(const key of ['design','tasks','implementation','acceptance'])delete s.approvals[key];}
+ if(kind==='design'){for(const name of ['tasks.md','.tasks.json'])await fs.rm(safe(dir,name),{force:true});delete s.designReuse;delete s.designReuseReason;s.taskEvidence={};delete s.verification;for(const key of ['tasks','implementation','acceptance'])delete s.approvals[key];}
  if(kind==='tasks'){for(const name of ['tasks.md','.tasks.json'])await fs.rm(safe(dir,name),{force:true});s.taskEvidence={};delete s.verification;delete s.implementationReview;for(const key of ['tasks','implementation','acceptance'])delete s.approvals[key];}
  if(kind==='implementation'){delete s.verification;delete s.implementationReview;for(const key of ['implementation','acceptance'])delete s.approvals[key];}
  if(kind==='acceptance'){delete s.verification;delete s.implementationReview;delete s.approvals.implementation;delete s.approvals.acceptance;}
@@ -385,7 +389,10 @@ export async function run(input){
         const missingProjectSources=projectSources.filter(file=>!sourcePaths.has(file));
         if(missingProjectSources.length)throw Error(`designCheck must include configured project design sources: ${missingProjectSources.join(', ')}`);
         s.designCheck={constraints:boundedText(input.designCheck.constraints,12000),coverage,sources,at:now()};
-        s.designReuse=await normalizeDesignReuse(root,input.designReuse);
+        const designReuse=await normalizeDesignReuse(root,input.designReuse);
+        const designReuseReason=normalizeDesignReuseReason(input.designReuseReason);
+        if(!designReuse?.some(item=>item.kind==='component'||item.kind==='pattern')&&!designReuseReason)throw Error('UI design requires designReuse with at least one component or pattern item, or designReuseReason explaining why no reusable component or pattern exists');
+        s.designReuse=designReuse;s.designReuseReason=designReuseReason;
        }
        await engine.generateDesignDoc({...ref,specReviewed:true,generate:async()=>input.document});s.designConstraintsHash=hash(ctx.context.projectArchitecture.guidance);s.designStandardsHash=hash(ctx.context.projectArchitecture.standards);s.designInStarReferencesHash=ctx.context.instarReferences.fingerprint;s.stage='tasks';delete s.approvals.design;delete s.approvals.tasks;delete s.approvals.implementation;s.taskEvidence={};for(const name of ['tasks.md','.tasks.json'])await fs.rm(safe(changeDir(root,id),name),{force:true});await pending(root,s,separateApprovalFlow(s)?'design':'implementation');}
       else{if(taskItems(input.document).some(t=>t.done))throw Error('New tasks must be unchecked');await engine.generateTaskList({...ref,generate:async()=>input.document});s.stage='implementation';delete s.approvals.tasks;delete s.approvals.implementation;s.taskEvidence={};await pending(root,s,separateApprovalFlow(s)?'tasks':'implementation');}break;
@@ -445,7 +452,7 @@ export async function run(input){
       const dir=changeDir(root,id);if(stage==='prd')await fs.rm(dir,{recursive:true,force:true});
       if(['spec','design','tasks'].includes(stage))for(const name of stage==='tasks'?['tasks.md','.tasks.json']:['technical-design.md','design.md','tasks.md','.review.json','.tasks.json'])await fs.rm(safe(dir,name),{force:true});
       if(['prd','spec','design','tasks'].includes(stage)){s.taskEvidence={};delete s.specReview;delete s.gate;}
-      if(['prd','spec','design'].includes(stage)){delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designReuse;}
+      if(['prd','spec','design'].includes(stage)){delete s.designConstraintsHash;delete s.designStandardsHash;delete s.designInStarReferencesHash;delete s.designReuse;delete s.designReuseReason;}
       delete s.verification;if(stage!=='verification')delete s.implementationReview;clearPending(s);s.stage=stage;s.reopenReason=input.reason;if(stage==='prd'){s.clarifications=[];s.status='in-progress';}break;
      }
      default:throw Error(`Unknown action: ${input.action}`);

@@ -56,6 +56,8 @@ write-a-prd
 
 Workflow 请求一般需要 `project`、`changeId`、当前 `expectedVersion`；初始化只要求路径。
 
+UI 变更的 `write-design` 额外要求 `designCheck:{constraints,coverage,sources}`，以及 `designReuse` 中至少一个 `component`/`pattern` 条目或 `designReuseReason`。复用文件内容与理由进入设计与任务审批哈希。
+
 ## 3. Quality action
 
 | Action | 作用 |

@@ -34,6 +34,12 @@ async function boundDesignReuse(root,items){
  if(!Array.isArray(items))return items;
  return Promise.all(items.map(async item=>({...item,...(item.path?{contentHash:hash(await readBufferVerified(root,item.path))}:{contentHash:null})})));
 }
+async function reuseEvidence(root,state){
+ const evidence={};
+ if(state.designReuse)evidence.designReuse=await boundDesignReuse(root,state.designReuse);
+ if(state.designReuseReason)evidence.designReuseReason=state.designReuseReason;
+ return evidence;
+}
 async function currentGovernance(root,state){
  const bundle=await specBundle(root,state),architecture=await projectArchitecture(root,state.changeId);
  const include=state.ui&&(state.stack==='frontend'||state.stack==='fullstack');
@@ -44,7 +50,7 @@ async function currentGovernance(root,state){
 }
 async function planBundle(root,state){
  const dir=changeDir(root,state.changeId),governance=await currentGovernance(root,state);
- return {...await specBundle(root,state),design:await technicalDesign(root,dir),tasks:(await read(dir,'tasks.md')).replace(/^- \[[ xX]\]/gm,'- [ ]'),designConstraintsHash:governance.constraintsHash,designStandardsHash:governance.standardsHash,designInStarReferencesHash:governance.referencesHash,...(state.designReuse?{designReuse:await boundDesignReuse(root,state.designReuse)}:{})};
+ return {...await specBundle(root,state),design:await technicalDesign(root,dir),tasks:(await read(dir,'tasks.md')).replace(/^- \[[ xX]\]/gm,'- [ ]'),designConstraintsHash:governance.constraintsHash,designStandardsHash:governance.standardsHash,designInStarReferencesHash:governance.referencesHash,...await reuseEvidence(root,state)};
 }
 export function taskItems(document){const lines=document.split('\n'),mask=buildCodeFenceMask(lines);const result=[];const ids=new Set();for(let i=0;i<lines.length;i++){
  if(mask[i])continue;const line=lines[i];if(/^\s*[-*+] \[/.test(line)){
@@ -56,9 +62,9 @@ export async function approvalHash(root,state,kind){
  if(kind==='design'){
   const designCheck=state.designCheck?{constraints:state.designCheck.constraints,coverage:state.designCheck.coverage||null,sources:await resolveDesignCheckSources(root,state.designCheck.sources,{inferLegacy:true}),at:state.designCheck.at}:null;
   const governance=await currentGovernance(root,state);
-  return hash({design:await technicalDesign(root,changeDir(root,state.changeId)),designCheck,designConstraintsHash:governance.constraintsHash,designStandardsHash:governance.standardsHash,designInStarReferencesHash:governance.referencesHash,...(state.designReuse?{designReuse:await boundDesignReuse(root,state.designReuse)}:{})});
+  return hash({design:await technicalDesign(root,changeDir(root,state.changeId)),designCheck,designConstraintsHash:governance.constraintsHash,designStandardsHash:governance.standardsHash,designInStarReferencesHash:governance.referencesHash,...await reuseEvidence(root,state)});
  }
- if(kind==='tasks'){const governance=await currentGovernance(root,state);return hash({design:await technicalDesign(root,changeDir(root,state.changeId)),tasks:(await read(changeDir(root,state.changeId),'tasks.md')).replace(/^- \[[ xX]\]/gm,'- [ ]'),designConstraintsHash:governance.constraintsHash,designStandardsHash:governance.standardsHash,designInStarReferencesHash:governance.referencesHash,...(state.designReuse?{designReuse:await boundDesignReuse(root,state.designReuse)}:{})});}
+ if(kind==='tasks'){const governance=await currentGovernance(root,state);return hash({design:await technicalDesign(root,changeDir(root,state.changeId)),tasks:(await read(changeDir(root,state.changeId),'tasks.md')).replace(/^- \[[ xX]\]/gm,'- [ ]'),designConstraintsHash:governance.constraintsHash,designStandardsHash:governance.standardsHash,designInStarReferencesHash:governance.referencesHash,...await reuseEvidence(root,state)});}
  if(kind==='implementation'){
   if(state.schemaVersion>=5)return hash({plan:await planBundle(root,state),tasks:await read(changeDir(root,state.changeId),'tasks.md'),taskEvidence:state.taskEvidence,implementationReview:state.implementationReview||null});
   return hash(await planBundle(root,state));

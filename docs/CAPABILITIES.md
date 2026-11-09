@@ -46,7 +46,7 @@ InStar v2.4 包含 21 个原生 Skill、4 个兼容命令入口（1 个独立诊
 
 | Skill | 作用 | 关键输入/输出 | 重要边界 |
 | --- | --- | --- | --- |
-| `design-check` | 从项目设计契约、Token 和高保真说明提取当前变更的 Style Constraints | 约束、来源、Token 映射；供技术设计与实现使用 | 不改项目级 `DESIGN.md`，不凭空造 Token |
+| `design-check` | 从项目设计契约、Token 和高保真说明提取当前变更的 Style Constraints | 约束、来源、Token 映射、组件/模式复用证据；供技术设计与实现使用 | 不改项目级 `DESIGN.md`，不凭空造 Token；UI 设计必须有 component/pattern 复用证据或显式无复用理由 |
 | `extract-design-md` | 从现有前端源码提取完整设计系统 | 分析组件、CSS、Tailwind、主题、Token；项目根 `DESIGN.md` | 保留既有人工章节；不修改应用样式 |
 | `engineering-research` | 在新增依赖或陌生 API 前做证据化调研 | 仓库现状、锁定版本、官方文档、替代方案 | 不为了研究而联网或安装依赖 |
 | `systematic-debugging` | 复现、定位最早失败边界并做最小根因修复 | 复现、证据、修复、回归测试 | 不关闭检查、不吞错误、不盲目重试 |

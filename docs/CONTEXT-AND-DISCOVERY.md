@@ -182,7 +182,7 @@ planning/discovery/<uuid>.json
 - 响应式、交互、状态、可访问性约束；
 - 未决项和参考比较限制。
 
-它不修改项目级 `DESIGN.md` 或 Token。UI 受控工作流需要 `design-check` trace，并把 constraints/sources 传入 `write-design`。技术设计和 Review 还应说明复用了哪些现有组件、Token、布局与交互模式，以及偏离原因；可选传入结构化 `designReuse: [{kind, name, path?, note?}]`，kind 为 `component|token|layout|interaction|pattern`，该字段会绑定设计/任务审批。
+它不修改项目级 `DESIGN.md` 或 Token。UI 受控工作流需要 `design-check` trace，并把 constraints/sources 传入 `write-design`。技术设计和 Review 必须说明复用了哪些现有组件、Token、布局与交互模式，以及偏离原因；同时传入结构化 `designReuse: [{kind, name, path?, note?}]`，kind 为 `component|token|layout|interaction|pattern`。其中至少需要一个 `component` 或 `pattern` 条目；确实没有可复用组件/模式时，必须提供 `designReuseReason` 说明原因。复用文件内容与理由都会绑定设计/任务审批。
 
 ### Extract DESIGN.md（项目级）
 

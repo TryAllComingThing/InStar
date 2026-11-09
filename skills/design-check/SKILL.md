@@ -49,13 +49,19 @@ For a tracked UI change, also return a machine-recordable handoff:
   "coverage": ["hierarchy", "layout", "states", "tokens", "responsive", "accessibility"],
   "sources": [
     {"path": "project-relative source path actually read", "role": "design-contract"}
-  ]
+  ],
+  "designReuse": [
+    {"kind": "component", "name": "Existing component or pattern to reuse", "path": "project-relative path", "note": "How it will be reused"}
+  ],
+  "designReuseReason": "Only when no reusable component or pattern exists: why, with evidence"
 }
 ```
 
 `coverage` must list all six categories. The constraints text must state when a category is not applicable and why. Each source role must be one of `design-contract`, `design-system`, `tokens`, `component`, or `reference`. The controller validates the role against the file type, rejects sensitive/generated paths and symlinks, and computes `sha256`, `bytes`, and media `type`; do not provide or invent those metadata fields. Legacy string sources are normalized for compatibility, but new handoffs must use the structured form. A later content change invalidates the design approval and requires `design-check` and `write-design` to run again.
 
 Record `trace-skill` with skill `design-check`, stage `design`, one invocation ID, `started`, then `completed`; pass the handoff to `write-design` as `designCheck`. A UI workflow cannot write its technical design without this evidence. If no high-fidelity reference, token source, or design-system manifest exists, say so in the handoff rather than inventing values.
+
+For UI work, the handoff must include at least one `designReuse` item with `kind: "component"` or `kind: "pattern"`, or a `designReuseReason` explaining why no reusable component or pattern exists. Reuse file content and the reason are bound to design and task approvals. Do not use `token`, `layout`, or `interaction` items as substitutes for the required component/pattern evidence.
 
 The output is an input to the tracked technical design; it is not approval to implement. Do not write directly to project `DESIGN.md`, token files, or review-approved planning artifacts.
 

@@ -100,6 +100,7 @@ context → [UI: design-check] → write-design → 人工审批 → tasks
 - 读取项目 `AGENTS.md`、架构/设计文档、`standards/`、Token 来源和观察到的项目树。
 - `context.emptyProject === true` 时跳过架构/参考探索，并明确记录。
 - UI 变更必须完成 `design-check` trace，并将 `constraints`、`coverage`、`sources` 传给 `write-design`。`coverage` 必须覆盖 `hierarchy`、`layout`、`states`、`tokens`、`responsive`、`accessibility`；不适用项也要显式列出。每个 source 使用 `{path, role}`，角色为 `design-contract`、`design-system`、`tokens`、`component` 或 `reference`；旧字符串来源会兼容归一化。
+- UI 设计必须提供 `designReuse` 中至少一个 `component` 或 `pattern` 条目，或提供 `designReuseReason` 明确说明为什么没有可复用组件/模式。仅提供 `token`、`layout` 或 `interaction` 条目不满足门禁。复用证据的文件内容与说明都会进入设计与任务审批哈希，内容变化会使审批 stale。
 - 控制器拒绝符号链接、敏感/生成路径和角色不匹配的文件类型，并自动记录 `sha256`、`bytes`、`type`。设计审批会重算来源内容指纹，来源变化后设计审批立即 stale。
 - 设计写入 `technical-design.md`，绑定设计内容、designCheck、项目指引/标准/InStar 参考指纹。设计上下文同时返回 `designReferenceMode`（`bootstrap`、`quality` 或 `false`）供审计。
 - 旧 `design.md` 和旧 workflow schema 仍可被 `state`/`context` 读取，但响应会附加 `compatibility` 告警。告警不写入状态、不改变审批哈希；`design.md` 应迁移到 `technical-design.md`，旧 workflow 必须显式执行 `migrate`。两类兼容支持计划在下一个大版本移除。
