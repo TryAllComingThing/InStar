@@ -1,28 +1,39 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { FileSystemUtils } from './file-system.js';
+import type { Dirent } from 'node:fs';
+import { readDirectoryVerified } from '../../../shared/path-safety.mjs';
+
 export async function discoverSpecFiles(root: string): Promise<{id: string; specFile: string}[]> {
   const result: {id: string; specFile: string}[] = [];
+  const base = path.resolve(root);
+
+  // Distinguish a missing optional specs directory from a directory that
+  // changes or becomes unsafe during the scan. Later reads must fail closed.
   try {
-    const stat = await fs.lstat(root);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Unsafe spec directory: ${root}`);
-  } catch(error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
-  async function visit(dir: string) {
-    FileSystemUtils.assertPathWithin(root, dir);
-    let entries;
-    try { entries = await fs.readdir(dir, {withFileTypes:true}); }
-    catch(error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-    for (const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))) {
-      const file = path.join(dir,entry.name);
-      if (entry.isSymbolicLink()) throw new Error(`Symlinks are unsupported: ${file}`);
-      if (entry.isDirectory()) await visit(file);
-      else if (entry.name === 'spec.md' && dir !== root) {
-        const stat = await fs.lstat(file);
-        if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Unsafe spec file: ${file}`);
-        result.push({id:path.relative(root,dir).split(path.sep).join('/'),specFile:file});
+    await readDirectoryVerified(base, '.', {label: 'spec directory'});
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+
+  async function visit(relative: string): Promise<void> {
+    const entries: Dirent<string>[] = await readDirectoryVerified(base, relative, {
+      label: relative === '.' ? 'spec directory' : `spec directory ${relative}`,
+    });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const child = relative === '.' ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isSymbolicLink()) throw new Error(`Symlinks are unsupported: ${child}`);
+      if (entry.isDirectory()) {
+        await visit(child);
+        continue;
       }
-      else throw new Error(`Unexpected spec file: ${file}`);
+      if (entry.name !== 'spec.md' || relative === '.') {
+        throw new Error(`Unexpected spec file: ${child}`);
+      }
+      if (!entry.isFile()) throw new Error(`Unsafe spec file: ${child}`);
+      result.push({ id: relative, specFile: path.join(base, ...child.split('/')) });
     }
   }
-  await visit(root); return result;
+
+  await visit('.');
+  return result;
 }

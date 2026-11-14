@@ -7,11 +7,32 @@ import path from 'node:path';
 import {evaluateQualityPolicy,validateQualityPolicy} from '../src/quality-controller/policy.mjs';
 import {acquireFileLock,releaseFileLock} from '../src/shared/file-lock.mjs';
 import {runCommand,windowsCommandPlan} from '../src/shared/run-command.mjs';
-import {openVerified,readTextVerified} from '../src/shared/path-safety.mjs';
+import {openVerified,readHandleVerified,readTextVerified} from '../src/shared/path-safety.mjs';
+import {normalizeProfileName,requiredWorkflowKinds,verificationReportKind,verificationReportVariants} from '../src/shared/profile-contract.mjs';
 const snapshot={fingerprint:'snapshot-a',head:'commit-a'};
 const full=['Q-01','Q-02','Q-03','Q-04','Q-05','Q-06','Q-07'].map((category,i)=>({category,checkId:category==='Q-07'?'evidence-report':`check-${i+1}`}));
 const policy={schemaVersion:1,profiles:{commit:[full[0],full[6]],full}};
 const checks=full.map(x=>({id:x.checkId,status:'PASS'}));
+test('preflight is canonical and commit remains a read-compatible profile alias',()=>{
+ assert.equal(normalizeProfileName('commit'),'preflight');
+ assert.equal(normalizeProfileName('preflight'),'preflight');
+ assert.equal(verificationReportKind('commit'),'engineering-verify-preflight');
+ assert.deepEqual(verificationReportVariants('preflight'),[
+  {profile:'preflight',kind:'engineering-verify-preflight'},
+  {profile:'commit',kind:'engineering-verify-commit'}
+ ]);
+ assert.deepEqual(requiredWorkflowKinds('commit'),[]);
+ assert.throws(()=>normalizeProfileName('unknown'),/profile must be/);
+});
+test('quality policy accepts canonical preflight and legacy commit profiles',()=>{
+ const preflight={schemaVersion:1,profiles:{preflight:[full[0],full[6]],full}};
+ assert.doesNotThrow(()=>validateQualityPolicy(preflight));
+ assert.equal(evaluateQualityPolicy(preflight,'preflight',checks,snapshot).status,'PASS');
+ assert.equal(evaluateQualityPolicy(preflight,'commit',checks,snapshot).status,'PASS');
+ assert.doesNotThrow(()=>validateQualityPolicy(policy));
+ assert.equal(evaluateQualityPolicy(policy,'preflight',checks,snapshot).status,'PASS');
+ assert.throws(()=>validateQualityPolicy({...preflight,profiles:{...preflight.profiles,unknown:[full[0]]}}),/Invalid qualityPolicy profile/);
+});
 test('mandatory full matrix and fail closed',()=>{
  assert.doesNotThrow(()=>validateQualityPolicy(policy));
  assert.throws(()=>validateQualityPolicy({...policy,profiles:{...policy.profiles,full:full.slice(0,-2).concat(full[6])}}),/Q-01 through Q-07/);
@@ -30,10 +51,11 @@ test('waiver must carry risk, compensating control, approver and scope; never Q-
 });
 test('lock release never removes a replacement owner',async t=>{
  const root=await mkdtemp(path.join(tmpdir(),'instar-lock-'));t.after(()=>rm(root,{recursive:true,force:true}));
- const file=path.join(root,'lock.json');const lock=await acquireFileLock(file);
- await rm(file);await writeFile(file,JSON.stringify({pid:1,action:'replacement',token:'replacement-token'}));
+ const file=path.join(root,'lock');const lock=await acquireFileLock(file);
+ await rm(lock.ownerFile);
+ await writeFile(lock.ownerFile,JSON.stringify({pid:1,action:'replacement',token:'replacement-token'}));
  await releaseFileLock(lock);
- assert.equal(JSON.parse(await readFile(file,'utf8')).token,'replacement-token');
+ assert.equal(JSON.parse(await readFile(lock.ownerFile,'utf8')).token,'replacement-token');
 });
 test('command timeout terminates descendants and reports ETIMEDOUT',async t=>{
  const root=await mkdtemp(path.join(tmpdir(),'instar-process-'));t.after(()=>rm(root,{recursive:true,force:true}));
@@ -50,6 +72,16 @@ test('windows command planning quotes shims and rejects shell metacharacters',()
  assert.deepEqual(windowsCommandPlan('C:\\tools\\node.exe',['-e','process.exit(0)']),{command:'C:\\tools\\node.exe',args:['-e','process.exit(0)'],shell:false});
  assert.throws(()=>windowsCommandPlan('npm',['run','%PATH%']),error=>error.code==='EINVAL');
  assert.throws(()=>windowsCommandPlan('npm',['run','a"b']),error=>error.code==='EINVAL');
+});
+test('verified reads enforce byte limits without unbounded readFile',async t=>{
+ const root=await mkdtemp(path.join(tmpdir(),'instar-read-limit-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ await writeFile(path.join(root,'input.txt'),'12345');
+ const handle=await openVerified(root,'input.txt',constants.O_RDONLY);
+ try{
+  handle.readFile=async()=>{throw Error('unbounded readFile used');};
+  assert.equal((await readHandleVerified(root,'input.txt',handle,{maxBytes:5})).toString('utf8'),'12345');
+  await assert.rejects(readHandleVerified(root,'input.txt',handle,{maxBytes:4}),/Input exceeds 4 byte limit/);
+ }finally{await handle.close();}
 });
 test('verified reads reject a parent replacement after path resolution',async t=>{
  const base=await mkdtemp(path.join(tmpdir(),'instar-path-race-')),root=path.join(base,'project'),outside=path.join(base,'outside');

@@ -18,7 +18,7 @@ test('CLI reports usage and malformed JSON as JSON errors with nonzero exit',()=
  }
 });
 test('friendly CLI help exits zero for every public entry',()=>{
- for(const args of [['--help'],['doctor','--help'],['snapshot','-h'],['verify','--help'],['review','--help'],['ci','--help'],['spec-discover','--help'],['status','--help']]){
+ for(const args of [['--help'],['doctor','--help'],['snapshot','-h'],['verify','--help'],['review','--help'],['spec-discover','--help'],['status','--help']]){
   const result=spawnSync(process.execPath,[bin,...args],{encoding:'utf8'});
   assert.equal(result.status,0,`${args.join(' ')}\n${result.stderr}`);assert.match(result.stdout,/Usage:/);
  }

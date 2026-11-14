@@ -5,7 +5,9 @@
     ["spec-explore", "spec-propose"],
     ["frontend-verify", "engineering-verify"],
     ["design-check", "extract-design-md"],
-    ["quality-evaluation", "quality-gate"]
+    ["quality-evaluation", "quality-gate"],
+    ["quick-change", "requirements-workflow"],
+    ["micro-change", "quick-change"]
   ],
   "queries": [
     {"query": "只补一段 PRD 验收标准，不要生成 Spec。", "shouldTrigger": true, "expected": "write-a-prd"},
@@ -28,11 +30,16 @@
     {"query": "这个项目的 design-system 文档在哪里，提取完整设计系统。", "shouldTrigger": true, "expected": "extract-design-md"},
     {"query": "只检查本次按钮改动的设计与 Token 约束。", "shouldTrigger": true, "expected": "design-check"},
     {"query": "对这份 PRD 做语义评测，但不要跑代码评审。", "shouldTrigger": true, "expected": "quality-evaluation"},
+    {"query": "这是个小功能，只改一个本地工具函数，走快速通道并在改前给我一页变更说明。", "shouldTrigger": true, "expected": "quick-change"},
+    {"query": "只更新 README 和对应单元测试，不要 PRD、Spec 或变更说明，走最轻量通道。", "shouldTrigger": true, "expected": "micro-change"},
+    {"query": "这个 UI 登录页要改认证流程，需要完整需求工作流。", "shouldTrigger": true, "expected": "requirements-workflow"},
     {"query": "只解释这份 PRD 的一段，不要修改。", "shouldTrigger": false, "expected": null, "nearMiss": "write-a-prd"},
     {"query": "只讨论方案，不要创建 change 或 proposal。", "shouldTrigger": false, "expected": null, "nearMiss": "spec-explore"},
     {"query": "解释这个前端报错，不要跑浏览器验收。", "shouldTrigger": false, "expected": null, "nearMiss": "frontend-verify"},
     {"query": "解释这个后端类型错误，不要生成验证报告。", "shouldTrigger": false, "expected": null, "nearMiss": "engineering-verify"},
     {"query": "解释 DESIGN.md 里已有的一个 token，不要重新提取设计系统。", "shouldTrigger": false, "expected": null, "nearMiss": "extract-design-md"},
-    {"query": "解释质量门的报告格式，不要执行代码评审。", "shouldTrigger": false, "expected": null, "nearMiss": "quality-gate"}
+    {"query": "解释质量门的报告格式，不要执行代码评审。", "shouldTrigger": false, "expected": null, "nearMiss": "quality-gate"},
+    {"query": "解释这个快速通道需要哪些审批，不要开始改动。", "shouldTrigger": false, "expected": null, "nearMiss": "quick-change"},
+    {"query": "解释 micro-change 允许哪些文件，不要开始改动。", "shouldTrigger": false, "expected": null, "nearMiss": "micro-change"}
   ]
 }

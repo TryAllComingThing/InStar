@@ -1,6 +1,6 @@
-import {readdir} from 'node:fs/promises';
-import {appendJsonl,atomic,exists,hash,now,read,requireText,safe} from './files.mjs';
+import {appendTrace,atomic,exists,hash,now,read,requireText,safe} from './files.mjs';
 import {changeDir} from './documents.mjs';
+import {readDirectoryVerified} from '../shared/path-safety.mjs';
 
 const qualityRubrics={
  prd:['problem-outcome','scope-boundaries','user-journey-states','measurable-acceptance','risks-dependencies'],
@@ -15,8 +15,11 @@ async function artifact(root,state,stage){
  if(stage==='spec'){
   const proposal=await read(dir,'proposal.md');
   const specsRoot=safe(dir,'specs');let docs='';
-  for(const capability of await readdir(specsRoot)){
-   const full=safe(specsRoot,capability,'spec.md');if(await exists(full))docs+=`\n\n<!-- ${capability} -->\n${await read(full)}`;
+  const entries=await readDirectoryVerified(dir,'specs',{label:`planning/changes/${state.changeId}/specs`});
+  for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
+   if(entry.isSymbolicLink())throw Error(`Symlink spec capability is not allowed: ${entry.name}`);
+   if(!entry.isDirectory())continue;
+   const full=safe(specsRoot,entry.name,'spec.md');if(await exists(full))docs+=`\n\n<!-- ${entry.name} -->\n${await read(dir,'specs',entry.name,'spec.md')}`;
   }
   return {path:`planning/changes/${state.changeId}/(proposal.md + specs/*/spec.md)`,text:proposal+docs};
  }
@@ -48,6 +51,6 @@ export async function evaluate(root,state,input){
  const report={schemaVersion:1,changeId:state.changeId,stage,evaluator,artifact:doc.path,fingerprint,score,criteria,status,at:now(),limitations:'AI-assisted semantic assessment; evidence excerpts and artifact fingerprint are mechanically checked, evaluator judgment is not independently proven.'};
  const relative=`reports/semantic-quality/${state.changeId}/${stage}.json`;
  await atomic(root,relative,JSON.stringify(report,null,2)+'\n');
- await appendJsonl(root,'.workflow/traces.jsonl',{type:'quality-evaluation',changeId:state.changeId,stage,artifactFingerprint:fingerprint,status,at:report.at});
+ await appendTrace(root,state.changeId,{type:'quality-evaluation',changeId:state.changeId,stage,artifactFingerprint:fingerprint,status,at:report.at});
  return report;
 }

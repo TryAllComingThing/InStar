@@ -34,8 +34,8 @@ try {
  await assert.rejects(access(path.join(plugin,'plugin.json')),{code:'ENOENT'});
  await assert.rejects(access(path.join(plugin,'assets')),{code:'ENOENT'});
  await assert.rejects(access(path.join(plugin,'logs')),{code:'ENOENT'});
- assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,21);
- for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','agents/architect.md','agents/developer.md','agents/ui-reviewer.md','agents/code-reviewer.md','agents/security-reviewer.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/shared/usage-telemetry.mjs','runtime/quality-controller/ci.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','technical-design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
+assert.equal((await readdir(path.join(plugin,'skills'),{withFileTypes:true})).filter(x=>x.isDirectory()).length,22);
+ for(const file of ['.codex-plugin/plugin.json','hooks/hooks.json','hooks/quality-hook.mjs','commands/doctor.md','commands/design-check.md','commands/extract-design-md.md','agents/architect.md','agents/developer.md','agents/ui-reviewer.md','agents/code-reviewer.md','agents/security-reviewer.md','runtime/quality-controller/cli.mjs','runtime/shared/redaction.mjs','runtime/shared/bounded-input.mjs','runtime/shared/usage-telemetry.mjs','runtime/workflow-controller/evaluation.mjs','LICENSE','README.md','docs/LOCAL_TESTING.md','docs/EVALUATION.md','runtime/openspec-min/node_modules/zod/package.json','runtime/node_modules/smol-toml/package.json',...['proposal','spec','technical-design','tasks'].map(n=>`runtime/openspec-min/artifact-templates/${n}.md`)])await access(path.join(plugin,file));
  await assert.rejects(access(path.join(plugin,'runtime/openspec-min/artifact-templates/design.md')),{code:'ENOENT'});
  function call(input){
   const r=spawnSync(process.execPath,[path.join(plugin,'runtime/workflow-controller/cli.mjs'),'-'],{cwd:temp,input:JSON.stringify({project,...input}),encoding:'utf8',env:{...process.env,NODE_PATH:''}});
@@ -72,9 +72,9 @@ try {
  assert.equal(pending.pendingApproval,'prd');
  const status=spawnSync(process.execPath,[path.join(plugin,'bin/instar.mjs'),'status','--project',project,'--change',changeId,'--json'],{cwd:temp,encoding:'utf8',env:{...process.env,NODE_PATH:''}});
  assert.equal(status.status,0,status.stderr);assert.match(JSON.parse(status.stdout).markdown,/Pending approval: prd/);
- const events=(await readFile(path.join(project,'.workflow/traces.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+ const events=(await readFile(path.join(project,`.workflow/traces/${changeId}.jsonl`),'utf8')).trim().split('\n').map(JSON.parse);
  assert.deepEqual(events.map(x=>x.type),['workflow-action','skill-invocation','quality-evaluation','skill-invocation','workflow-action']);
  assert.equal(call({action:'state',changeId}).version,pending.version);
  assert.match(await readFile(path.join(project,'docs/prd/release-smoke.md'),'utf8'),/订单筛选/);
- console.log('PASS: release marketplace, twenty-one skills, standalone spec discovery, subagent definitions, workflow initialization, bundled dependencies, relocated CLI and UTF-8 PRD review.');
+console.log('PASS: release marketplace, twenty-two skills, standalone spec discovery, subagent definitions, workflow initialization, bundled dependencies, relocated CLI and UTF-8 PRD review.');
 } finally {await rm(temp,{recursive:true,force:true});}

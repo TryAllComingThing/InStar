@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-InStar 是 Codex 插件层的软件交付编排器。它把“人类可审批的文档状态机”和“项目自有验证命令”连接起来，不把模型判断包装成不可变事实，也不替代宿主沙箱、Git、CI 或组织权限系统。
+InStar 是 Codex 插件层的软件交付编排器。它把“人类可审批的文档状态机”和“项目自有验证命令”连接起来，不把模型判断包装成不可变事实，也不替代宿主沙箱、外部 VCS/CI 或组织权限系统。
 
 核心原则：
 
@@ -21,7 +21,7 @@ InStar/
 ├── assets/                     # 维护者声明性策略（不随 release 发布）
 ├── bin/instar.mjs              # 人类友好 CLI 分派
 ├── commands/                   # 项目命令提示词
-├── skills/                     # 21 个 Skill 入口与引用资源
+├── skills/                     # 22 个 Skill 入口与引用资源
 ├── agents/                     # Markdown Reviewer 角色契约
 ├── templates/                  # 项目初始化模板、Agent TOML、质量模板
 ├── standards/                  # 工程规范参考
@@ -29,7 +29,7 @@ InStar/
 ├── src/                        # 控制器、共享模块、openspec-min 源码
 ├── runtime/                    # 构建后可运行 JS 与打包依赖
 ├── release/                    # 可安装 marketplace 与插件包
-├── hooks/                      # PreToolUse / SessionEnd Hook
+├── hooks/                      # SessionEnd Hook
 ├── test/                       # 控制器、CLI、发现、移植和发布测试
 └── docs/                       # 本文档集
 ```
@@ -47,15 +47,15 @@ InStar/
 ┌───────────────▼─────────────────────────────────────────────┐
 │ 编排层                                                       │
 │ workflow-controller  quality-controller  discovery-controller │
-│ CI orchestration     status/visualize     evaluation/usage     │
+│ status/visualize     evaluation/usage                          │
 └───────┬──────────────────────┬──────────────────────┬────────┘
         │                      │                      │
 ┌───────▼────────┐    ┌────────▼────────┐    ┌────────▼────────┐
 │ 文档引擎        │    │ 共享安全/证据层  │    │ 项目执行环境      │
-│ openspec-min   │    │ canonical/hash  │    │ Git              │
+│ openspec-min   │    │ canonical/hash  │    │ workspace scan   │
 │ diff / parser  │    │ redaction       │    │ project commands │
 │ schema / lock  │    │ profile contract│    │ reports/ logs/   │
-└───────┬────────┘    │ token/usage     │    │ gh / CI          │
+└───────┬────────┘    │ token/usage     │    └────────┬────────┘
         │             └────────┬────────┘    └────────┬────────┘
         └──────────────────────┴──────────────────────┘
                                │
@@ -69,7 +69,7 @@ Skill 是给模型的操作协议：读取什么、何时调用控制器、如�
 ### 3.2 控制器层
 
 - `workflow-controller`：change 状态、阶段、审批、人工反馈、任务证据、Reviewer/Skill trace、源码快照、归档。
-- `quality-controller`：配置解析、snapshot、验证命令、Review、doctor、提交/PR 检查和 CI 编排。
+- `quality-controller`：配置解析、snapshot、验证命令、Review、doctor 和提交前检查。
 - `discovery-controller`：源码清单、上下文哈希、证据校验、预览/捕获、基线更新和事务。
 
 ### 3.3 文档引擎
@@ -86,7 +86,7 @@ Skill 是给模型的操作协议：读取什么、何时调用控制器、如�
 | 模块 | 职责 |
 | --- | --- |
 | `canonical.mjs` | 稳定序列化哈希、文件流式 SHA-256、大小限制 |
-| `profile-contract.mjs` | 固定 `commit`/`implementation`/`full` 与报告名 |
+| `profile-contract.mjs` | 固定 `preflight`/`implementation`/`full`、`commit` 兼容别名与报告名 |
 | `redaction.mjs` | 报告写入前的常见秘密脱敏与长度边界 |
 | `bounded-input.mjs` | CLI JSON/stdin 8 MiB 上限 |
 | `token-sources.mjs` | 设计 Token 路径校验与发现 |
@@ -106,7 +106,7 @@ Skill 读取 state/context
   → 下一阶段；任何文档/源码变化使旧审批失效
 ```
 
-状态保存在 `planning/workflows/<changeId>.json`；每次成功变更追加 `.workflow/traces/<changeId>.jsonl`，同时写入 `.workflow/traces.jsonl` 兼容聚合文件；完成后的状态副本写入 `planning/archive/<changeId>/workflow.json`。
+状态保存在 `planning/workflows/<changeId>.json`；每次成功变更单写到 `.workflow/traces/<changeId>.jsonl`，旧 `.workflow/traces.jsonl` 只用于兼容读取；完成后的状态副本写入 `planning/archive/<changeId>/workflow.json`。
 
 ### 4.2 质量验证
 
@@ -131,23 +131,24 @@ context（只读清单 + baseline + instruction）
 
 清单是覆盖范围提示，不是语义证明。超过预算时显式失败或要求缩小 scope。
 
-### 4.4 PR/CI
+### 4.4 工作区快照与外部提交
 
 ```text
-full gate + quality-gate + provenance
-  → 生成 reports/pr-body.md
-  → 用户 --confirm 后发布功能分支/PR
-  → 检查 PR head/base 与提交 SHA
-  → 读取 required checks 与失败 run/job
-  → 状态 PENDING/PASS/BLOCK；不无限轮询
+change start → workspace inventory baseline
+  → implementation + verification + quality-gate
+  → 比较当前工作区与 state 绑定的 baseline，失效陈旧证据
+  → quick/micro 在 submit 与 accept 之间再次比较源码 fingerprint
+  → 提交、分支、合并、推送、PR/CI 交给外部 VCS/平台
 ```
+
+InStar 不调用 Git，也不提供提交动作。`.instarignore` 控制工作区清单排除项，其内容哈希和风险规则也会进入 fingerprint；隐藏整个工作区的规则 fail-closed。每个 change 的 baseline 保存在 `.instar/baselines/`，change state 保存 baseline 的 `fingerprint + baselineHash` 交叉绑定，用于发现普通删除、替换和单侧篡改。本地哈希只用于变化检测和证据绑定，不是可信签名；同权限同时改写 baseline 与 state 不在本地防护范围内。
 
 ## 5. 状态与存储
 
 | 路径 | 所有者 | 作用 |
 | --- | --- | --- |
 | `.instar.json` | 目标项目 | 初始化版本、安装 `stack` 与 managed 文件记录 |
-| `.instar-quality.json` | 目标项目 | 质量命令、上下文、CI 配置 |
+| `.instar-quality.json` | 目标项目 | 质量命令、上下文和验证配置 |
 | `AGENTS.md` | 目标项目 | 项目规则；初始化仅追加受控标记块 |
 | `.codex/config.toml` 与 `.codex/agents/` | 目标项目 | 项目级 Reviewer 注册与配置 |
 | `planning/specs/` | 文档引擎 | 基线 Spec |
@@ -155,8 +156,10 @@ full gate + quality-gate + provenance
 | `planning/workflows/` | 工作流控制器 | change 状态 |
 | `planning/archive/` | 文档引擎 | 已归档 change 和状态 |
 | `docs/prd/` | 工作流控制器 | PRD 文件 |
-| `reports/`、`logs/` | 各控制器 | 验证、Review、CI、语义评测、会话审计 |
+| `reports/`、`logs/` | 各控制器 | 验证、Review、语义评测、会话审计 |
 | `.workflow/` | 控制器 | 锁、journal、事务快照、trace、usage |
+| `.instar/baselines/` | 控制器 | 每个 change 的工作区清单基线；由 change state 交叉绑定 |
+| `.instarignore` | 目标项目 | 工作区清单排除规则，替代 `.gitignore` 的扫描职责 |
 
 目标项目是唯一业务产物存放处；插件安装目录不能被当作项目根目录。
 
@@ -186,8 +189,9 @@ release.mjs ──────────────► release/plugins/instar
 - 质量命令对 POSIX 和 Windows 原生可执行文件使用直接 `spawn`；Windows `.cmd`/`.bat` 经受控 `cmd.exe` 包装并拒绝 shell 元字符。命令参数不持久化；敏感环境变量会被过滤；可选 allowlist 限制可执行文件。
 - 输入 JSON、报告、artifact 和快照有大小/数量上限。
 - 报告持久化前进行常见 secret redaction，但不是完整 DLP。
-- Hook 是本机辅助门禁，不是不可绕过的安全边界；团队门禁应放在 CI/分支保护。
+- `SessionEnd` Hook 只做会话审计；提交、PR、CI 和分支保护门禁由外部 VCS/平台承担。
 - Reviewer trace、审批记录和 provenance 是本地可编辑状态，不提供身份认证或加密证明。
+- baseline 自哈希和 state 交叉绑定只能发现普通误删、替换和单侧篡改；同时改写两者的同权限攻击者仍需外部服务端签名、受控存储或 CI 复核。
 
 ## 9. 设计取舍
 
@@ -195,7 +199,7 @@ release.mjs ──────────────► release/plugins/instar
 | --- | --- | --- |
 | 固定三个 profile | 统一门禁命名，减少 DSL 扩散 | 不支持任意 profile 继承 |
 | 报告与 artifact 强绑定 | 防止复用旧 PASS、替换证据 | 报告变多，旧严格报告会失效 |
-| Git + 文件指纹 | 可审计、可解释、无需外部服务 | 不防恶意本地篡改，不证明用户身份 |
+| 工作区清单 + baseline | 不依赖 VCS，可离线检测源码变化并用 state 交叉绑定发现普通篡改 | 同权限同时改写 state/baseline 仍不可防；changedLines 只是保守估算 |
 | 事务快照 | 控制器错误可恢复 | 备份可能包含敏感规划内容 |
 | Skill 自报 trace | 可观察模型实际流程 | 不是密码学执行证明 |
 | 项目自有命令 | 跨语言、离线、可移植 | 项目必须自己安装和维护工具 |

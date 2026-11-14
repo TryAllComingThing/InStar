@@ -1,7 +1,7 @@
 {
   "name": "instar",
-  "version": "2.4.0",
-  "description": "Full-stack software delivery with reviewed requirements, configurable verification, quality gates and PR/CI orchestration.",
+  "version": "2.6.0",
+  "description": "Full-stack software delivery with reviewed requirements, configurable verification, quality gates and local change verification.",
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
   "interface": {

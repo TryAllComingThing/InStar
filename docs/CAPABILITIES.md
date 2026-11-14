@@ -1,6 +1,6 @@
 # 能力地图
 
-InStar v2.4 包含 21 个原生 Skill、4 个兼容命令入口（1 个独立诊断命令 + 3 个原生 Skill 的薄委托）、7 个角色资产（1 个实现角色 + 6 个 Reviewer）、一个内嵌 OpenSpec 文档引擎，以及可选的工程规范、设计指引和质量模板。能力按“按需加载”设计，普通任务不应加载全部上下文。
+InStar v2.6 包含 22 个原生 Skill、4 个兼容命令入口（1 个独立诊断命令 + 3 个原生 Skill 的薄委托）、7 个角色资产（1 个实现角色 + 6 个 Reviewer）、一个内嵌 OpenSpec 文档引擎，以及可选的工程规范、设计指引和质量模板。能力按“按需加载”设计，普通任务不应加载全部上下文。
 
 ## 1. 总览
 
@@ -8,13 +8,13 @@ InStar v2.4 包含 21 个原生 Skill、4 个兼容命令入口（1 个独立诊
 | --- | --- | --- |
 | 项目初始化 | `initialize-project` | 规划目录、AGENTS 指引、项目级 Reviewer 配置 |
 | 受控需求交付 | `requirements-workflow` | PRD → Spec → 设计 → 任务 → 实施 → 验收 → 归档 |
+| 轻量交付 | `micro-change`、`quick-change` | 文档/文案/测试微变更，或低风险小功能的两决策快车道 |
 | 需求与文档 | `write-a-prd`、`spec-explore`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks` | 可审批的需求和规划工件 |
 | 存量源码建档 | `spec-discover` | `planning/specs/<capability>/spec.md` 与证据报告 |
 | 实现与验证 | `frontend-implement`、`engineering-implement`、`frontend-verify`、`engineering-verify` | 代码、任务证据、验证报告 |
 | 质量与评审 | `quality-gate`、`quality-evaluation`、Reviewer 角色 | 代码/架构/安全/UI Review，语义质量报告 |
 | 设计能力 | `design-check`、`extract-design-md` | 变更级样式约束，或项目级 `DESIGN.md` |
 | 工程辅助 | `engineering-research`、`systematic-debugging`、`context-optimizer` | 调研、根因修复、上下文优化 |
-| 交付编排 | `ci` | 功能分支、PR、CI 状态和证据上传 |
 
 ## 2. 全部 Skill
 
@@ -24,6 +24,8 @@ InStar v2.4 包含 21 个原生 Skill、4 个兼容命令入口（1 个独立诊
 | --- | --- | --- | --- |
 | `initialize-project` | 初始化 InStar 项目集成 | 绝对目标路径、`stack`；`AGENTS.md` 标记块、规划目录、`.codex/agents/`、`.instar.json` | 不生成应用脚手架，不覆盖已有文件，不修改工程依赖；前端资产按 stack 安装 |
 | `requirements-workflow` | 管理受控 change 的状态机 | 绝对项目路径、change ID、`ui`/`stack` 分类；阶段与审批 | 必须读控制器状态，不凭对话记忆判断阶段 |
+| `micro-change` | 文档/文案/测试微变更快车道 | 绝对项目路径、change ID、文件范围；实现与最终验收状态 | 仅限无生产代码和治理影响、工作区 baseline 可观测的变化；控制器在 start/submit 复检 |
+| `quick-change` | 低风险小功能快车道 | 绝对项目路径、change ID、一页 change brief；brief 批准与最终验收 | 仅限无 UI/认证/授权/数据/API/架构/依赖/基础设施影响、工作区 baseline 可观测且不超过 10 文件/400 行；控制器复检工作区变化 |
 | `write-a-prd` | 编写或修订产品 PRD | 用户问题、范围、旅程、验收标准、风险；`docs/prd/<changeId>.md` | 不写技术方案，不把文件标签当成审批 |
 | `spec-explore` | 在需求受控阶段探索问题、架构、方案与风险 | 需求与项目上下文；探索结论 | 探索不是批准；业务范围变化要回到 PRD |
 | `spec-propose` | 从已批准 PRD 生成 proposal 与 delta Spec | 新 contextHash、proposal、specs；调用 `create-spec`/`save-spec` | 不直接调用底层引擎绕过控制器 |
@@ -51,7 +53,6 @@ InStar v2.4 包含 21 个原生 Skill、4 个兼容命令入口（1 个独立诊
 | `engineering-research` | 在新增依赖或陌生 API 前做证据化调研 | 仓库现状、锁定版本、官方文档、替代方案 | 不为了研究而联网或安装依赖 |
 | `systematic-debugging` | 复现、定位最早失败边界并做最小根因修复 | 复现、证据、修复、回归测试 | 不关闭检查、不吞错误、不盲目重试 |
 | `context-optimizer` | 审计和改进 AGENTS/上下文的可发现性与信噪比 | 来源映射、重复/冲突/陈旧项、最小修订 | 审计默认只报告；不能仅为缩短而删规则 |
-| `ci` | 功能分支提交、PR、Review 证据和 CI 检查编排 | 绝对项目路径、分支、`.instar-quality.json` 的 CI 配置 | 不推主分支、不 force push、不自动合并或部署 |
 
 ### 2.4 存量发现
 
@@ -63,7 +64,7 @@ InStar v2.4 包含 21 个原生 Skill、4 个兼容命令入口（1 个独立诊
 
 | 宿主发现名称 | 入口文件 | 作用 | 备注 |
 | --- | --- | --- | --- |
-| `instar:source-command-doctor` | `commands/doctor.md` | 检查项目配置、上下文、Token、Agent、依赖、CI 和质量工具 | 生成 `reports/doctor.json`；不自动修复 |
+| `instar:source-command-doctor` | `commands/doctor.md` | 检查项目配置、上下文、Token、Agent、依赖和质量工具 | 生成 `reports/doctor.json`；不自动修复 |
 | `instar:source-command-design-check` | `commands/design-check.md` | 为当前 UI 变更提取样式约束 | 返回 Style Constraints 与来源，不写项目设计文件 |
 | `instar:source-command-extract-design-md` | `commands/extract-design-md.md` | 从现有前端源码提取项目级设计说明 | 写入项目根 `DESIGN.md`，保留人工内容 |
 | `instar:source-command-spec-discover` | `commands/spec-discover.md` | 为已有代码生成现状 Spec | 独立于 PRD 和 change 流程 |
@@ -125,7 +126,7 @@ Reviewer 只提供发现与证据，不编辑文件、不代替人工审批。�
 ## 7. 明确不包含
 
 - 不生成 Vue/React/后端项目脚手架。
-- 不安装或内置 ESLint、Playwright、axe、SAST/SCA、数据库或 CI 引擎。
+- 不安装或内置 ESLint、Playwright、axe、SAST/SCA 或数据库，也不编排外部流水线。
 - 不提供组织身份、SSO、签名策略、集中审计或多租户权限系统。
 - 不自动批准 PRD/Spec/设计/任务/验收，也不自动合并或部署。
 - 不承诺所有检查都已被执行；缺少证据必须报告为未验证。

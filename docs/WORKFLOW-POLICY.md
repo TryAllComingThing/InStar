@@ -18,7 +18,7 @@ InStar 将操作分为只读、受控审计写入、业务修改和外部副作�
 
 - 修改业务源码、配置、锁文件或依赖。
 - 删除业务文件、重置分支或执行可能破坏用户数据的命令。
-- `git commit`、push、创建/更新 PR、依赖联网安装和生产部署。
+- 外部 VCS 的提交、推送、分支/合并操作，依赖联网安装和生产部署。
 - 修改项目级架构、设计、Token 或安全策略。
 - 在工作流之外手工改写 planning、PRD 或审批状态。
 
@@ -65,7 +65,7 @@ Subagent 评审默认要求独立 reviewer session 和配置哈希；不可用�
 实现审批后必须完成：
 
 - 对应验证 Skill；
-- `full` profile 检查（含 security；UI 含 accessibility 和 keyboard）；
+- `full` profile 检查（含 build 和 security；UI 含 accessibility 和 keyboard）；
 - `security-reviewer`（frontend/fullstack UI 加 `frontend-reviewer`；UI 加 `ui-reviewer`）；
 - 与当前源码快照一致的证据。
 
@@ -105,4 +105,4 @@ Subagent 评审默认要求独立 reviewer session 和配置哈希；不可用�
 - 锁冲突：先检查 PID 和持有者，不抢占或删除活跃锁。
 - 事务中断：检查 `.workflow/pending.json`、transactionId、备份和实际文件；使用 recover，不手工猜测。
 - 验证失败：保留实际失败证据；不能关闭检查、伪造 PASS 或把未配置的扫描写成通过。
-- CI 失败：读取 job/step 链接并修复；不 force push、不绕过 required checks。
+- 外部流水线失败：在项目自己的代码托管平台中读取 job/step 并修复；不通过 force push 或绕过门禁规避失败。

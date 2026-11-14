@@ -8,12 +8,13 @@ const storageState=process.env.A11Y_STORAGE_STATE||undefined;
 const timeout=Number(process.env.A11Y_NAVIGATION_TIMEOUT||30000);
 const readySelector=process.env.A11Y_READY_SELECTOR||null;
 const output=process.env.A11Y_OUTPUT||'reports/accessibility.json';
+const runBinding=()=>({reportId:process.env.INSTAR_REPORT_ID||null,checkId:process.env.INSTAR_CHECK_ID||null,profile:process.env.INSTAR_PROFILE||null,snapshotFingerprint:process.env.INSTAR_SNAPSHOT_FINGERPRINT||null});
 async function save(report){
  await mkdir(dirname(output),{recursive:true});
  await writeFile(output,JSON.stringify(report,null,2)+'\n');
 }
 if(!routes.length){
- await save({schemaVersion:1,kind:'accessibility',tool:'playwright-axe',axeVersion:null,browserVersion:null,baseUrl,routes,routesScanned:0,authenticated:!!storageState,status:'BLOCK',error:'A11Y_ROUTES must contain at least one route',violations:[],incomplete:[],results:[],generatedAt:new Date().toISOString()});
+ await save({schemaVersion:1,...runBinding(),kind:'accessibility',tool:'playwright-axe',headless:true,axeVersion:null,browserVersion:null,baseUrl,routes,routesScanned:0,authenticated:!!storageState,status:'BLOCK',error:'A11Y_ROUTES must contain at least one route',violations:[],incomplete:[],results:[],generatedAt:new Date().toISOString()});
  console.error('A11Y_ROUTES must contain at least one route');
  process.exit(1);
 }
@@ -23,7 +24,7 @@ try{
  ({default:axeBuilder}=await import('@axe-core/playwright'));
 }catch(error){
  console.error(`Accessibility dependencies are required: playwright and @axe-core/playwright. ${error.message}`);
- await save({schemaVersion:1,kind:'accessibility',tool:'playwright-axe',baseUrl,routes,authenticated:!!storageState,status:'BLOCK',error:`Accessibility dependencies unavailable: ${error.message}`,violations:[],incomplete:[],results:[],generatedAt:new Date().toISOString()});
+ await save({schemaVersion:1,...runBinding(),kind:'accessibility',tool:'playwright-axe',headless:true,baseUrl,routes,authenticated:!!storageState,status:'BLOCK',error:`Accessibility dependencies unavailable: ${error.message}`,violations:[],incomplete:[],results:[],generatedAt:new Date().toISOString()});
  process.exit(2);
 }
 const browser=await chromium.launch({headless:true});
@@ -41,19 +42,21 @@ try{
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    const finalUrl=new URL(page.url());
    if(requested.pathname!=='/login'&&/\/login\/?$/.test(finalUrl.pathname)){
-    results.push({route,requested:requested.toString(),finalUrl:finalUrl.toString(),violations:[{id:'auth-redirect',impact:'critical',nodes:1,help:'Authenticated route redirected to login; provide A11Y_STORAGE_STATE or start the required session'}],incomplete:[],passes:0});
+    results.push({route,requested:requested.toString(),finalUrl:finalUrl.toString(),status:'FAIL',violations:[{id:'auth-redirect',impact:'critical',nodes:1,help:'Authenticated route redirected to login; provide A11Y_STORAGE_STATE or start the required session'}],incomplete:[],passes:0});
     continue;
    }
    const result=await new axeBuilder({page}).analyze();
    axeVersion=result.testEngine?.version||axeVersion;
-   results.push({route,requested:requested.toString(),finalUrl:finalUrl.toString(),violations:result.violations.map(item=>({id:item.id,impact:item.impact,nodes:item.nodes.length,help:item.help,targets:item.nodes.map(node=>node.target),failureSummaries:item.nodes.map(node=>node.failureSummary)})),incomplete:result.incomplete.map(item=>({id:item.id,impact:item.impact,nodes:item.nodes.length,help:item.help,targets:item.nodes.map(node=>node.target)})),passes:result.passes.length});
+   const violations=result.violations.map(item=>({id:item.id,impact:item.impact,nodes:item.nodes.length,help:item.help,targets:item.nodes.map(node=>node.target),failureSummaries:item.nodes.map(node=>node.failureSummary)}));
+   const incomplete=result.incomplete.map(item=>({id:item.id,impact:item.impact,nodes:item.nodes.length,help:item.help,targets:item.nodes.map(node=>node.target)}));
+   results.push({route,requested:requested.toString(),finalUrl:finalUrl.toString(),status:violations.length||incomplete.length?'FAIL':'PASS',violations,incomplete,passes:result.passes.length});
   }catch(error){
-   results.push({route,violations:[{id:'navigation-or-scan-error',impact:'critical',nodes:1,help:error.message}],incomplete:[],passes:0});
+   results.push({route,status:'FAIL',violations:[{id:'navigation-or-scan-error',impact:'critical',nodes:1,help:error.message}],incomplete:[],passes:0});
   }finally{await page.close().catch(()=>{});}
  }
 }finally{await context.close();await browser.close();}
 const violations=results.flatMap(result=>result.violations);
 const incomplete=results.flatMap(result=>result.incomplete||[]);
-const report={schemaVersion:1,kind:'accessibility',tool:'playwright-axe',axeVersion,browserVersion,baseUrl,routes,routesScanned:results.length,authenticated:!!storageState,status:violations.length||incomplete.length?'BLOCK':'PASS',violations,incomplete,results,generatedAt:new Date().toISOString()};
+const report={schemaVersion:1,...runBinding(),kind:'accessibility',tool:'playwright-axe',headless:true,axeVersion,browserVersion,baseUrl,routes,routesScanned:results.length,authenticated:!!storageState,status:violations.length||incomplete.length||results.some(result=>result.status!=='PASS')?'BLOCK':'PASS',violations,incomplete,results,generatedAt:new Date().toISOString()};
 await save(report);
 if(report.status!=='PASS')process.exitCode=1;

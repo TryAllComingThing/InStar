@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile,writeFile,mkdir,readdir,rename,symlink} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
 import {run,initialize} from '../runtime/workflow-controller/index.mjs';
 import {transaction,putJson,lock,fs,sourceSnapshot,hash,gcTransactions} from '../runtime/workflow-controller/files.mjs';
 import {loadQualityConfig,snapshot as qualitySnapshot,reviewItemsFor} from '../runtime/quality-controller/index.mjs';
@@ -19,6 +18,7 @@ const checks=[
  {kind:'lint',name:'lint',outcome:'passed',evidence:'fixture lint result',artifact:'reports/fixture/lint.json',source:'manual',manualReason:'fixture only'},
  {kind:'format',name:'format',outcome:'passed',evidence:'fixture format result',artifact:'reports/fixture/format.json',source:'manual',manualReason:'fixture only'},
  {kind:'test',name:'search test',outcome:'passed',evidence:'fixture simulated test result',artifact:'reports/fixture/test.json',source:'manual',manualReason:'fixture only'},
+ {kind:'build',name:'production build',outcome:'passed',evidence:'fixture simulated production build',artifact:'reports/fixture/build.json',source:'manual',manualReason:'fixture only'},
  {kind:'security',name:'security scan',outcome:'passed',evidence:'fixture security result',artifact:'reports/fixture/security.json',source:'manual',manualReason:'fixture only'},
  {kind:'browser',name:'search journey',outcome:'passed',evidence:'fixture simulated browser result',artifact:'reports/fixture/browser.json',source:'manual',manualReason:'fixture only'},
  {kind:'accessibility',name:'axe journey',outcome:'passed',evidence:'fixture simulated axe result',artifact:'reports/fixture/accessibility.json',source:'manual',manualReason:'fixture only'},
@@ -28,24 +28,34 @@ const artifactFixtures={
  lint:{status:'passed'},
  format:{status:'passed'},
  test:{status:'passed'},
+ build:{status:'passed'},
  security:{status:'passed'},
- browser:{kind:'browser',status:'PASS',tool:'playwright',headless:true,journeys:[{route:'/',status:'PASS'}]},
- accessibility:{kind:'accessibility',status:'PASS',tool:'playwright-axe',routesScanned:1,violations:[],incomplete:[],results:[{route:'/',violations:[],incomplete:[]}]},
- keyboard:{kind:'keyboard',status:'PASS',journeys:[{route:'/',steps:['Tab'],expectedFocus:'#search',actualFocus:'#search'}]}
+ browser:{kind:'browser',status:'PASS',generatedAt:new Date().toISOString(),tool:'playwright',headless:true,journeys:[{route:'/',status:'PASS'}]},
+ accessibility:{kind:'accessibility',status:'PASS',generatedAt:new Date().toISOString(),tool:'playwright-axe',headless:true,routesScanned:1,violations:[],incomplete:[],results:[{route:'/',status:'PASS',violations:[],incomplete:[]}]},
+ keyboard:{kind:'keyboard',status:'PASS',generatedAt:new Date().toISOString(),tool:'playwright',headless:true,journeys:[{route:'/',status:'PASS',steps:['Tab'],expectedFocus:'#search',actualFocus:'#search'}]}
 };
-function gitInit(project){const git=(...args)=>{const result=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);};git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','InStar test');return async()=>{git('add','.');git('commit','-m','fixture baseline');};}
 async function strictReport(project,profile,id,ids){
  const config=await loadQualityConfig(project),snapshot=await qualitySnapshot(project);
- const checks=await Promise.all(ids.map(async checkId=>{const spec=config.tools.checks[checkId],artifact=spec.artifact||`reports/fixture/${spec.kind}.json`,artifactHash=contentHash(await readFile(path.join(project,artifact)));return {id:checkId,status:'PASS',artifact,artifactHash};}));
+ const checks=await Promise.all(ids.map(async checkId=>{
+  const spec=config.tools.checks[checkId],artifact=spec.artifact||`reports/fixture/${spec.kind}.json`;
+  if(['browser','accessibility','keyboard'].includes(spec.kind)){
+   const bound={...artifactFixtures[spec.kind],reportId:id,checkId,profile,snapshotFingerprint:snapshot.fingerprint,generatedAt:new Date().toISOString()};
+   await writeFile(path.join(project,artifact),JSON.stringify(bound));
+  }
+  const artifactHash=contentHash(await readFile(path.join(project,artifact)));
+  return {id:checkId,status:'PASS',artifact,artifactHash};
+ }));
  return {schemaVersion:1,kind:`engineering-verify-${profile}`,id,profile,status:'PASS',stable:true,at:new Date().toISOString(),snapshot,configHash:canonicalHash(config),checkDefinitions:Object.fromEntries(ids.map(checkId=>[checkId,canonicalHash(config.tools.checks[checkId])])),checks};
 }
 async function qualityGateReport(project,id='quality-1'){
  const config=await loadQualityConfig(project),snapshot=await qualitySnapshot(project);
  const review={schemaVersion:2,reviewer:'fixture-reviewer',executionMode:'subagent',fingerprint:snapshot.fingerprint,checks:reviewItemsFor(config).map(item=>({id:item,status:'PASS',evidence:'fixture review',references:[{path:'fixture.js',line:1}]})),findings:[],unverified:[]};
- return {schemaVersion:1,kind:'quality-gate',id,status:'PASS',stable:true,snapshot,configHash:canonicalHash(config),checks:[{id:'fixture-check',status:'INFO'}],review};
+ const checks=['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint'].map(checkId=>({id:checkId,status:'INFO',reason:'Not configured for fixture'}));
+ if(config.tools?.architecture)checks.push({id:'architecture',status:'PASS'});else checks.push({id:'architecture',status:'INFO',reason:'Not configured for fixture'});
+ return {schemaVersion:1,kind:'quality-gate',id,status:'PASS',stable:true,snapshot,configHash:canonicalHash(config),checks,review};
 }
-async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true}));await initialize(project);await mkdir(path.join(project,'reports/fixture'),{recursive:true});await writeFile(path.join(project,'fixture.js'),'export const fixture = true;\n');for(const check of checks)await writeFile(path.join(project,check.artifact),JSON.stringify(artifactFixtures[check.kind]));await gitInit(project)();const base={project,changeId:'add-search'};let state,invocationSequence=0;
- const f={project,base,get state(){return state;},async skill(skill,stage='implementation',invocationId=`${skill}-${stage}-${++invocationSequence}`){const request={...base,action:'trace-skill',skill,stage,invocationId,summary:'fixture Skill evidence'};await run({...request,event:'started'});return run({...request,event:'completed'});},async agent(role,stage='verification',invocationId=`${role}-${stage}-${++invocationSequence}`,extra={}){const request={...base,action:'trace-agent',role,stage,invocationId,summary:'fixture reviewer evidence',executionMode:'subagent',reviewerSessionId:`reviewer-session-${invocationSequence}`,reviewedFiles:role==='spec-reviewer'?[`planning/changes/${base.changeId}/proposal.md`,`planning/changes/${base.changeId}/specs/search/spec.md`]:['fixture.js'],findings:[],unverified:[],...extra};await run({...request,event:'started'});return run({...request,event:'completed'});},async prepareImplementation(){const skills=state.stack==='fullstack'?['frontend-implement','engineering-implement']:state.stack==='frontend'?['frontend-implement']:['engineering-implement'];for(const skill of skills)await f.skill(skill,'implementation');await f.skill('quality-gate','implementation');for(const role of ['architect','code-reviewer'])await f.agent(role,'implementation');},async prepareVerification(){const skills=state.stack==='fullstack'?['frontend-verify','engineering-verify']:state.stack==='frontend'?['frontend-verify']:['engineering-verify'];for(const skill of skills)await f.skill(skill,'verification');for(const role of ['security-reviewer',...(state.stack==='frontend'||(state.stack==='fullstack'&&state.ui)?['frontend-reviewer']:[]),...(state.ui?['ui-reviewer']:[])])await f.agent(role,'verification');},async call(action,extra={}){const payload={...extra};if(action==='start'){payload.ui=payload.ui??false;payload.stack=payload.stack??'backend';}if(action==='complete-task'&&typeof payload.evidence==='string')payload.evidence={summary:payload.evidence,files:[{path:'fixture.js',line:1}]};if(action==='write-design'&&state?.ui&&!payload.skipDesignCheck){await f.skill('design-check','design');payload.designCheck=payload.designCheck??{constraints:'fixture UI constraints',coverage:['hierarchy','layout','states','tokens','responsive','accessibility'],sources:[{path:'fixture.js',role:'component'}]};if(payload.designReuse===undefined&&payload.designReuseReason===undefined)payload.designReuse=[{kind:'pattern',name:'fixture UI pattern',note:'reuse fixture pattern'}];}if(action==='submit-spec'&&!payload.skipSpecReview)await f.agent('spec-reviewer','spec');if(action==='submit-implementation'&&!payload.skipAutoQualityGate){try{await readFile(path.join(f.project,'.instar-quality.json'));}catch{await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main'}));}try{await readFile(path.join(f.project,'reports/quality-gate.json'));}catch{await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));}}if(action==='submit-implementation'&&!payload.skipImplementEvidence){await f.prepareImplementation();payload.report??=report;payload.checks??=checks;}if(action==='submit-verification'&&!payload.skipVerificationEvidence)await f.prepareVerification();if(action==='submit-verification'&&state?.pendingApproval==='implementation'&&!payload.skipImplementationApproval){const approved=await f.approve();if(approved.version)state=approved;}const result=await run({...base,action,expectedVersion:state?.version,...payload});if(result.version)state=result;return result;},async context(){return run({...base,action:'context'});},async approve(decision='accept-record',extra={}){return this.call('approve',{reviewHash:state.pendingReview.hash,decision,confirmation:{text:'Approved fixture',source:'test only'},...extra});}};
+ async function setup(t){const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'frontend-plugin-')));t.after(()=>rm(project,{recursive:true,force:true}));await initialize(project);await mkdir(path.join(project,'reports/fixture'),{recursive:true});await writeFile(path.join(project,'fixture.js'),'export const fixture = true;\n');for(const check of checks)await writeFile(path.join(project,check.artifact),JSON.stringify(artifactFixtures[check.kind]));const base={project,changeId:'add-search'};let state,invocationSequence=0;
+ const f={project,base,get state(){return state;},async skill(skill,stage='implementation',invocationId=`${skill}-${stage}-${++invocationSequence}`){const request={...base,action:'trace-skill',skill,stage,invocationId,summary:'fixture Skill evidence'};await run({...request,event:'started'});return run({...request,event:'completed'});},async agent(role,stage='verification',invocationId=`${role}-${stage}-${++invocationSequence}`,extra={}){const request={...base,action:'trace-agent',role,stage,invocationId,summary:'fixture reviewer evidence',executionMode:'subagent',reviewerSessionId:`reviewer-session-${invocationSequence}`,reviewedFiles:role==='spec-reviewer'?[`planning/changes/${base.changeId}/proposal.md`,`planning/changes/${base.changeId}/specs/search/spec.md`]:['fixture.js'],findings:[{severity:'suggestion',message:`fixture reviewer observation ${invocationId}`}],unverified:[],...extra};await run({...request,event:'started'});return run({...request,event:'completed'});},async prepareImplementation(){const skills=state.stack==='fullstack'?['frontend-implement','engineering-implement']:state.stack==='frontend'?['frontend-implement']:['engineering-implement'];for(const skill of skills)await f.skill(skill,'implementation');await f.skill('quality-gate','implementation');for(const role of ['architect','code-reviewer','security-reviewer'])await f.agent(role,'implementation');},async prepareVerification(){const skills=state.stack==='fullstack'?['frontend-verify','engineering-verify']:state.stack==='frontend'?['frontend-verify']:['engineering-verify'];for(const skill of skills)await f.skill(skill,'verification');for(const role of ['security-reviewer',...(state.stack==='frontend'||(state.stack==='fullstack'&&state.ui)?['frontend-reviewer']:[]),...(state.ui?['ui-reviewer']:[])])await f.agent(role,'verification');},async call(action,extra={}){const payload={...extra};if(action==='start'){payload.ui=payload.ui??false;payload.stack=payload.stack??'backend';}if(action==='complete-task'&&typeof payload.evidence==='string')payload.evidence={summary:payload.evidence,files:[{path:'fixture.js',line:1}]};if(action==='write-design'&&state?.ui&&!payload.skipDesignCheck){await f.skill('design-check','design');payload.designCheck=payload.designCheck??{constraints:'fixture UI constraints',coverage:['hierarchy','layout','states','tokens','responsive','accessibility'],sources:[{path:'fixture.js',role:'component'}]};if(payload.designReuse===undefined&&payload.designReuseReason===undefined)payload.designReuse=[{kind:'pattern',name:'fixture UI pattern',note:'reuse fixture pattern'}];}if(action==='submit-spec'&&!payload.skipSpecReview)await f.agent('spec-reviewer','spec');if(action==='submit-implementation'&&!payload.skipAutoQualityGate){try{await readFile(path.join(f.project,'.instar-quality.json'));}catch{await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm'}));}try{await readFile(path.join(f.project,'reports/quality-gate.json'));}catch{await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));}}if(action==='submit-implementation'&&!payload.skipImplementEvidence){await f.prepareImplementation();payload.report??=report;payload.checks??=checks;}if(action==='submit-verification'&&!payload.skipVerificationEvidence)await f.prepareVerification();if(action==='submit-verification'&&state?.pendingApproval==='implementation'&&!payload.skipImplementationApproval){const approved=await f.approve();if(approved.version)state=approved;}const result=await run({...base,action,expectedVersion:state?.version,...payload});if(result.version)state=result;return result;},async context(){return run({...base,action:'context'});},async approve(decision='accept-record',extra={}){return this.call('approve',{reviewHash:state.pendingReview.hash,decision,confirmation:{text:'Approved fixture',source:'test only'},...extra});}};
  return f;}
 async function toSpec(f,startExtra={}){await f.call('start',{document:'# PRD\nSearch orders.',...startExtra});await f.call('submit-prd');await f.approve();const c=await f.context();await f.call('create-spec',{contextHash:c.contextHash,proposal,specs:{search:delta}});}
 async function toImplementation(f){await toSpec(f);await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});await f.approve();c=await f.context();await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();}
@@ -129,7 +139,7 @@ test('Skill invocation traces and semantic assessments are auditable and artifac
  assert.equal(result.status,'PASS');assert.equal(result.fingerprint.length,64);
  await run({...invoke,action:'trace-skill',event:'completed',summary:'PRD drafted',outcome:'success'});
  await f.call('submit-prd');
- const trace=(await readFile(path.join(f.project,'.workflow/traces.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+ const trace=(await readFile(path.join(f.project,`.workflow/traces/${f.base.changeId}.jsonl`),'utf8')).trim().split('\n').map(JSON.parse);
  assert.deepEqual(trace.map(x=>x.type),['skill-invocation','workflow-action','skill-invocation','quality-evaluation','skill-invocation','workflow-action']);
  assert.equal(trace[2].summary.includes('sk-abcdefghijklmnopqrstuvwxyz'),false);
  assert.equal(trace[2].outcome.api_key,'[REDACTED]');
@@ -155,8 +165,8 @@ test('reopening tasks preserves design fingerprints and requires design refresh 
  const taskContext=await f.context();await f.call('write-tasks',{contextHash:taskContext.contextHash,document:tasks});
  assert.equal(f.state.pendingApproval,'tasks');
 });
-test('Spec context honors configured canonical architecture, design and token paths',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'project-docs/system.md'),'# Canonical architecture');await writeFile(path.join(f.project,'project-docs/ui.md'),'# Canonical design');await writeFile(path.join(f.project,'project-docs/tokens.css'),'--color-primary: blue;');await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main',context:{architecture:'project-docs/system.md',design:'project-docs/ui.md',tokens:['project-docs/tokens.css']}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();const c=await f.context();assert.equal(c.context.projectArchitecture.guidance['project-docs/system.md'],'# Canonical architecture');assert.equal(c.context.projectArchitecture.guidance['project-docs/ui.md'],'# Canonical design');assert.equal(c.context.projectArchitecture.guidance['project-docs/tokens.css'],'--color-primary: blue;');assert.deepEqual(c.context.projectArchitecture.tokenSources,['project-docs/tokens.css']);assert.equal(c.context.projectArchitecture.guidance['.context/ARCHITECTURE.md'],undefined);});
-test('Spec context rejects missing, symlinked and non-file Token sources',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main',context:{tokens:'project-docs/tokens.css'}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(MISSING\)/);await writeFile(path.join(f.project,'outside.css'),'--color-primary: blue;');await symlink(path.join(f.project,'outside.css'),path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);await rm(path.join(f.project,'project-docs/tokens.css'));await mkdir(path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);});
+test('Spec context honors configured canonical architecture, design and token paths',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'project-docs/system.md'),'# Canonical architecture');await writeFile(path.join(f.project,'project-docs/ui.md'),'# Canonical design');await writeFile(path.join(f.project,'project-docs/tokens.css'),'--color-primary: blue;');await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',context:{architecture:'project-docs/system.md',design:'project-docs/ui.md',tokens:['project-docs/tokens.css']}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();const c=await f.context();assert.equal(c.context.projectArchitecture.guidance['project-docs/system.md'],'# Canonical architecture');assert.equal(c.context.projectArchitecture.guidance['project-docs/ui.md'],'# Canonical design');assert.equal(c.context.projectArchitecture.guidance['project-docs/tokens.css'],'--color-primary: blue;');assert.deepEqual(c.context.projectArchitecture.tokenSources,['project-docs/tokens.css']);assert.equal(c.context.projectArchitecture.guidance['.context/ARCHITECTURE.md'],undefined);});
+test('Spec context rejects missing, symlinked and non-file Token sources',async t=>{const f=await setup(t);await mkdir(path.join(f.project,'project-docs'),{recursive:true});await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',context:{tokens:'project-docs/tokens.css'}}));await f.call('start',{document:'PRD'});await f.call('submit-prd');await f.approve();await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(MISSING\)/);await writeFile(path.join(f.project,'outside.css'),'--color-primary: blue;');await symlink(path.join(f.project,'outside.css'),path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);await rm(path.join(f.project,'project-docs/tokens.css'));await mkdir(path.join(f.project,'project-docs/tokens.css'));await assert.rejects(f.context(),/Invalid project Token source: project-docs\/tokens\.css \(UNSAFE\)/);});
 test('document and implementation verification block missing evidence',async t=>{const f=await setup(t);await toSpec(f);await f.call('submit-spec',{report:{...report,unverified:['business mapping missing']}});assert.equal(f.state.status,'blocked');await f.call('submit-spec',{report});await f.approve();let c=await f.context();await f.call('write-design',{contextHash:c.contextHash,document:design});await f.approve();c=await f.context();await assert.rejects(f.call('write-tasks',{contextHash:c.contextHash,document:tasks+'\n- [ ] 1.1 Duplicate'}),/duplicate/);await f.call('write-tasks',{contextHash:c.contextHash,document:tasks});await f.approve();await assert.rejects(f.call('submit-implementation'),/evidence/);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});await f.call('submit-implementation');await f.call('submit-verification',{report,checks:checks.map(c=>({...c,outcome:'not-verified'}))});assert.equal(f.state.status,'blocked');await assert.rejects(f.call('approve',{reviewHash:'none',confirmation:{text:'yes',source:'fixture'}}),/hash/);await f.call('submit-verification',{report,checks});assert.equal(f.state.pendingApproval,'acceptance');});
 test('reopen invalidates downstream plans and retains snapshot',async t=>{const f=await setup(t);await toImplementation(f);await f.call('reopen',{stage:'spec',reason:'scope correction'});assert.deepEqual(Object.keys(f.state.approvals),['prd']);await assert.rejects(readFile(path.join(f.project,'planning/changes/add-search/technical-design.md')));const dirs=await readdir(path.join(f.project,'.workflow/transactions'));let found=false;for(const dir of dirs){try{await readFile(path.join(f.project,'.workflow/transactions',dir,'before/planning/changes/add-search/technical-design.md'));found=true;}catch{}}assert(found);const c=await f.context();await f.call('save-spec',{contextHash:c.contextHash,proposal:proposal+'\nCorrection',specs:{search:delta}});await f.call('submit-spec',{report});assert.equal(f.state.pendingApproval,'spec');});
 test('failed state write rolls back generated documents and permits retry',async t=>{const f=await setup(t);await toSpec(f);await f.call('submit-spec',{report});await f.approve();const c=await f.context();const original=fs.rename;let injected=false;fs.rename=async(from,to)=>{if(!injected&&to===path.join(f.project,'planning/workflows/add-search.json')){injected=true;throw Error('Injected state failure');}return original(from,to);};try{await assert.rejects(f.call('write-design',{contextHash:c.contextHash,document:design}),/Injected/);}finally{fs.rename=original;}await assert.rejects(readFile(path.join(f.project,'planning/changes/add-search/technical-design.md')));await f.call('write-design',{contextHash:c.contextHash,document:design});assert.equal(f.state.stage,'tasks');});
@@ -369,6 +379,8 @@ test('trace-agent requires code references and a final-source snapshot',async t=
  await run({...f.base,action:'trace-agent',role:'code-reviewer',event:'started',invocationId:'review-1',summary:'start',executionMode:'subagent',reviewerSessionId:'reviewer-1'});
  await assert.rejects(run({...f.base,action:'trace-agent',role:'code-reviewer',event:'completed',invocationId:'review-1',summary:'bad',executionMode:'subagent',reviewerSessionId:'reviewer-1',reviewedFiles:[],findings:[],unverified:[]}),/reviewedFiles/);
  await run({...f.base,action:'trace-agent',role:'code-reviewer',event:'completed',invocationId:'review-1',summary:'done',executionMode:'subagent',reviewerSessionId:'reviewer-1',reviewedFiles:['fixture.js'],findings:[],unverified:[]});
+ await f.call('trace-agent',{role:'code-reviewer',event:'started',invocationId:'review-out-of-range',summary:'invalid finding line',executionMode:'subagent',reviewerSessionId:'reviewer-out-of-range',reviewedFiles:['fixture.js']});
+ await assert.rejects(f.call('trace-agent',{role:'code-reviewer',event:'completed',invocationId:'review-out-of-range',summary:'bad line',executionMode:'subagent',reviewerSessionId:'reviewer-out-of-range',reviewedFiles:['fixture.js'],findings:[{severity:'warning',message:'Line is outside fixture.js',path:'fixture.js',line:999}],unverified:[]}),/exceeds \d+ lines/);
 });
 
 test('Codex session usage is imported into per-change token and API-call records',async t=>{
@@ -415,13 +427,12 @@ test('empty projects skip architecture exploration without skipping classificati
 
 test('strict verification evidence binds checks to the configured report, report id and artifact hash',async t=>{
  const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});
- const implementationIds=['lint-check','format-check','test-check'],fullIds=[...implementationIds,'security-check'];
- const configured={schemaVersion:3,baseRef:'main',verification:{profiles:{commit:fullIds,implementation:implementationIds,full:fullIds}},tools:{checks:Object.fromEntries([
-  ['lint-check','lint'],['format-check','format'],['test-check','test'],['security-check','security']
+ const implementationIds=['lint-check','format-check','test-check'],fullIds=['build-check',...implementationIds,'security-check'];
+ const configured={schemaVersion:3,verification:{profiles:{commit:fullIds,implementation:implementationIds,full:fullIds}},tools:{checks:Object.fromEntries([
+  ['lint-check','lint'],['format-check','format'],['test-check','test'],['build-check','build'],['security-check','security']
  ].map(([id,kind])=>[id,{kind,command:process.execPath,args:['-e','process.exit(0)']}]))}};
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));
- const commit=gitInit(f.project);await commit();
- await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-1',implementationIds)));
+  await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-1',implementationIds)));
  await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));
  const implementationChecks=implementationIds.map(id=>({checkId:id,reportId:'implementation-1',kind:id.replace('-check',''),name:id,outcome:'passed',evidence:`${id} passed`,artifact:`reports/fixture/${id.replace('-check','')}.json`}));
  await f.call('submit-implementation',{report,checks:implementationChecks});
@@ -437,10 +448,9 @@ test('strict verification evidence binds checks to the configured report, report
 
 test('strict evidence rejects reused or mismatched artifacts and incomplete quality-gate reviews',async t=>{
  const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});
- const ids=['lint-check','format-check','test-check'];
- const configured={schemaVersion:3,baseRef:'main',verification:{profiles:{commit:[...ids,'security-check'],implementation:ids,full:[...ids,'security-check']}},tools:{checks:Object.fromEntries([...ids,'security-check'].map(id=>[id,{kind:id.replace('-check',''),command:process.execPath,args:['-e','process.exit(0)']}]))}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));const commit=gitInit(f.project);await commit();
- await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-bind',ids)));
+ const ids=['lint-check','format-check','test-check'],fullIds=['build-check',...ids,'security-check'];
+ const configured={schemaVersion:3,verification:{profiles:{commit:fullIds,implementation:ids,full:fullIds}},tools:{checks:Object.fromEntries(fullIds.map(id=>[id,{kind:id.replace('-check',''),command:process.execPath,args:['-e','process.exit(0)']}]))}};
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured)); await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-bind',ids)));
  const gate=await qualityGateReport(f.project);gate.review.checks=[];await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(gate));
  const checksFor=reportId=>ids.map(id=>({checkId:id,reportId,kind:id.replace('-check',''),name:id,outcome:'passed',evidence:'fixture passed',artifact:`reports/fixture/${id.replace('-check','')}.json`}));
  await assert.rejects(f.call('submit-implementation',{checks:checksFor('implementation-bind')}),/Review checklist incomplete/);
@@ -453,16 +463,16 @@ test('strict evidence rejects reused or mismatched artifacts and incomplete qual
 });
 
 test('legacy quality configuration uses labelled manual evidence',async t=>{
- const f=await setup(t);await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main'}));
+ const f=await setup(t);await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm'}));
  await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});await f.call('submit-implementation',{report,checks});
  assert.equal(f.state.evidencePolicy.mode,'manual');assert.equal(f.state.implementationReview.evidence.mode,'manual');await f.approve();
 });
 
 test('strict evidence rejects stale reports and quality-gate evidence',async t=>{
- const configured={schemaVersion:3,baseRef:'main',verification:{profiles:{commit:['lint-check','format-check','test-check','security-check'],implementation:['lint-check','format-check','test-check'],full:['lint-check','format-check','test-check','security-check']}},tools:{checks:Object.fromEntries([
-  ['lint-check','lint'],['format-check','format'],['test-check','test'],['security-check','security']
+ const configured={schemaVersion:3,verification:{profiles:{commit:['lint-check','format-check','test-check','build-check','security-check'],implementation:['lint-check','format-check','test-check'],full:['lint-check','format-check','test-check','build-check','security-check']}},tools:{checks:Object.fromEntries([
+  ['lint-check','lint'],['format-check','format'],['test-check','test'],['build-check','build'],['security-check','security']
  ].map(([id,kind])=>[id,{kind,command:process.execPath,args:['-e','process.exit(0)']}]))}};
- async function prepared(configBeforeStart=false){const f=await setup(t);if(configBeforeStart)await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});if(!configBeforeStart)await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));const commit=gitInit(f.project);await commit();const implementationIds=['lint-check','format-check','test-check'];await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-stale',implementationIds)));await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));const checks=implementationIds.map(checkId=>({checkId,reportId:'implementation-stale',kind:configured.tools.checks[checkId].kind,name:checkId,outcome:'passed',evidence:`${checkId} passed`,artifact:`reports/fixture/${configured.tools.checks[checkId].kind}.json`}));return {f,checks};}
+ async function prepared(configBeforeStart=false){const f=await setup(t);if(configBeforeStart)await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});if(!configBeforeStart)await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));const implementationIds=['lint-check','format-check','test-check'];await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-stale',implementationIds)));await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));const checks=implementationIds.map(checkId=>({checkId,reportId:'implementation-stale',kind:configured.tools.checks[checkId].kind,name:checkId,outcome:'passed',evidence:`${checkId} passed`,artifact:`reports/fixture/${configured.tools.checks[checkId].kind}.json`}));return {f,checks};}
  const source=await prepared();await writeFile(path.join(source.f.project,'fixture.js'),'export const fixture = "changed";\n');
  await assert.rejects(source.f.call('submit-implementation',{checks:source.checks}),/Strict verification implementation report is stale/);
  const configuration=await prepared();const changed=JSON.parse(JSON.stringify(configured));changed.tools.checks['lint-check'].args=['-e','process.exit(1)'];await writeFile(path.join(configuration.f.project,'.instar-quality.json'),JSON.stringify(changed));
@@ -475,18 +485,17 @@ test('strict evidence rejects stale reports and quality-gate evidence',async t=>
 
 test('strict verification rejects unconfigured checks, mismatched report ids and missing required kinds',async t=>{
  const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});
- const implementationIds=['lint-check','format-check','test-check'],fullIds=['lint-check','format-check','test-check','security-check'];
- const configured={schemaVersion:3,baseRef:'main',verification:{profiles:{commit:fullIds,implementation:implementationIds,full:fullIds}},tools:{checks:{'lint-check':{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']},'test-check':{kind:'test',command:process.execPath,args:['-e','process.exit(0)']},'format-check':{kind:'format',command:process.execPath,args:['-e','process.exit(0)']},'security-check':{kind:'security',command:process.execPath,args:['-e','process.exit(0)']}}}};
+ const implementationIds=['lint-check','format-check','test-check'],fullIds=['build-check','lint-check','format-check','test-check','security-check'];
+ const configured={schemaVersion:3,verification:{profiles:{commit:fullIds,implementation:implementationIds,full:fullIds}},tools:{checks:{'lint-check':{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']},'test-check':{kind:'test',command:process.execPath,args:['-e','process.exit(0)']},'format-check':{kind:'format',command:process.execPath,args:['-e','process.exit(0)']},'build-check':{kind:'build',command:process.execPath,args:['-e','process.exit(0)']},'security-check':{kind:'security',command:process.execPath,args:['-e','process.exit(0)']}}}};
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(configured));
- const commit=gitInit(f.project);await commit();
- await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-2',implementationIds)));
+  await writeFile(path.join(f.project,'reports/engineering-verify-implementation.json'),JSON.stringify(await strictReport(f.project,'implementation','implementation-2',implementationIds)));
  await writeFile(path.join(f.project,'reports/engineering-verify-full.json'),JSON.stringify(await strictReport(f.project,'full','verify-2',fullIds)));
  await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));
  const implementationChecks=[{checkId:'lint-check',reportId:'implementation-2',kind:'lint',name:'lint',outcome:'passed',evidence:'lint passed',artifact:'reports/fixture/lint.json'},{checkId:'format-check',reportId:'implementation-2',kind:'format',name:'format',outcome:'passed',evidence:'format passed',artifact:'reports/fixture/format.json'},{checkId:'test-check',reportId:'implementation-2',kind:'test',name:'test',outcome:'passed',evidence:'test passed',artifact:'reports/fixture/test.json'}];
  await f.call('submit-implementation',{report,checks:implementationChecks});
  const valid=[{checkId:'lint-check',reportId:'verify-2',kind:'lint',name:'lint',outcome:'passed',evidence:'lint passed',artifact:'reports/fixture/lint.json'},{checkId:'test-check',reportId:'verify-2',kind:'test',name:'test',outcome:'passed',evidence:'test passed',artifact:'reports/fixture/test.json'}];
- await assert.rejects(f.call('submit-verification',{report,checks:valid}),/Verification checks missing: security|no security check|missing required security/);
- const fullValid=[...valid,{checkId:'format-check',reportId:'verify-2',kind:'format',name:'format',outcome:'passed',evidence:'format passed',artifact:'reports/fixture/format.json'},{checkId:'security-check',reportId:'verify-2',kind:'security',name:'security',outcome:'passed',evidence:'security passed',artifact:'reports/fixture/security.json'}];
+ await assert.rejects(f.call('submit-verification',{report,checks:valid}),/Verification checks missing: build, security|no security check|missing required security/);
+ const fullValid=[...valid,{checkId:'format-check',reportId:'verify-2',kind:'format',name:'format',outcome:'passed',evidence:'format passed',artifact:'reports/fixture/format.json'},{checkId:'build-check',reportId:'verify-2',kind:'build',name:'build',outcome:'passed',evidence:'build passed',artifact:'reports/fixture/build.json'},{checkId:'security-check',reportId:'verify-2',kind:'security',name:'security',outcome:'passed',evidence:'security passed',artifact:'reports/fixture/security.json'}];
  const unknown=[...fullValid,{checkId:'not-configured',reportId:'verify-2',kind:'security',name:'security-extra',outcome:'passed',evidence:'x',artifact:'reports/fixture/security.json'}];
  await assert.rejects(f.call('submit-verification',{report,checks:unknown}),/not configured/);
  const wrongReport=fullValid.map(item=>({...item,reportId:'wrong'}));
@@ -513,7 +522,7 @@ test('implementation approval gates extended quality and binds its source snapsh
  const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});
  await f.call('submit-implementation');
  assert.equal(f.state.pendingApproval,'implementation');
- assert.deepEqual(f.state.implementationReview.reviews,['architect','code-reviewer']);
+ assert.deepEqual(f.state.implementationReview.reviews,['architect','code-reviewer','security-reviewer']);
  await assert.rejects(f.call('submit-verification',{report,checks,skipImplementationApproval:true,skipVerificationEvidence:true}),/unavailable|implementation approval/);
  await f.approve();assert.equal(f.state.stage,'verification');
  await writeFile(path.join(f.project,'fixture.js'),'export const fixture = "changed";\n');
@@ -530,7 +539,7 @@ test('frontend verification requires frontend-reviewer',async t=>{
 
 test('source snapshot rejects symlinks explicitly',async t=>{
  const f=await setup(t);await symlink(path.join(f.project,'fixture.js'),path.join(f.project,'linked-fixture.js'));
- await assert.rejects(sourceSnapshot(f.project),/Symlink not supported in source snapshot/);
+ await assert.rejects(sourceSnapshot(f.project),/Symlink forbidden/);
 });
 
 test('usage records expose stage, skill and agent attribution',async t=>{
@@ -545,7 +554,7 @@ test('enforced usage budget blocks transitions until the budget is updated',asyn
  const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.',usageBudget:{maxTokens:50,enforce:true}});
  await run({...f.base,action:'record-usage',stage:'prd',source:'fixture',usage:{inputTokens:60,outputTokens:10,totalTokens:70}});
  await assert.rejects(f.call('submit-prd'),/Usage budget exceeded/);
- await f.call('set-usage-budget',{usageBudget:{maxTokens:100,enforce:true}});
+ await f.call('set-usage-budget',{usageBudget:{maxTokens:100,enforce:true},reason:'Fixture needs a higher limit after exercising the block',authorization:'test-only human approval'});
  await f.call('submit-prd');assert.equal(f.state.pendingApproval,'prd');
 });
 
@@ -555,7 +564,7 @@ test('workflow visualization and schema migration preserve state while invalidat
  const file=path.join(f.project,'planning/workflows/add-search.json');const state=JSON.parse(await readFile(file,'utf8'));state.schemaVersion=1;state.approvals={prd:{hash:'old'}};await writeFile(file,JSON.stringify(state));
  const legacy=await run({...f.base,action:'state'});assert.ok(legacy.compatibility.some(item=>item.code==='legacy-workflow-schema'));
  const migrated=await run({...f.base,action:'migrate',expectedVersion:1,reason:'Upgrade fixture to strict evidence',ui:false,stack:'backend'});
- assert.equal(migrated.schemaVersion,5);assert.deepEqual(migrated.approvals,{});assert.equal(migrated.migration.from,1);assert.equal(migrated.migration.to,5);
+ assert.equal(migrated.schemaVersion,6);assert.deepEqual(migrated.approvals,{});assert.equal(migrated.migration.from,1);assert.equal(migrated.migration.to,6);
 });
 
 test('legacy design.md is reported in state and context without changing workflow state',async t=>{
@@ -580,7 +589,7 @@ test('every required reviewer role blocks critical findings and unverified check
  const delay=()=>new Promise(resolve=>setTimeout(resolve,5));
  for(const role of ['architect','code-reviewer']){
   const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});
-  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main'}));await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));await f.prepareImplementation();await delay();
+  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm'}));await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));await f.prepareImplementation();await delay();
   await f.agent(role,'implementation',undefined,{findings:[{severity:'critical',message:'Blocking design defect.'}]});
   await assert.rejects(f.call('submit-implementation',{skipAutoQualityGate:true,skipImplementEvidence:true,report,checks}),/unresolved critical/);
  }
@@ -590,7 +599,7 @@ test('every required reviewer role blocks critical findings and unverified check
   await assert.rejects(f.call('submit-verification',{report,checks,skipVerificationEvidence:true}),/unresolved critical/);
  }
  const f=await setup(t);await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main'}));await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));await f.prepareImplementation();await delay();
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm'}));await writeFile(path.join(f.project,'reports/quality-gate.json'),JSON.stringify(await qualityGateReport(f.project)));await f.prepareImplementation();await delay();
  await f.agent('architect','implementation',undefined,{unverified:['Call chain not inspected']});
  await assert.rejects(f.call('submit-implementation',{skipAutoQualityGate:true,skipImplementEvidence:true,report,checks}),/unverified/);
 });
@@ -606,17 +615,17 @@ test('UI evidence schemas reject fake browser, accessibility and keyboard artifa
  await writeFile(path.join(f.project,'reports/fixture/accessibility.json'),JSON.stringify({status:'passed'}));
  await assert.rejects(f.call('submit-verification',{report,checks}),/accessibility artifact/);
  await writeFile(path.join(f.project,'reports/fixture/accessibility.json'),JSON.stringify({...artifactFixtures.accessibility,results:[]}));
- await assert.rejects(f.call('submit-verification',{report,checks}),/accessibility artifact/);
+ await assert.rejects(f.call('submit-verification',{report,checks,skipVerificationEvidence:true}),/accessibility artifact/);
  await writeFile(path.join(f.project,'reports/fixture/accessibility.json'),JSON.stringify(artifactFixtures.accessibility));
  await writeFile(path.join(f.project,'reports/fixture/keyboard.json'),JSON.stringify({status:'passed'}));
- await assert.rejects(f.call('submit-verification',{report,checks}),/keyboard artifact/);
+ await assert.rejects(f.call('submit-verification',{report,checks,skipVerificationEvidence:true}),/keyboard artifact/);
  await writeFile(path.join(f.project,'reports/fixture/keyboard.json'),JSON.stringify({...artifactFixtures.keyboard,journeys:[{route:'/',steps:['Tab'],expectedFocus:'#search',actualFocus:'#cancel'}]}));
- await assert.rejects(f.call('submit-verification',{report,checks}),/keyboard artifact/);
+ await assert.rejects(f.call('submit-verification',{report,checks,skipVerificationEvidence:true}),/keyboard artifact/);
 });
 
 test('schema strict policy cannot be downgraded and session usage keeps stage attribution',async t=>{
- const f=await setup(t);await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:3,baseRef:'main',verification:{profiles:{commit:['lint'],implementation:['lint'],full:['lint']}},tools:{checks:{lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']}}}}));
- await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm',baseRef:'main'}));await f.prepareImplementation();
+ const f=await setup(t);await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:3,verification:{profiles:{commit:['lint'],implementation:['lint'],full:['build-check','lint']}},tools:{checks:{lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']},'build-check':{kind:'build',command:process.execPath,args:['-e','process.exit(0)']}}}}));
+ await toImplementation(f);await f.call('complete-task',{taskId:'1.1',evidence:'fixture'});await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({schemaVersion:2,packageManager:'npm'}));await f.prepareImplementation();
  await assert.rejects(f.call('submit-implementation',{skipImplementEvidence:true,report,checks,skipAutoQualityGate:true}),/downgraded/);
  const usage=await setup(t);await usage.call('start',{document:'# PRD\nSearch orders.'});
  for(const stage of ['prd','design'])await run({...usage.base,action:'record-usage',sessionId:'same-session',source:'same-source',stage,usage:{inputTokens:10,outputTokens:5,totalTokens:15}});
@@ -625,7 +634,7 @@ test('schema strict policy cannot be downgraded and session usage keeps stage at
 });
 
 test('sensitive configuration, managed deletion and nested generated paths are bounded',async t=>{
- const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.'});const config={schemaVersion:2,packageManager:'npm',baseRef:'main'};
+ const f=await setup(t);await f.call('start',{document:'# PRD\nSearch orders.'});const config={schemaVersion:2,packageManager:'npm'};
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({...config,context:{design:'.env.design.md'}}));
  await assert.rejects(loadQualityConfig(f.project),/non-sensitive/);
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({...config,context:{sessionState:'.context/PROJECT_STATE.md'}}));
@@ -635,9 +644,9 @@ test('sensitive configuration, managed deletion and nested generated paths are b
  const before=await sourceSnapshot(f.project);for(const dir of ['src/node_modules','src/dist','src/reports'])await mkdir(path.join(f.project,dir),{recursive:true});await writeFile(path.join(f.project,'src/node_modules/nested.js'),'ignored');await writeFile(path.join(f.project,'src/dist/nested.js'),'ignored');await writeFile(path.join(f.project,'src/reports/nested.json'),'{}');assert.equal((await sourceSnapshot(f.project)).treeHash,before.treeHash);
 });
 
-test('source snapshot ignores OS metadata and gitignored files but still detects source edits',async t=>{
+test('source snapshot ignores OS metadata and binds .instarignore policy while detecting source edits',async t=>{
  const f=await setup(t);
- await writeFile(path.join(f.project,'.gitignore'),'.DS_Store\nignored-cache/\n');
+ await writeFile(path.join(f.project,'.instarignore'),'.DS_Store\nignored-cache/\n');
  const before=await sourceSnapshot(f.project);
  await writeFile(path.join(f.project,'.DS_Store'),'finder metadata');
  await mkdir(path.join(f.project,'ignored-cache'),{recursive:true});
@@ -648,12 +657,12 @@ test('source snapshot ignores OS metadata and gitignored files but still detects
  assert.notEqual((await sourceSnapshot(f.project)).treeHash,after.treeHash);
 });
 
-test('workflow traces are sharded per change while preserving the legacy aggregate',async t=>{
+test('workflow traces are written once to the per-change shard',async t=>{
  const f=await setup(t);
  await f.call('start',{document:'# PRD\nSearch orders.'});
  const shard=path.join(f.project,'.workflow/traces/add-search.jsonl');
  assert.match(await readFile(shard,'utf8'),/workflow-action/);
- assert.match(await readFile(path.join(f.project,'.workflow/traces.jsonl'),'utf8'),/workflow-action/);
+ await assert.rejects(readFile(path.join(f.project,'.workflow/traces.jsonl'),'utf8'),{code:'ENOENT'});
  await f.call('submit-prd');
  assert.equal((await readFile(shard,'utf8')).trim().split('\n').length,2);
 });
@@ -685,13 +694,12 @@ test('recovery never rolls back a transaction whose result is committed',async t
 test('workflow source snapshot includes configured ignored verification inputs',async t=>{
  const project=await fs.realpath(await mkdtemp(path.join(os.tmpdir(),'instar-snapshot-inputs-')));
  t.after(()=>rm(project,{recursive:true,force:true}));
- const git=(...args)=>{const result=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(result.status,0,result.stderr);};
- git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','InStar test');
- await writeFile(path.join(project,'.gitignore'),'vendor/\n');await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify({schemaVersion:3,verification:{inputs:['vendor/state.json']}}));
+ await writeFile(path.join(project,'.instarignore'),'vendor/\n');await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify({schemaVersion:3,verification:{inputs:['vendor/state.json']}}));
  await mkdir(path.join(project,'vendor'));await writeFile(path.join(project,'vendor/state.json'),'one');
- git('add','.');git('commit','-m','baseline');
  const before=await sourceSnapshot(project);await writeFile(path.join(project,'vendor/state.json'),'two');const after=await sourceSnapshot(project);
  assert.notEqual(after.treeHash,before.treeHash);
+ await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify({schemaVersion:3,verification:{inputs:['planning/workflows/change.json']}}));
+ await assert.rejects(sourceSnapshot(project,{fresh:true}),/managed or generated path/);
 });
 
 test('agent registration removal preserves dotted and inline TOML layouts',async ()=>{

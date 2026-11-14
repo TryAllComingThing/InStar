@@ -27,6 +27,8 @@ import {
 } from '../engine/artifacts/constants.js';
 import { discoverSpecFiles } from '../utils/spec-discovery.js';
 import { FileSystemUtils } from '../utils/file-system.js';
+import { read } from '../store/index.js';
+import { pathExistsVerified } from '../../../shared/path-safety.mjs';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -133,14 +135,11 @@ export async function findSpecUpdates(changeDir: string, mainSpecsDir: string): 
       path.dirname(path.dirname(mainSpecsDir))
     );
 
-    // Check if target exists
-    let exists = false;
-    try {
-      await fs.access(target.file);
-      exists = true;
-    } catch {
-      exists = false;
-    }
+    // Check target existence without following a final symlink. The trusted
+    // target root is already canonicalized above, including deliberate
+    // external capability-directory links.
+    const targetRelative = path.relative(target.root, target.file).split(path.sep).join('/');
+    const exists = await pathExistsVerified(target.root, targetRelative);
 
     updates.push({
       id,
@@ -209,7 +208,7 @@ export async function buildUpdatedSpec(
   };
   // Read change spec content (delta-format expected)
   assertTrustedSpecPath(update.sourceRoot, update.source);
-  const changeContent = await fs.readFile(update.source, 'utf-8');
+  const changeContent = await read(update.sourceRoot,update.source);
 
   // Parse deltas from the change spec file
   const plan = parseDeltaSpec(changeContent);
@@ -369,7 +368,7 @@ export async function buildUpdatedSpec(
   let isNewSpec = false;
   assertTrustedSpecPath(update.targetRoot, update.target);
   try {
-    targetContent = await fs.readFile(update.target, 'utf-8');
+    targetContent = await read(update.targetRoot,update.target);
     // A delta Purpose only seeds a spec that does not exist yet. Say so rather
     // than dropping it silently - the specs instruction tells authors to write
     // one for new capabilities, and the delta file looks identical either way.

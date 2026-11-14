@@ -1,13 +1,13 @@
 import path from 'node:path';
-import {readBoundedFile,assertBoundedText} from '../shared/bounded-input.mjs';
+import {readBoundedFile} from '../shared/bounded-input.mjs';
+import {normalizeProfileName} from '../shared/profile-contract.mjs';
 
-const usage = 'Usage: instar <doctor|snapshot|verify|review|ci> [options]';
+const usage = 'Usage: instar <doctor|snapshot|verify|review> [options]';
 const commandUsage = {
   doctor:'Usage: instar doctor [--project <path>]',
   snapshot:'Usage: instar snapshot [--project <path>]',
-  verify:'Usage: instar verify [--project <path>] [--profile commit|full]',
-  review:'Usage: instar review [--project <path>] --review-file <review.json>',
-  ci:'Usage: instar ci prepare|publish|status [--project <path>] [--title <title>] [--confirm]'
+  verify:'Usage: instar verify [--project <path>] [--profile preflight|implementation|full] [--layer L1|L2|L3] [--files a,b] [--no-cache] (legacy alias: commit)',
+  review:'Usage: instar review [--project <path>] --review-file <review.json>'
 };
 
 export function usageFor(command) {
@@ -16,52 +16,38 @@ export function usageFor(command) {
 
 export async function parseFriendlyArgs(args, cwd = process.cwd()) {
   const [command, ...tokens] = args;
-  const actions = {doctor:'doctor',snapshot:'snapshot',verify:'frontend-verify',review:'quality-gate',ci:'ci'};
+  const actions = {doctor:'doctor',snapshot:'snapshot',verify:'frontend-verify',review:'quality-gate'};
   if (!actions[command]) return null;
   const input = {action:actions[command],project:path.resolve(cwd)};
-  let phase;
   const values = new Map();
   const flags = new Set();
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
     if (!token.startsWith('--')) {
-      if (command==='ci' && !phase && ['prepare','publish','status'].includes(token)) { phase=token; continue; }
       throw Error(`Unexpected argument: ${token}. ${usage}`);
     }
-    if (['--confirm'].includes(token)) { flags.add(token); continue; }
-    if (!['--project','--profile','--phase','--review-file','--title','--body','--body-file'].includes(token)) throw Error(`Unknown option: ${token}`);
+    if (['--no-cache'].includes(token)) { flags.add(token); continue; }
+    if (!['--project','--profile','--layer','--files','--review-file'].includes(token)) throw Error(`Unknown option: ${token}`);
     if (i+1>=tokens.length || tokens[i+1].startsWith('--')) throw Error(`Option requires a value: ${token}`);
     values.set(token,tokens[++i]);
   }
-  const allowedValues={doctor:['--project'],snapshot:['--project'],verify:['--project','--profile'],review:['--project','--review-file'],ci:['--project','--phase','--title','--body','--body-file']};
-  const allowedFlags={doctor:[],snapshot:[],verify:[],review:[],ci:['--confirm']};
+  const allowedValues={doctor:['--project'],snapshot:['--project'],verify:['--project','--profile','--layer','--files'],review:['--project','--review-file']};
+  const allowedFlags={doctor:[],snapshot:[],verify:['--no-cache'],review:[]};
   for(const option of values.keys())if(!allowedValues[command].includes(option))throw Error(`${option} is not supported by ${command}`);
   for(const flag of flags)if(!allowedFlags[command].includes(flag))throw Error(`${flag} is not supported by ${command}`);
   if (values.has('--project')) input.project=path.resolve(cwd,values.get('--project'));
   if (command==='verify') {
-    input.profile=values.get('--profile') || 'full';
-    if (!['commit','full'].includes(input.profile)) throw Error('profile must be commit or full');
+    const layerValue=String(values.get('--layer') || '').toLowerCase();
+    input.profile=normalizeProfileName(values.get('--profile') || (values.has('--layer')&&!['l3','frozen-full'].includes(layerValue)?'implementation':'full'));
+    if (values.has('--layer')) input.layer=values.get('--layer');
+    if (values.has('--files')) input.files=values.get('--files').split(',').map(item=>item.trim()).filter(Boolean);
+    input.cache=!flags.has('--no-cache');
   }
   if (command==='review') {
     const reviewFile=values.get('--review-file');
     if (!reviewFile) throw Error('review requires --review-file <review.json>');
     const parsed=JSON.parse(await readBoundedFile(path.resolve(cwd,reviewFile)));
     input.review=parsed.review || parsed;
-  }
-  if (command==='ci') {
-    input.phase=values.get('--phase') || phase;
-    if (!input.phase) throw Error('ci requires a phase: prepare, publish, or status');
-    if (!['prepare','publish','status'].includes(input.phase)) throw Error('ci phase must be prepare, publish, or status');
-    if (values.has('--title')) input.title=values.get('--title');
-    if (values.has('--body') && values.has('--body-file')) throw Error('Choose only one of --body or --body-file');
-    if (values.has('--body')) input.body=assertBoundedText(values.get('--body'),'--body');
-    if (values.has('--body-file')) input.body=await readBoundedFile(path.resolve(cwd,values.get('--body-file')));
-    if (input.phase==='prepare' && !input.title) throw Error('ci prepare requires --title <title>');
-    if (input.phase==='publish') {
-      if (!flags.has('--confirm')) throw Error('ci publish requires --confirm to authorize feature-branch push and PR publication');
-      if (!input.title) throw Error('ci publish requires --title <title>');
-      input.authorization='User explicitly confirmed via InStar CLI';
-    }
   }
   return input;
 }

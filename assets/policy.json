@@ -11,11 +11,8 @@
     "localHooks": false,
     "install": [
       "registry.npmjs.org"
-    ],
-    "ci": "explicit project ci.allowedHosts; existing gh authentication only"
+    ]
   },
-  "defaultBranchPush": false,
-  "forcePush": false,
   "productionDeploy": false,
-  "enforcement": "Host sandbox and server branch protection; this file is declarative."
+  "enforcement": "Host sandbox and explicit user authorization; this file is declarative and does not replace external VCS/CI governance."
 }

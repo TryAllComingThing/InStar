@@ -1,6 +1,6 @@
-# InStar 2.4 技术文档
+# InStar 2.6 技术文档
 
-本文档集面向使用、维护和二次集成 InStar 的工程师，基于插件源码与 `release/` 发布包 v2.4.0 的实际行为整理。插件定位不是代码生成器或质量工具本身，而是运行在 Codex 之上的**需求、Spec、设计、实施、验证与交付编排层**。
+本文档集面向使用、维护和二次集成 InStar 的工程师，基于插件源码与 `release/` 发布包 v2.6.0 的实际行为整理。插件定位不是代码生成器或质量工具本身，而是运行在 Codex 之上的**需求、Spec、设计、实施、验证与交付编排层**。
 
 ## 文档导航
 
@@ -9,7 +9,8 @@
 | [CAPABILITIES.md](CAPABILITIES.md) | 全部 Skill、Command、Reviewer、规范与模板能力 |
 | [plugin-arch.md](plugin-arch.md) | 进程、模块、数据与构建架构 |
 | [WORKFLOW.md](WORKFLOW.md) | PRD 到归档的完整状态机与人工审批 |
-| [QUALITY.md](QUALITY.md) | 质量配置、验证 profile、证据链与 CI 门禁 |
+| [COST-AND-LIGHTWEIGHT.md](COST-AND-LIGHTWEIGHT.md) | 成本与时长优化、小功能轻量路径与不可跳过项 |
+| [QUALITY.md](QUALITY.md) | 质量配置、验证 profile、证据链与本地门禁 |
 | [EVALUATION.md](EVALUATION.md) | Skill/Reviewer 轨迹、语义评测与 Token/API 遥测 |
 | [CONTEXT-AND-DISCOVERY.md](CONTEXT-AND-DISCOVERY.md) | 项目上下文、源码发现、设计提取与 Token 来源 |
 | [WORKFLOW-POLICY.md](WORKFLOW-POLICY.md) | 自动执行、授权、审批和只读边界 |
@@ -26,13 +27,13 @@
 人类目标与审批
       │
       ▼
-Codex Skills ──► InStar Controllers ──► 项目文件 / Git / 项目自有命令
+Codex Skills ──► InStar Controllers ──► 项目文件 / 工作区清单 / 项目自有命令
       │                  │
       │                  ├─ 工作流状态与人工审批
       │                  ├─ 质量报告与 artifact 哈希
-      │                  └─ 源码发现、CI 与审计
+      │                  └─ 源码发现与审计
       ▼
-可复核的 PRD、Spec、设计、任务、代码、验证和 PR 证据
+可复核的 PRD、Spec、设计、任务、代码与验证证据
 ```
 
 ## 最小使用路径
@@ -41,22 +42,22 @@ Codex Skills ──► InStar Controllers ──► 项目文件 / Git / 项目�
 初始化项目 → 写 PRD → 人工确认 PRD → 写 Spec → Spec Reviewer + 人工确认
 → 技术设计 → 人工确认 → 任务拆分 → 人工确认/授权
 → 实现 → implementation 验证 + code/architecture Review + quality-gate
-→ 人工确认实现 → full 验证 + security/UI Review → 人工验收 → 归档
+→ 人工确认实现 → full 验证（build/security）+ UI Review → 人工验收 → 归档
 ```
 
-如果只是修改已有代码，不需要强行创建 PRD/change；按用户授权完成实现后，使用项目现有的验证和质量流程。若只是从存量代码反推现状规格，使用独立的 `spec-discover`，不要启动 PRD 流程。
+如果只是修改文档、文案或测试，可使用 `micro-change` 跳过 PRD/change 文档并只保留一次最终验收；如果是已有代码的小功能，使用 `quick-change`。若只是从存量代码反推现状规格，使用独立的 `spec-discover`，不要启动 PRD 流程。
 
 ## 重要边界
 
 - InStar 不实现 ESLint、测试框架、SAST/SCA、浏览器或 CI；它调用项目已有命令并检查证据。
 - InStar 的本机状态文件是集成数据，不是身份系统或不可篡改审计账本；人工审批仍需真实用户确认。
-- Git 提交、推送、PR、依赖安装和生产部署仍需明确授权；Hook 只是本地辅助门禁。
+- InStar 不要求、也不执行 Git。提交、分支、合并、推送、PR/CI 和依赖安装由外部工具或用户授权后执行。
 - 质量 PASS 只表示配置的命令通过，不自动证明需求正确、设计合理或人工验收完成。
 - `docs/` 中的建议性规范与模板不会自动成为目标项目规则；项目自己的 `AGENTS.md`、架构、设计和 Token 优先。
 
 ## 版本与环境
 
-- 插件版本：`2.4.0`
+- 插件版本：`2.6.0`
 - Node.js：`>= 20.19.0`
 - 插件运行时使用 npm workspace 构建；目标项目可以使用自己的技术栈和包管理器。
 - 发布入口：`release/plugins/instar/`，本地 marketplace：`release/.agents/plugins/marketplace.json`。

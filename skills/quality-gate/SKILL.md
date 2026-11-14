@@ -1,6 +1,6 @@
 ---
 name: quality-gate
-description: Review software changes across frontend, backend and full-stack code against project architecture, security, correctness and applicable technology-specific rules. Use after local verification and before commits or PRs to produce snapshot-bound evidence; do not use for document-only quality evaluation. 适用于代码审查、质量门禁和提交前证据。
+description: Review software changes across frontend, backend and full-stack code against project architecture, security, correctness and applicable technology-specific rules. Use after local verification and before commits to produce snapshot-bound evidence; do not use for document-only quality evaluation. 适用于代码审查、质量门禁和提交前证据。
 compatibility: Requires the full InStar plugin package; plugin-root standards and design guidance resolve from the installed plugin root.
 ---
 
@@ -8,7 +8,7 @@ compatibility: Requires the full InStar plugin package; plugin-root standards an
 
 ## 触发与输入契约
 
-本地验证完成后、提交前或 PR 前使用。输入：绝对项目路径、与 baseRef 比较的代码变更（包括未跟踪文件）、适用的 `AGENTS.md`、已配置或发现的项目架构/设计文档、项目 `standards/`、PRD/Spec、`technical-design.md` 和设计约束。阅读 [质量协议](../../docs/QUALITY.md)，调用 snapshot 取得本次检查的 fingerprint。项目上下文文档是可选输入；优先使用项目现有规范，不为满足插件而复制空文件。必须实际阅读变更及相关调用链，不能用工具退出码代替 AI Review。
+本地验证完成后、提交前使用。输入：绝对项目路径、相对于 change baseline 的工作区代码变化、适用的 `AGENTS.md`、已配置或发现的项目架构/设计文档、项目 `standards/`、PRD/Spec、`technical-design.md` 和设计约束。阅读 [质量协议](../../docs/QUALITY.md)，调用 snapshot 取得本次检查的 fingerprint。项目上下文文档是可选输入；优先使用项目现有规范，不为满足插件而复制空文件。必须实际阅读变更及相关调用链，不能用工具退出码代替 AI Review。
 
 按变更读取 [InStar review guidance](../../standards/README.md) 中与文件语言和领域匹配的规范；API 变更查阅 API 设计规范，数据库变更查阅数据库设计、查询与迁移规范。UI 变更参考 [design review checklist](../../design-guidance/rules/review-checklist.md)、相关设计规则和已有的 design-check Style Constraints。若没有该产物，按用户/项目规范和代码现状审查，不虚构 Token 门禁。插件规则用于补充审查，不自动升级为项目门禁；项目采用的规则和已配置工具才决定 BLOCK。不要因为项目未采用插件示例而要求引入特定框架、主题系统、Design Token 或样式架构。
 
@@ -16,9 +16,11 @@ Use `schemaVersion:2` for new quality reviews. Every applicable check must inclu
 
 对所有变更评估正确性、可读性/可维护性和架构；安全与性能按风险触发。安全敏感变更（认证/授权、API 边界、SQL、文件上传、反序列化、秘密、依赖或出站请求）必须审查对应安全控制并引用代码或测试证据。性能重点检查热路径、大数据/列表、渲染、数据库查询或并发行为；无相关风险时标 NA 并解释。不要把“性能审查”机械理解为要求基准测试，也不要把建议性优化当 BLOCK。
 
+验证按风险分层：L1 只跑受影响 unit，L2 跑全部 unit 与受影响 E2E，L3 在冻结源码后只跑一次完整 full。L1/L2 的缓存只能在完整证据键一致时复用；不得把缓存命中或 L1/L2 报告冒充 L3。`governed` 变更必须在 L1/L2 联合证据中包含 security，并在 implementation 阶段完成 security-reviewer。
+
 ## 允许工具与流程
 
-允许本地文件读取、Git 只读命令和质量 CLI；AI Review 由当前已授权的 Codex 会话完成。禁止在本地 Hook 中额外联网调用模型。先检查架构、命名、类型、组件边界、设计一致性，再逐项检查：
+允许本地文件读取、工作区清单扫描和质量 CLI；InStar 不要求 Git 命令。AI Review 由当前已授权的 Codex 会话完成。禁止在本地 Hook 中额外联网调用模型。先检查架构、命名、类型、组件边界、设计一致性，再逐项检查：
 
 | ID | 范围 | 必查内容及适用性 |
 | --- | --- | --- |
@@ -55,18 +57,18 @@ Use `schemaVersion:2` for new quality reviews. Every applicable check must inclu
 
 ## 输出契约
 
-`reports/quality-gate.json` 及历史报告包含工具检查、本次所选 Review 项、证据、严重性、指纹；`logs/` 记录执行摘要。BLOCK 阻止提交/PR，WARN 保留并披露，INFO 提供建议。
+`reports/quality-gate.json` 及历史报告包含工具检查、本次所选 Review 项、证据、严重性、指纹；`logs/` 记录执行摘要。BLOCK 阻止流程继续，WARN 保留并披露，INFO 提供建议。
 
 ## 边界与失败策略
 
-不实现扫描规则、不替代人工合并；不自动修改业务代码或放宽阈值。缺失的已配置工具、上下文不足、未完成 Review、过期指纹均不能放行；上下文不足对应项标 BLOCK。通用 Review 维度必须提供证据；未声明或不适用的技术栈专项标 NA 并说明理由。不要把建议性规则升级为项目门禁，也不要把某一技术栈的检查结果作为其他技术栈正确性的证明。AI 生成变更在后续 PR 使用 ai-generated 标签与项目约定的提交 trailer。
+不实现扫描规则、不替代人工合并；不自动修改业务代码或放宽阈值。缺失的已配置工具、上下文不足、未完成 Review、过期指纹均不能放行；上下文不足对应项标 BLOCK。通用 Review 维度必须提供证据；未声明或不适用的技术栈专项标 NA 并说明理由。不要把建议性规则升级为项目门禁，也不要把某一技术栈的检查结果作为其他技术栈正确性的证明。AI 生成变更的提交 trailer、发布标记、PR 和 CI 由外部 VCS/平台管理；InStar 不执行提交、不创建或更新 PR。
 
 ## 审计
 
-记录实际 reviewer 标识、`executionMode`、代码引用和证据，不能伪造独立审查身份。报告是可审阅工件，不是防篡改签名；CI 和人工仍需独立验证。设计和 Review 证据应说明复用了哪些现有组件、Token、布局和交互模式，以及必要的偏离理由；控制器只能校验来源指纹。完成质量门禁后，用 `record-usage` 记录可测量的 Token/API 消耗；SessionEnd Hook 会尝试从 Codex 会话导入，历史缺失值不得估算。
+记录实际 reviewer 标识、`executionMode`、代码引用和证据，不能伪造独立审查身份。报告是可审阅工件，不是防篡改签名；外部 CI 和人工仍需独立验证。设计和 Review 证据应说明复用了哪些现有组件、Token、布局和交互模式，以及必要的偏离理由；控制器只能校验来源指纹。同一目标重复相同 findings 会被 schema 6 拒绝，默认每角色最多 3 轮；先修复或补充新证据。完成质量门禁后，用 `record-usage` 记录可测量的 Token/API 消耗；新工作流默认强制 6M billable-token/1200-call 预算，billable = input - cached input + output，超限会在下一次验证/门禁前阻断。SessionEnd Hook 会尝试从 Codex 会话及子 Agent 导入，历史缺失值不得估算。
 
 ## 设计约束
 
-项目配置或发现的设计文档中的 UI 约束由 `design-lint` 适配器检查。本 Skill 不内置项目设计规则。schema 1/2 若 `.instar-quality.json` 配置 `tools.architecture`，运行该项目架构检查脚本并要求成功；未配置时明确标记为 INFO。schema 3 使用 `tools.checks` 与 `verification.profiles`，没有独立 architecture adapter，应运行 profile 中的项目检查并把架构判断作为 AI Review 的一部分。两种情况都不能声称未运行的静态架构检查已通过。AI Review 依据实际提供的 AGENTS、架构/设计文档和 standards 给出路径证据；缺少可选文档时说明来源缺失并依照代码现状审查。AI 评审由当前会话完成；先将完整 Review 交给 quality-gate，再由提交 Hook 在离线环境复核工具结果。
+项目配置或发现的设计文档中的 UI 约束由 `design-lint` 适配器检查。本 Skill 不内置项目设计规则。schema 1/2 若 `.instar-quality.json` 配置 `tools.architecture`，运行该项目架构检查脚本并要求成功；未配置时明确标记为 INFO。schema 3 使用 `tools.checks` 与 `verification.profiles`，没有独立 architecture adapter，应运行 profile 中的项目检查并把架构判断作为 AI Review 的一部分。两种情况都不能声称未运行的静态架构检查已通过。AI Review 依据实际提供的 AGENTS、架构/设计文档和 standards 给出路径证据；缺少可选文档时说明来源缺失并依照代码现状审查。AI 评审由当前会话完成；先将完整 Review 交给 quality-gate。InStar 不提供提交 Hook；需要外部门禁时由 VCS/CI 显式运行。
 
-若 `.instar-quality.json` 配置 `tools.security`，它必须指向项目 `package.json` 中的安全扫描脚本，并在对应的 `full` 验证流程执行（schema 3 使用 `engineering-verify`，legacy npm/Vite 使用 `frontend-verify`）；脚本缺失、失败、超时或验证期间源码变化均阻断。未配置时 `doctor` 报 INFO，不声称扫描通过。项目若要求安全扫描，应在 CI 将对应实际 GitHub check 配入 `ci.requiredChecks`；不要把本地脚本存在等同于远端 required check。仅运行项目已选择的工具，不自动下载工具、不上传源码、不自动修复发现项。
+若 `.instar-quality.json` 配置 `tools.security`，它必须指向项目 `package.json` 中的安全扫描脚本，并在对应的 `full` 验证流程执行（schema 3 使用 `engineering-verify`，legacy npm/Vite 使用 `frontend-verify`）；脚本缺失、失败、超时或验证期间源码变化均阻断。未配置时 `doctor` 报 INFO，不声称扫描通过。项目若在外部流水线中另有安全门禁，应由项目自行维护；不要把本地脚本存在等同于远端门禁通过。仅运行项目已选择的工具，不自动下载工具、不上传源码、不自动修复发现项。

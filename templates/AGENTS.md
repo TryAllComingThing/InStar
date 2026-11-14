@@ -1,15 +1,42 @@
 # InStar development workflow
 
-Use the InStar plugin skills when working on a tracked change.
-For “从源码生成 Spec” or documenting an existing project's current behavior, use spec-discover independently of the tracked change workflow. It writes evidence-backed baselines under planning/specs without a PRD or implementation tasks. Existing baseline updates require an explicit update scope.
-“撰写需求”, “写 PRD” and equivalent requests route to requirements-workflow and write-a-prd.
-Use initialize-project for initial setup. Resolve the explicit target project path and select the installation `stack` (`frontend`, `backend`, or `fullstack`) so only applicable assets are installed. Re-run it after changing scope: unchanged managed assets are reconciled, while local edits and custom Codex settings are preserved and reported. Never write project artifacts into the plugin installation.
-Follow PRD → human PRD review → spec-explore (skip when the project is empty) → spec-propose → spec-verify → mandatory spec-reviewer → human Spec review → spec-design → human design review → spec-tasks → human task-list review → implementation → verification → human acceptance → baseline/archive.
-For every PRD review revision, use write-a-prd again, announce its use, save and resubmit for renewed human review. Repeat until explicit approval of the current PRD. For every Spec revision, use spec-propose then spec-verify and repeat spec-reviewer and human review until explicit approval of the current Spec. Feedback changing approved PRD scope returns to the PRD loop. Technical design and task list are separate approvals; task approval authorizes implementation.
-Use the workflow-controller for tracked document writes, review records and transitions. Read its current state before continuing. Do not treat a generated report as human confirmation or bypass a blocked gate.
-Automatic audit writes (`trace-skill`, `trace-agent`, `record-usage`, and controller writes under planning/reports/logs/.workflow/docs/prd) do not need a confirmation prompt. Reading project context is read-only and needs no prompt. Ask before business source/config edits, deletion, commit/push, PR creation or deployment. Approval decisions are `accept-record`, `accept-no-record` or `reject`; see docs/WORKFLOW-POLICY.md.
-Start tracked changes with explicit `ui` and `stack` classification. Select implementation and verification skills by stack: `frontend` uses `frontend-implement`/`frontend-verify`, `backend` uses `engineering-implement`/`engineering-verify`, and `fullstack` uses both pairs. UI work must run design-check before design and include accessibility plus keyboard/focus automation in verification. Implementation approval always requires `.instar-quality.json`, a current quality-gate report, and the `implementation` checks. Before implementation approval, complete architect/code-reviewer review and `quality-gate`. After approval, complete security-reviewer, frontend-reviewer for frontend/fullstack UI, ui-reviewer for UI, and the `full` checks. Schema 5 defaults to subagent review with a distinct reviewer session and agent-config hash; main-agent fallback requires explicit `allowMainAgentFallback: true`. Critical/warning findings or unverified checks block; record real code references and reviewer execution mode, never label a main-agent fallback as a subagent. Record Token/API usage when measurable, including stage/skill/agent attribution when available.
-When `.instar-quality.json` defines a schema 3 profile, verification must cite the generated report ID and artifact hashes; schema 1/2 manual evidence must be labelled `source: manual` with a reason. Browser, accessibility and keyboard artifacts must follow their semantic JSON contracts. Use `instar status` or the `visualize` action to inspect workflow state and recent traces. Active legacy workflows must be migrated explicitly with `migrate`, including explicit `ui` and `stack`; archived workflows are immutable.
-For UI work, use headless Playwright for functional regression and axe for accessibility; headed Chrome is optional visual evidence and smoke scripts do not replace either. The controller snapshots source once at verification, not after every task.
-Read docs/engineering/testing.md and any stack-specific conventions installed under docs/engineering/ before implementation. Read the project's canonical design document, design-system manifest when configured, and token sources for UI work. Existing project-specific rules remain applicable.
-Reviewer templates live in .codex/agents/. They review without editing or approving; the main agent records actual findings. If unavailable, disclose that limitation and perform an explicitly labelled main-agent review.
+## Route first
+
+Classify the request before reading workflow documents:
+
+| Path | Use when | Required flow |
+| --- | --- | --- |
+| `micro` | Documentation, copy or test-only change with explicit user authorization and no executable/production code | Use `micro-change`: no PRD/Spec/Design/Tasks or change brief; implement, run targeted checks and one code review, then one final human acceptance. The controller rechecks the workspace inventory baseline at start and submission. |
+| `quick` | Small existing-code feature, no UI/auth/data/API/architecture/dependency/infrastructure impact, at most 10 files and 400 changed lines | Use `quick-change`: one change brief, brief approval, implementation, one code review, acceptance. The controller rechecks changes against the workspace inventory baseline. |
+| `tracked` | New product behavior, multiple teams, unclear requirements, or any scope outside `micro`/`quick` | Use `requirements-workflow` and the full lifecycle. |
+| `discover` | Reverse-document existing behavior from source | Use `spec-discover`; no PRD or implementation lifecycle. |
+
+Use `micro-change` or `quick-change` only when the user explicitly authorizes that route. If eligibility is uncertain, choose `tracked`. Any UI, authentication, authorization, security, secrets, data, migration, API-contract, architecture, dependency or infrastructure change requires `tracked`. Observed source changes always override a lower declared classification.
+
+## Tracked workflow
+
+Start tracked changes with explicit `ui`, `stack` (`frontend|backend|fullstack`) and risk (`lean|standard|governed`). Route:
+
+`PRD → human PRD review → spec-explore (skip when empty) → spec-propose → spec-verify → spec-reviewer → human Spec review → spec-design → human design review → spec-tasks → human task-list review → implementation → verification → human acceptance → archive`
+
+For every revision repeat the corresponding authoring, verification and review gates. Feedback changing approved scope returns to the earliest affected stage. Technical design and task list are separate approvals; task approval authorizes implementation. Use `write-a-prd` for every PRD revision and announce its use.
+
+Read current controller state before continuing. Do not treat a generated report as human confirmation or bypass a blocked gate. Use `complete-tasks` for task batches and `refresh-evidence` for source-only changes after approval; do not reopen unchanged design/tasks.
+
+## Evidence and review
+
+- Implementation approval requires `.instar-quality.json`, a current `quality-gate` report and the configured `implementation` checks.
+- Before implementation approval, run architect/code-reviewer review and `quality-gate`; governed changes also need security review across L1/L2.
+- After implementation approval, run the stack verification Skill, security-reviewer, frontend-reviewer for frontend/fullstack UI, ui-reviewer for UI, and the `full` checks.
+- Critical and unverified findings always block. An ordinary warning requires a disposition with decision, reason, owner and future expiry.
+- Record real code references and reviewer execution mode. Never label a main-agent fallback as a subagent.
+- Use `record-usage` when measurable; new tracked workflows default to 6M billable tokens and 1200 API calls.
+
+## Execution rules
+
+- Automatic audit writes (`trace-skill`, `trace-agent`, `record-usage`, controller writes under `planning/reports/logs/.workflow/docs/prd`) need no confirmation.
+- Reading project context is read-only. Ask before business source/config edits, deletion, commit/push or deployment.
+- UI work runs `design-check`, headless Playwright and axe; include keyboard/focus automation. Do not rerun identical browser evidence for the same source snapshot.
+- Read `docs/engineering/testing.md` and applicable stack conventions before implementation. Read canonical design documents and token sources for UI work.
+- Reviewer templates live in `.codex/agents/`; reviewers are read-only and never approve. If a reviewer is unavailable, disclose it and record an explicitly labelled main-agent review.
+- Use `instar status` or `visualize` to inspect tracked workflow state. Archived workflows are immutable; migrate active legacy workflows explicitly.

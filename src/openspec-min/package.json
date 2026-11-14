@@ -18,7 +18,7 @@
     "SKILL-PORT.md"
   ],
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-skill-assets.mjs",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-skill-assets.mjs && node scripts/copy-shared-runtime.mjs",
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "engines": {

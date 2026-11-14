@@ -11,29 +11,29 @@ const policyFor=checks=>({schemaVersion:1,profiles:{
  commit:[{category:'Q-07',checkId:'evidence-report'}],
  full:['Q-01','Q-02','Q-03','Q-04','Q-05','Q-06','Q-07'].map((category,index)=>({category,checkId:index===6?'evidence-report':checks[Math.min(index,checks.length-1)]}))
 }});
+function withBuild(config){
+ if(config.schemaVersion!==3||!config.verification?.profiles?.full)return config;
+ config.tools.checks??={};
+ config.tools.checks['build-check']??={kind:'build',command:process.execPath,args:['-e','process.exit(0)']};
+ if(!config.verification.profiles.full.includes('build-check'))config.verification.profiles.full.push('build-check');
+ return config;
+}
 async function fixture(t) {
  const project=await mkdtemp(path.join(os.tmpdir(),'instar-quality-'));t.after(()=>rm(project,{recursive:true,force:true}));
- const git=(...args)=>{const r=spawnSync('git',args,{cwd:project,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout;};
- git('init','-b','main');git('config','user.email','test@example.invalid');git('config','user.name','InStar test');
- const config={schemaVersion:2,packageManager:'npm',baseRef:'main',context:{},qualityPolicy:policyFor(['lint','typecheck','test','build','dependencies','vite-build']),tools:Object.fromEntries(['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint','dependencies','ci-config','vite-build'].map(n=>[n,`quality:${n}`]))};await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify(config));
- const pkg={scripts:Object.fromEntries(['lint','typecheck','test','build','quality:vue-doctor','quality:vue-ai-sanitizer','quality:ai-code-gate','quality:design-lint','quality:dependencies','quality:ci-config','quality:vite-build'].map(n=>[n,'node -e "process.exit(0)"']))};
+ const config={schemaVersion:2,packageManager:'npm',context:{},qualityPolicy:policyFor(['lint','typecheck','test','build','dependencies','vite-build']),tools:Object.fromEntries(['vue-doctor','vue-ai-sanitizer','ai-code-gate','design-lint','dependencies','vite-build'].map(n=>[n,`quality:${n}`]))};await writeFile(path.join(project,'.instar-quality.json'),JSON.stringify(config));
+ const pkg={scripts:Object.fromEntries(['lint','typecheck','test','build','quality:vue-doctor','quality:vue-ai-sanitizer','quality:ai-code-gate','quality:design-lint','quality:dependencies','quality:vite-build'].map(n=>[n,'node -e "process.exit(0)"']))};
  await writeFile(path.join(project,'package.json'),JSON.stringify(pkg));
- await writeFile(path.join(project,'.gitignore'),'reports/\nlogs/\nnode_modules/\n');
+ await writeFile(path.join(project,'.instarignore'),'reports/\nlogs/\nnode_modules/\n');
  await mkdir(path.join(project,'reports'));await mkdir(path.join(project,'logs'));
  await writeFile(path.join(project,'App.vue'),'<template>Hello</template>');
- git('add','.');git('commit','-m','baseline');git('checkout','-b','feature');
  const call=(action,input={})=>run({action,project,...input});
  const review=async()=>({reviewer:'test-fixture',fingerprint:(await call('snapshot')).fingerprint,checks:reviewItems.map(id=>({id,status:'PASS',evidence:'Isolated orchestration fixture, not a real product review'})),findings:[],unverified:[]});
- return {project,git,pkg,call,review};
+ return {project,pkg,call,review};
 }
-test('full pipeline accepts current evidence and blocks changed code or staging',async t=>{
- const f=await fixture(t);assert.equal((await f.call('local-verify')).status,'PASS');assert.equal((await f.call('quality-gate',{review:await f.review()})).status,'PASS');
- await f.call('ai-provenance',{aiGenerated:true,sessionId:'test',summary:'Fixture validation'});
- assert.equal((await f.call('pre-pr-check')).status,'PASS');
+test('verification and review are bound to the current source and detect changes',async t=>{
+ const f=await fixture(t);assert.equal((await f.call('local-verify')).status,'PASS');const review=await f.review();assert.equal((await f.call('quality-gate',{review})).status,'PASS');
  await writeFile(path.join(f.project,'App.vue'),'<template>Changed</template>');
- await assert.rejects(f.call('pre-pr-check'),/stale/);
- await f.call('local-verify');await f.call('quality-gate',{review:await f.review()});f.git('add','App.vue');
- await assert.rejects(f.call('pre-pr-check'),/stale/);
+ await assert.rejects(f.call('quality-gate',{review}),/stale/);
 });
 test('first failure stops execution, overwrites prior pass and missing tools block',async t=>{
  const f=await fixture(t);await f.call('local-verify');
@@ -44,11 +44,13 @@ test('first failure stops execution, overwrites prior pass and missing tools blo
  delete f.pkg.scripts['quality:vue-doctor'];await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
  assert.equal((await f.call('quality-gate',{review:await f.review()})).status,'BLOCK');
 });
-test('project quality scripts do not inherit host credential environment variables',async t=>{
- const f=await fixture(t),old=process.env.GITHUB_TOKEN;process.env.GITHUB_TOKEN='fixture-not-a-secret';
- t.after(()=>{if(old===undefined)delete process.env.GITHUB_TOKEN;else process.env.GITHUB_TOKEN=old;});
- f.pkg.scripts.lint='node -e "if(process.env.GITHUB_TOKEN) process.exit(9)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
- const report=await f.call('frontend-verify',{profile:'commit'});assert.equal(report.status,'PASS');assert.equal(report.checks[0].status,'PASS');
+test('project quality scripts do not inherit host credential or process-loader environment variables',async t=>{
+ const f=await fixture(t),vars={GITHUB_TOKEN:'fixture-not-a-secret',BASH_ENV:'/tmp/fixture-bash-env',ENV:'/tmp/fixture-env',SHELLOPTS:'xtrace',PS4:'fixture-prompt'};
+ const old=Object.fromEntries(Object.keys(vars).map(key=>[key,process.env[key]]));
+ Object.assign(process.env,vars);
+ t.after(()=>{for(const [key,value] of Object.entries(old)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+ f.pkg.scripts.lint='node -e "if([\'GITHUB_TOKEN\',\'BASH_ENV\',\'ENV\',\'SHELLOPTS\',\'PS4\'].some(k=>process.env[k])) process.exit(9)"';await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
+ const report=await f.call('frontend-verify',{profile:'commit'});assert.equal(report.status,'PASS',JSON.stringify(report));assert.equal(report.checks[0].status,'PASS');
 });
 test('optional security scanner runs only in full verification and configured failures block',async t=>{
  const f=await fixture(t);
@@ -78,42 +80,32 @@ test('quality schema version 1 remains explicitly supported',async t=>{
 test('schema 3 engineering verification runs project commands without npm coupling',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
- config.verification={profiles:{commit:['go-vet'],full:['go-vet','go-test','go-security']}};
+ config.verification={profiles:{commit:['go-vet'],full:['build-check','go-vet','go-test','go-security']}};
  config.qualityPolicy=policyFor(['go-vet','go-test','go-security']);
  config.tools.checks={
   'go-vet':{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']},
   'go-test':{kind:'test',command:process.execPath,args:['-e','process.exit(0)'],timeoutMs:5000},
-  'go-security':{kind:'security',command:process.execPath,args:['-e','process.exit(0)']}
+  'go-security':{kind:'security',command:process.execPath,args:['-e','process.exit(0)']},
+  'build-check':{kind:'build',command:process.execPath,args:['-e','process.exit(0)']}
  };
  await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  const result=await f.call('engineering-verify',{profile:'full'});
  assert.equal(result.kind,'engineering-verify-full');assert.equal(result.status,'PASS');
- assert.deepEqual(result.checks.map(check=>check.id),['go-vet','go-test','go-security']);
+ assert.deepEqual(result.checks.map(check=>check.id),['build-check','go-vet','go-test','go-security']);
  assert.equal(typeof result.checks[0].outputHash,'string');
  assert.match(result.checks[0].artifact,/^reports\/evidence\/full\//);assert.equal(result.checks[0].artifactHash.length,64);
- assert.equal(result.profile,'full');assert.equal(result.configHash.length,64);assert.equal(result.snapshot.fingerprint.length,64);assert.deepEqual(Object.keys(result.checkDefinitions),['go-vet','go-test','go-security']);
+ assert.equal(result.profile,'full');assert.equal(result.configHash.length,64);assert.equal(result.snapshot.fingerprint.length,64);assert.deepEqual(Object.keys(result.checkDefinitions),['build-check','go-vet','go-test','go-security']);assert.equal(result.buildOutputHash.length,64);assert.equal(result.checks[0].buildOutputHash,result.buildOutputHash);
  assert.equal(result.coverage.basis,'project-configured-checks');assert.match(result.coverage.note,/does not independently prove/);
  const gate=await f.call('quality-gate',{review:await f.review()});assert.equal(gate.status,'PASS');assert.equal(gate.configHash.length,64);
- await f.call('ai-provenance',{aiGenerated:false,sessionId:'backend-fixture',summary:'Configured backend command profile verified'});
- assert.equal((await f.call('pre-pr-check')).status,'PASS');
 });
 
-test('full gate requires a security check in the configured profile',async t=>{
- const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']}}};
- config.verification={profiles:{commit:['lint'],full:['lint']}};config.qualityPolicy=policyFor(['lint']);
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
- await f.call('engineering-verify',{profile:'full'});await f.call('quality-gate',{review:await f.review()});
- await f.call('ai-provenance',{aiGenerated:false,sessionId:'no-security-fixture',summary:'Missing security fixture'});
- await assert.rejects(f.call('pre-pr-check'),/Full profile requires a security check/);
-});
 
 test('schema 3 engineering verification blocks failed project commands',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
  config.verification={profiles:{commit:['lint'],full:['lint']}};
  config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(7)']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  const result=await f.call('engineering-verify',{profile:'commit'});
  assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].exitCode,7);
 });
@@ -127,7 +119,7 @@ test('optional hook command allowlist bounds configured executables',async t=>{
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
  config.verification={profiles:{commit:['lint'],full:['lint']}};
  config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  process.env.INSTAR_HOOK_ALLOWED_COMMANDS='npm';
  let result=await f.call('engineering-verify',{profile:'commit'});
  assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].error,'ECOMMANDNOTALLOWED');
@@ -146,7 +138,7 @@ test('schema 3 cannot reuse a stale explicit artifact',async t=>{
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
  config.verification={profiles:{commit:['check'],full:['check']}};
  config.tools.checks={check:{kind:'test',command:process.execPath,args:['-e','process.exit(0)'],artifact:'reports/evidence/stale.json'}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  await mkdir(path.join(f.project,'reports/evidence'),{recursive:true});await writeFile(path.join(f.project,'reports/evidence/stale.json'),'{"status":"PASS"}\n');
  const result=await f.call('engineering-verify',{profile:'commit'});
  assert.equal(result.status,'BLOCK');assert.match(result.checks[0].reason,/artifact evidence is invalid/);
@@ -157,7 +149,7 @@ test('implementation profile runs before approval without full policy',async t=>
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
  config.verification={profiles:{commit:['lint'],implementation:['lint','test'],full:['lint','test']}};
  config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']},test:{kind:'test',command:process.execPath,args:['-e','process.exit(0)']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  const result=await f.call('engineering-verify',{profile:'implementation'});
  assert.equal(result.kind,'engineering-verify-implementation');assert.equal(result.status,'PASS');
  assert.deepEqual(result.checks.map(check=>check.id),['lint','test']);
@@ -167,22 +159,40 @@ test('schema 3 requires explicit kinds and doctor preflights profile coverage',a
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
  config.verification={profiles:{commit:['lint'],full:['lint']}};
  config.tools.checks={lint:{command:process.execPath,args:['-e','process.exit(0)']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/Invalid tools\.checks\.lint/);
- config.tools.checks.lint.kind='lint';await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ config.tools.checks.lint.kind='lint';await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  const doctor=await f.call('doctor'),configured=doctor.checks.find(check=>check.id==='configured-verification');
  assert.equal(configured.status,'WARN');assert.equal(configured.profiles.implementation,null);assert.match(configured.reason,/implementation profile/);
  await assert.rejects(f.call('engineering-verify',{profile:'implementation'}),/profile is not configured/);
 });
+test('preflight is canonical while legacy commit configuration and CLI alias remain readable',async t=>{
+ const f=await fixture(t),file=path.join(f.project,'.instar-quality.json'),config=JSON.parse(await readFile(file,'utf8'));
+ config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
+ config.verification={profiles:{preflight:['lint'],full:['lint']}};
+ config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']}};
+ await writeFile(file,JSON.stringify(withBuild(config)));
+ const canonical=await f.call('engineering-verify',{profile:'preflight'});
+ assert.equal(canonical.status,'PASS');assert.equal(canonical.profile,'preflight');assert.equal(canonical.kind,'engineering-verify-preflight');
+ assert.equal(JSON.parse(await readFile(path.join(f.project,'reports/engineering-verify-preflight.json'),'utf8')).profile,'preflight');
+
+ config.verification={profiles:{commit:['lint'],full:['lint']}};
+ await writeFile(file,JSON.stringify(withBuild(config)));
+ const legacyAlias=await f.call('engineering-verify',{profile:'commit'});
+ assert.equal(legacyAlias.status,'PASS');assert.equal(legacyAlias.profile,'preflight');assert.equal(legacyAlias.kind,'engineering-verify-preflight');
+ const doctor=await f.call('doctor'),configured=doctor.checks.find(check=>check.id==='configured-verification');
+ assert.equal(configured.status,'WARN');assert.deepEqual(configured.legacyProfiles,['commit']);assert.equal(configured.profiles.preflight.includes('lint'),true);
+ assert.match(configured.reason,/migrate to "preflight"/);
+});
 test('schema 3 rejects incomplete and unsafe command configurations and replaces stale PASS on errors',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
- config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['lint'],full:['lint']}};config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']}};config.qualityPolicy=policyFor(['lint']);await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['lint'],full:['lint']}};config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e','process.exit(0)']}};config.qualityPolicy=policyFor(['lint']);await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  assert.equal((await f.call('engineering-verify',{profile:'commit'})).status,'PASS');
  delete config.verification;await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
  await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/schemaVersion 3 requires/);
  let report=JSON.parse(await readFile(path.join(f.project,'reports/engineering-verify-commit.json'),'utf8'));assert.equal(report.status,'BLOCK');
  config.verification={profiles:{commit:['lint'],full:['lint']}};config.tools.checks={lint:{kind:'lint',command:process.execPath,args:['-e\0','process.exit(0)']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/Invalid tools\.checks\.lint/);
  report=JSON.parse(await readFile(path.join(f.project,'reports/engineering-verify-commit.json'),'utf8'));assert.equal(report.status,'BLOCK');
 });
@@ -191,18 +201,18 @@ test('schema 3 hides command arguments and removes common database credentials f
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['env-check'],full:['env-check']}};
  config.qualityPolicy=policyFor(['env-check']);
  config.tools.checks={'env-check':{kind:'test',command:process.execPath,args:['-e','process.exit(process.env.DATABASE_URL?9:0)','hunter2']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));const old=process.env.DATABASE_URL;process.env.DATABASE_URL='postgres://user:password@example.invalid/db';
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));const old=process.env.DATABASE_URL;process.env.DATABASE_URL='postgres://user:password@example.invalid/db';
  t.after(()=>{if(old===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=old;});
  const result=await f.call('engineering-verify',{profile:'commit'});assert.equal(result.status,'PASS');
- const persisted=await readFile(path.join(f.project,'reports/engineering-verify-commit.json'),'utf8');assert.doesNotMatch(persisted,/hunter2|postgres:\/\/user:password/);assert.equal(result.checks[0].args,undefined);
+ const persisted=await readFile(path.join(f.project,'reports/engineering-verify-preflight.json'),'utf8');assert.doesNotMatch(persisted,/hunter2|postgres:\/\/user:password/);assert.equal(result.checks[0].args,undefined);
 });
 test('schema 3 snapshots explicit ignored inputs and blocks timeout or workspace mutation',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']},inputs:['.local-build-input']};
  config.tools.checks={check:{kind:'test',command:process.execPath,args:['-e','require("fs").writeFileSync(".local-build-input", "changed")']}};
- await writeFile(path.join(f.project,'.gitignore'),'.local-build-input\nreports/\nlogs/\nnode_modules/\n');await writeFile(path.join(f.project,'.local-build-input'),'before');await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instarignore'),'.local-build-input\nreports/\nlogs/\nnode_modules/\n');await writeFile(path.join(f.project,'.local-build-input'),'before');await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  const result=await f.call('engineering-verify',{profile:'commit'});assert.equal(result.status,'BLOCK');assert.equal(result.stable,false);
- config.tools.checks.check={kind:'test',command:process.execPath,args:['-e','setTimeout(()=>{},5000)'],timeoutMs:100};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ config.tools.checks.check={kind:'test',command:process.execPath,args:['-e','setTimeout(()=>{},5000)'],timeoutMs:100};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  const timed=await f.call('engineering-verify',{profile:'commit'});assert.equal(timed.status,'BLOCK');assert.equal(timed.checks[0].error,'ETIMEDOUT');
 });
 test('schema 3 bounds verification input directory count and nesting depth',async t=>{
@@ -210,7 +220,7 @@ test('schema 3 bounds verification input directory count and nesting depth',asyn
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};
  config.verification={profiles:{commit:['check'],full:['check']},inputs:['empty-tree']};
  config.tools.checks={check:{kind:'test',command:process.execPath,args:['-e','process.exit(0)']}};
- await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  const emptyTree=path.join(f.project,'empty-tree');await mkdir(emptyTree);
  for(let i=0;i<10000;i++)await mkdir(path.join(emptyTree,`d${i}`));
  await assert.rejects(f.call('snapshot'),/exceed 10,000 directories/);
@@ -221,23 +231,22 @@ test('schema 3 bounds verification input directory count and nesting depth',asyn
 test('schema 3 blocks missing executables and symlink working directories',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['check'],full:['check']}};
- config.tools.checks={check:{kind:'test',command:'instar-test-command-that-does-not-exist',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ config.tools.checks={check:{kind:'test',command:'instar-test-command-that-does-not-exist',args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  let result=await f.call('engineering-verify',{profile:'commit'});assert.equal(result.status,'BLOCK');assert.equal(result.checks[0].error,'ENOENT');
  await mkdir(path.join(f.project,'actual-cwd'));await symlink(path.join(f.project,'actual-cwd'),path.join(f.project,'linked-cwd'));
- config.tools.checks.check={kind:'test',command:process.execPath,args:['-e','process.exit(0)'],cwd:'linked-cwd'};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+ config.tools.checks.check={kind:'test',command:process.execPath,args:['-e','process.exit(0)'],cwd:'linked-cwd'};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
  await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/Symlink forbidden/);
  result=JSON.parse(await readFile(path.join(f.project,'reports/engineering-verify-commit.json'),'utf8'));assert.equal(result.status,'BLOCK');
 });
-test('quality reports redact common credentials before persistence or PR transport',async()=>{
+test('quality reports redact common credentials before persistence',async()=>{
  const safe=redactData({authorization:'do-not-persist',summary:'password: p@ssword and ghp_abcdefghijklmnopqrstuvwxyz1234567890'});
  assert.equal(safe.authorization,'[REDACTED]');assert.doesNotMatch(safe.summary,/p@ssword|ghp_/);assert.match(safe.summary,/\[REDACTED/);
 });
-test('review must be complete and fresh; BLOCK cannot pass PR gate',async t=>{
+test('review must be complete and fresh; BLOCK cannot pass the commit gate',async t=>{
  const f=await fixture(t);await f.call('local-verify');
  const review=await f.review();await assert.rejects(f.call('quality-gate',{review:{...review,checks:[]}}),/incomplete/);
  await assert.rejects(f.call('quality-gate',{review:{...review,fingerprint:'old'}}),/stale/);
  review.checks[0].status='BLOCK';assert.equal((await f.call('quality-gate',{review})).status,'BLOCK');
- await assert.rejects(f.call('pre-pr-check'),/failed/);
 });
 test('schemaVersion 2 review requires code-level file references',async t=>{
  const f=await fixture(t),base=await f.review();
@@ -247,6 +256,12 @@ test('schemaVersion 2 review requires code-level file references',async t=>{
  await assert.rejects(f.call('quality-gate',{review:missing}),/references required/);
  const badPath={...review,checks:review.checks.map(item=>item.id==='architecture'?{...item,references:[{path:'missing.js',line:1}]}:item)};
  await assert.rejects(f.call('quality-gate',{review:badPath}),/does not exist/);
+ const absolute={...review,checks:review.checks.map(item=>item.id==='architecture'?{...item,references:[{path:path.join(f.project,'App.vue'),line:1}]}:item)};
+ await assert.rejects(f.call('quality-gate',{review:absolute}),/project-relative/);
+ const outOfRange={...review,checks:review.checks.map(item=>item.id==='architecture'?{...item,references:[{path:'App.vue',line:2}]}:item)};
+ await assert.rejects(f.call('quality-gate',{review:outOfRange}),/exceeds 1 lines/);
+ const changed={...review,checks:review.checks.map(item=>item.id==='architecture'?{...item,references:[{path:'App.vue',line:1,contentHash:'0'.repeat(64)}]}:item)};
+ await assert.rejects(f.call('quality-gate',{review:changed}),/content changed/);
 });
 test('session audit records supplied facts without inventing project context; init is non-destructive; symlink writes fail safely',async t=>{
  const f=await fixture(t);const before=await f.call('snapshot');
@@ -314,24 +329,21 @@ test('removed project initializer actions are rejected',async t=>{
  await assert.rejects(f.call('init-frontend'),/Unknown quality action/);
  await assert.rejects(f.call('initialize-quality'),/Unknown quality action/);
 });
-test('commit profile is insufficient for PR; hooks deny missing evidence and allow unrelated commands',async t=>{
+test('hooks no longer intercept Git commit commands',async t=>{
  const f=await fixture(t);
  const invoke=command=>{const r=spawnSync(process.execPath,[hook.pathname],{input:JSON.stringify({cwd:f.project,hook_event_name:'PreToolUse',tool_input:{command}}),encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout?JSON.parse(r.stdout):null;};
- assert.equal(invoke('git commit -m test').hookSpecificOutput.permissionDecision,'deny');assert.equal(invoke('git status'),null);
- await f.call('local-verify',{profile:'commit'});await f.call('quality-gate',{review:await f.review()});
  assert.equal(invoke('git commit -m test'),null);
- assert.equal(invoke('gh pr create --title test').hookSpecificOutput.permissionDecision,'deny');
- assert.equal(invoke('cd /tmp && git commit -m test').hookSpecificOutput.permissionDecision,'deny');
- assert.equal(invoke('git -C /tmp commit -m test').hookSpecificOutput.permissionDecision,'deny');
+ assert.equal(invoke('git status'),null);
+ assert.equal(invoke('cd /tmp && git commit -m test'),null);
+ assert.equal(invoke('git -C /tmp commit -m test'),null);
 });
-test('doctor reports absent tool scripts instead of claiming diagnostics passed',async t=>{
- const f=await fixture(t);delete f.pkg.scripts['quality:ci-config'];await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
- const r=await f.call('doctor');assert.equal(r.status,'BLOCK');assert.equal(r.checks.find(c=>c.id==='ci-config').status,'BLOCK');
+test('doctor reports absent optional tool scripts instead of claiming diagnostics passed',async t=>{
+ const f=await fixture(t);delete f.pkg.scripts['quality:dependencies'];await writeFile(path.join(f.project,'package.json'),JSON.stringify(f.pkg));
+ const r=await f.call('doctor');assert.equal(r.status,'BLOCK');assert.equal(r.checks.find(c=>c.id==='dependencies').status,'BLOCK');
 });
 test('a malformed re-review invalidates an earlier passing report',async t=>{
  const f=await fixture(t);await f.call('local-verify');await f.call('quality-gate',{review:await f.review()});
  await assert.rejects(f.call('quality-gate',{review:{}}),/requires/);
- await assert.rejects(f.call('pre-pr-check'),/failed/);
  assert.equal(JSON.parse(await readFile(path.join(f.project,'reports/quality-gate.json'),'utf8')).status,'BLOCK');
 });
 test('quality lock is not stolen and command timeout blocks',async t=>{
@@ -353,12 +365,6 @@ test('quality review configuration rejects workflow-only reviewer fields',async 
   await writeFile(file,JSON.stringify({...config,review}));
   await assert.rejects(loadQualityConfig(f.project),/not supported/);
  }
-});
-test('CI check assessment blocks missing, pending and failed required checks',async()=>{
- const {assessChecks}=await import('../runtime/quality-controller/ci.mjs');
- assert.equal(assessChecks([{name:'Frontend checks',bucket:'pass',state:'SUCCESS'}],['Frontend checks','Security scan']).status,'BLOCK');
- assert.equal(assessChecks([{name:'Frontend checks',bucket:'pass',state:'SUCCESS'},{name:'Security scan',bucket:'pending',state:'IN_PROGRESS'}],['Frontend checks','Security scan']).status,'PENDING');
- assert.equal(assessChecks([{name:'Frontend checks',bucket:'pass',state:'SUCCESS'},{name:'Security scan',bucket:'fail',state:'FAILURE'}],['Frontend checks','Security scan']).status,'BLOCK');
 });
 test('accessibility template blocks empty routes instead of preserving a pass',async t=>{
  const project=await mkdtemp(path.join(os.tmpdir(),'instar-a11y-'));t.after(()=>rm(project,{recursive:true,force:true}));
@@ -399,12 +405,21 @@ test('quality review findings, unverified checks and unsafe context paths block'
  assert.equal((await f.call('quality-gate',{review:critical})).status,'BLOCK');
  const warning={...base,findings:[{severity:'warning',message:'Missing error state.'}]};
  assert.equal((await f.call('quality-gate',{review:warning})).status,'BLOCK');
+ const disposed={...base,findings:[{severity:'warning',message:'Missing error state.',disposition:{decision:'accepted',reason:'Tracked in the existing backlog',owner:'product-owner',expiresAt:'2099-12-31'}}]};
+ assert.equal((await f.call('quality-gate',{review:disposed})).status,'WARN');
+ const expired={...base,findings:[{severity:'warning',message:'Expired exemption.',disposition:{decision:'accepted',reason:'Old backlog item',owner:'product-owner',expiresAt:'2000-01-01'}}]};
+ await assert.rejects(f.call('quality-gate',{review:expired}),/expiresAt must be in the future/);
+ const criticalDisposed={...base,findings:[{severity:'critical',message:'Unsafe authorization path.',disposition:{decision:'accepted',reason:'Not acceptable for critical findings',owner:'product-owner',expiresAt:'2099-12-31'}}]};
+ assert.equal((await f.call('quality-gate',{review:criticalDisposed})).status,'BLOCK');
+ await assert.rejects(f.call('quality-gate',{review:{...base,findings:[{severity:'warning',message:'Bad disposition',disposition:{decision:'accepted'}}]}}),/disposition\.reason|disposition\.owner|disposition\.expiresAt/);
  const unverified={...base,unverified:['Keyboard flow not inspected']};
  assert.equal((await f.call('quality-gate',{review:unverified})).status,'BLOCK');
  const config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  for(const context of [{design:'.env.design.md'},{tokens:['.env.tokens.css']},{sessionState:'.context/PROJECT_STATE.md'}]){
   await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify({...config,context}));
-  await assert.rejects(f.call('doctor'),/Invalid quality configuration|non-sensitive|\.instar\/session|context\.tokens/);
+  const doctor=await f.call('doctor'),configuration=doctor.checks.find(check=>check.id==='quality-config');
+  assert.equal(doctor.status,'BLOCK');assert.equal(configuration.status,'BLOCK');
+  assert.match(configuration.reason,/Invalid quality configuration|non-sensitive|\.instar\/session|context\.tokens/);
  }
 });
 
@@ -412,7 +427,31 @@ test('schema 3 rejects absolute and parent-traversal command paths',async t=>{
  const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
  config.schemaVersion=3;delete config.packageManager;config.tools={checks:{}};config.verification={profiles:{commit:['lint'],full:['lint']}};
  for(const command of ['/bin/sh','../bin/lint','tools/../../lint']){
-  config.tools.checks={lint:{kind:'lint',command,args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+  config.tools.checks={lint:{kind:'lint',command,args:[]}};await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(withBuild(config)));
   await assert.rejects(f.call('engineering-verify',{profile:'commit'}),/Invalid tools\.checks\.lint/);
  }
+});
+test('verification inputs cannot make runtime-managed paths part of source snapshots',async t=>{
+ const f=await fixture(t),config=JSON.parse(await readFile(path.join(f.project,'.instar-quality.json'),'utf8'));
+ config.schemaVersion=3;delete config.packageManager;config.tools={checks:{check:{kind:'test',command:process.execPath,args:['-e','process.exit(0)']}}};config.verification={profiles:{commit:['check'],full:['check']}};
+ for(const input of ['.workflow/state.json','reports/read.json','logs/run.md','planning/workflows/change.json','docs/prd/change.md','.instar/session/state.md','.instar/baselines/change.json','.git/config']){
+  config.verification.inputs=[input];await writeFile(path.join(f.project,'.instar-quality.json'),JSON.stringify(config));
+  await assert.rejects(f.call('snapshot'),/managed or generated path/);
+ }
+});
+
+test('ignore policy changes are fingerprinted and workspace-wide rules fail closed',async t=>{
+ const f=await fixture(t);
+ const before=await f.call('snapshot');
+ assert.equal(before.ignorePolicy.risk,'PASS');
+ assert.equal(before.trust.mode,'local-evidence');
+ await writeFile(path.join(f.project,'.instarignore'),'*\n!src/**\nreports/\nlogs/\n');
+ const narrowed=await f.call('snapshot');
+ assert.equal(narrowed.ignorePolicy.risk,'WARN');
+ assert.ok(narrowed.ignorePolicy.broadRules.includes('*'));
+ assert.notEqual(narrowed.fingerprint,before.fingerprint);
+ await writeFile(path.join(f.project,'.instarignore'),'src/\n');
+ await assert.rejects(f.call('snapshot'),/unsafe \.instarignore policy/);
+ await writeFile(path.join(f.project,'.instarignore'),'*\n');
+ await assert.rejects(f.call('snapshot'),/unsafe \.instarignore policy/);
 });

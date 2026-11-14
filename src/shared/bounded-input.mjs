@@ -1,6 +1,5 @@
 import {createReadStream} from 'node:fs';
-import {constants} from 'node:fs';
-import {openVerified} from './path-safety.mjs';
+import {readBufferVerified} from './path-safety.mjs';
 
 export const MAX_JSON_INPUT_BYTES = 8 * 1024 * 1024;
 
@@ -20,12 +19,9 @@ export async function readBoundedFile(file, maxBytes = MAX_JSON_INPUT_BYTES) {
 }
 
 export async function readBoundedVerified(root, relative, maxBytes = MAX_JSON_INPUT_BYTES) {
-  const handle=await openVerified(root,relative,constants.O_RDONLY);
-  try {
-    const buffer=await handle.readFile();
-    if(buffer.byteLength>maxBytes)throw Error(`Input exceeds ${maxBytes} byte limit`);
-    return buffer.toString('utf8');
-  } finally { await handle.close(); }
+  const buffer=await readBufferVerified(root,relative,{maxBytes});
+  if(buffer.byteLength>maxBytes)throw Error(`Input exceeds ${maxBytes} byte limit`);
+  return buffer.toString('utf8');
 }
 
 export async function readBoundedStdin(stream = process.stdin, maxBytes = MAX_JSON_INPUT_BYTES) {

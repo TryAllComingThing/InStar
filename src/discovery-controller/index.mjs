@@ -4,6 +4,7 @@ import {validateDiscoveredSpec,normalizeDiscoveredSpec} from '../openspec-min/sr
 import {fs,safe,read,json,hash,identifier,atomic,putJson,lock,transaction,restore,recoverPending,projectRoot,requireText,exists,now} from '../workflow-controller/files.mjs';
 import {redactText} from '../shared/redaction.mjs';
 import {MarkdownParser} from '../openspec-min/src/diff/parsers/markdown-parser.js';
+import {readBoundedVerified} from '../shared/bounded-input.mjs';
 
 export {discoveryContext};
 
@@ -120,7 +121,7 @@ export async function run(input) {
       const reportPath = `planning/discovery/${discoveryId}.json`;
       for (const change of prepared.changes) {
         const destination = safe(context.project,change.path);
-        const current = await exists(destination) ? hash(await fs.readFile(destination,'utf8')) : null;
+        const current = await exists(destination) ? hash(await readBoundedVerified(context.project,change.path,4*1024*1024)) : null;
         if (current !== change.previousHash) throw Error(`Baseline changed before write: ${change.capability}`);
         await atomic(context.project,change.path,prepared.documents[change.capability]);
       }

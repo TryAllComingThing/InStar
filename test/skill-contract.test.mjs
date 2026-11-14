@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('native Skills satisfy the Agent Skills contract', async () => {
   const {names} = await validateSkills(path.join(root, 'skills'));
-  assert.equal(names.length, 21);
+  assert.equal(names.length, 22);
   assert(await fileExists(path.join(root, 'skills/extract-design-md/assets/DESIGN.md')));
   assert(!(await fileExists(path.join(root, 'skills/extract-design-md/examples/DESIGN.md'))));
 });

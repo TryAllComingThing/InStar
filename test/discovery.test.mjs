@@ -144,7 +144,7 @@ test('baseline roots and workflow lock directories reject symlinks',async t=>{
   t.after(()=>rm(outside,{recursive:true,force:true}));
   await mkdir(path.join(outside,'specs'),{recursive:true});
   await symlink(outside,path.join(project,'planning'));
-  await assert.rejects(run({action:'context',project}),/Symlinks are unsupported|Unsafe baseline directory/);
+  await assert.rejects(run({action:'context',project}),/Symlink forbidden|Unsafe baseline directory/);
   await rm(path.join(project,'planning'));
   const input=await request(project);
   await symlink(outside,path.join(project,'.workflow'));
@@ -167,7 +167,7 @@ test('ordinary write failure rolls back the whole baseline package',async t=>{
   await mkdir(path.join(project,'planning/specs'),{recursive:true});
   await writeFile(path.join(project,'planning/discovery'),'obstruct report directory');
   const input=await request(project);
-  await assert.rejects(run(input),/Unsafe output path|ENOTDIR/);
+  await assert.rejects(run(input),/Unsafe (?:output path|directory path)|ENOTDIR/);
   assert.deepEqual(await readdir(path.join(project,'planning/specs')),[]);
   assert.equal(await readFile(path.join(project,'planning/discovery'),'utf8'),'obstruct report directory');
   await assert.rejects(access(path.join(project,'.workflow/pending.json')),{code:'ENOENT'});

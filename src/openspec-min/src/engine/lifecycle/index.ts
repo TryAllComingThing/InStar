@@ -11,17 +11,34 @@ import { validateDiscoveredSpec } from '../../discovery/validate.js';
 import { matchLineEnding } from '../../utils/line-endings.js';
 import { instructions } from '../schema/index.js';
 import type { ChangeRef, SpecPackage, GenerationContext, GateResult } from './types.js';
+import {
+  createDirectoryVerified,
+  ensureDirectoryVerified,
+  lstatVerified,
+  pathExistsVerified,
+  removeDirectoryVerified,
+  removeFileVerified,
+  removeTreeVerified,
+  renameDirectoryVerified,
+  sameDirectoryIdentity,
+  writeFileVerified,
+} from '../../../../shared/path-safety.mjs';
 
 function change(ref:ChangeRef) { return safe(ref.root,'changes',identifier(ref.changeId)); }
+function relativeTo(root:string,file:string):string {
+  const relative=path.relative(path.resolve(root),path.resolve(file));
+  if(!relative||relative==='..'||relative.startsWith(`..${path.sep}`)||path.isAbsolute(relative))throw new Error('Path escapes root');
+  return relative.split(path.sep).join('/');
+}
 async function specs(root:string) {
   const out:Record<string,string>={};
-  for (const item of await discoverSpecFiles(root)) out[item.id]=await read(item.specFile);
+  for (const item of await discoverSpecFiles(root)) out[item.id]=await read(root,item.specFile);
   return out;
 }
 function digest(value:unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 async function context(ref:ChangeRef):Promise<GenerationContext> {
   const dir=change(ref);
-  return {instruction:'',proposal:await read(safe(dir,'proposal.md')),specs:await specs(safe(dir,'specs')),baseline:await specs(safe(ref.root,'specs'))};
+  return {instruction:'',proposal:await read(dir,safe(dir,'proposal.md')),specs:await specs(safe(dir,'specs')),baseline:await specs(safe(ref.root,'specs'))};
 }
 function sections(doc:string, names:string[]) {
   const lines=doc.replace(/\r\n?/g,'\n').split('\n'); const mask=buildCodeFenceMask(lines);
@@ -79,14 +96,24 @@ export async function createSpecChange(input:ChangeRef & {prd:string; generate:(
     const output=await input.generate({instruction:instructions.propose,prd:input.prd,specs:{},baseline});
     if(!output.proposal?.trim() || !Object.keys(output.specs).length) throw new Error('Generator returned an empty change');
     for(const id of Object.keys(output.specs)) identifier(id,true);
-    await fs.mkdir(safe(input.root,'changes'),{recursive:true});
-    const staging=safe(input.root,'changes',`.create-${randomUUID()}`); await fs.mkdir(staging);
+    await ensureDirectoryVerified(input.root,'changes',{mode:0o700});
+    const stagingRelative=`changes/.create-${randomUUID()}`;
+    const staging=safe(input.root,stagingRelative);
+    const stagingStat=await createDirectoryVerified(input.root,stagingRelative,{mode:0o700});
+    const destinationRelative=relativeTo(input.root,dir);
+    let reservation:any=null;
     try {
       await write(staging,'proposal.md',output.proposal);
       for(const [id,doc] of Object.entries(output.specs)) await write(staging,`specs/${id}/spec.md`,doc);
-      // mkdir reserves the destination without overwriting an existing change.
-      await fs.mkdir(dir); try { await fs.rename(staging,dir); } catch(error) { await fs.rmdir(dir); throw error; }
-    } finally { await fs.rm(staging,{recursive:true,force:true}); }
+      // The reservation gives rename a known empty destination; its identity is
+      // rechecked so a child change can never silently replace another writer.
+      reservation=await createDirectoryVerified(input.root,destinationRelative,{mode:0o700});
+      await renameDirectoryVerified(input.root,stagingRelative,destinationRelative,stagingStat,{replaceExpected:reservation});
+      reservation=null;
+    } finally {
+      if(reservation)await removeDirectoryVerified(input.root,destinationRelative,reservation).catch(()=>{});
+      await removeTreeVerified(input.root,stagingRelative,{expected:stagingStat,label:'failed spec change staging cleanup'}).catch(()=>{});
+    }
     return {changeId:input.changeId,path:dir};
   });
 }
@@ -100,23 +127,23 @@ export async function generateDesignDoc(input:ChangeRef & {specReviewed:true; ge
     if(fingerprint!==specFingerprint(await context(input))) throw new Error('Documents changed during generation');
     const output=safe(change(input),'technical-design.md');
     const legacy=safe(change(input),'design.md');
-    const hasOutput=await fs.access(output).then(()=>true,()=>false);
+    const hasOutput=await pathExistsVerified(change(input),'technical-design.md');
     if(hasOutput) throw new Error('technical-design.md already exists; use the reviewed regeneration procedure');
-    await write(change(input),'technical-design.md',doc);
+    const outputStat=await writeFileVerified(change(input),'technical-design.md',doc,{overwrite:false});
     try {
       await write(change(input),'.review.json',JSON.stringify({spec:fingerprint,design:digest(doc)}));
-      await fs.unlink(legacy).catch(error=>{if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;});
+      await removeFileVerified(change(input),'design.md');
     }
-    catch(error) { await fs.unlink(output).catch(()=>{}); throw error; }
+    catch(error) { await removeFileVerified(change(input),'technical-design.md',{expected:outputStat}).catch(()=>{}); throw error; }
     return {path:output};
   });
 }
 async function reviewed(ref:ChangeRef) {
-  const ctx=await context(ref); const review=JSON.parse(await read(safe(change(ref),'.review.json')));
+  const ctx=await context(ref); const review=JSON.parse(await read(change(ref),safe(change(ref),'.review.json')));
   const current=safe(change(ref),'technical-design.md'),legacy=safe(change(ref),'design.md');
-  const hasCurrent=await fs.access(current).then(()=>true,()=>false),hasLegacy=await fs.access(legacy).then(()=>true,()=>false);
+  const hasCurrent=await pathExistsVerified(change(ref),'technical-design.md'),hasLegacy=await pathExistsVerified(change(ref),'design.md');
   if(hasCurrent&&hasLegacy) throw new Error('Both technical-design.md and legacy design.md exist; resolve the duplicate before continuing');
-  ctx.technicalDesign=await read(hasCurrent?current:legacy);
+  ctx.technicalDesign=await read(change(ref),hasCurrent?current:legacy);
   if(review.spec!==specFingerprint(ctx)||review.design!==digest(ctx.technicalDesign)) throw new Error('Reviewed documents or baseline changed');
   return ctx;
 }
@@ -133,8 +160,9 @@ export async function generateTaskList(input:ChangeRef & {generate:(context:Gene
     const doc=await input.generate({...ctx,instruction:instructions.tasks});validateTasks(doc);
     if(fingerprint!==digest(await reviewed(input))) throw new Error('Documents changed during generation');
     await write(change(input),'tasks.md',doc);
+    const taskStat=await lstatVerified(change(input),'tasks.md');
     try { await write(change(input),'.tasks.json',JSON.stringify({fingerprint:digest(doc.replace(/^- \[[ xX]\]/gm,'- [ ]'))})); }
-    catch(error) { await fs.unlink(safe(change(input),'tasks.md')); throw error; }
+    catch(error) { await removeFileVerified(change(input),'tasks.md',{expected:taskStat}); throw error; }
     return {path:safe(change(input),'tasks.md')};
   });
 }
@@ -142,26 +170,39 @@ export async function promoteToBaseline(input:ChangeRef & {accepted:true}) {
   return locked(input.root,async()=>{
     if(input.accepted!==true) throw new Error('Human acceptance is required');
     await requireGate(input); await reviewed(input);
-    const tasks=await read(safe(change(input),'tasks.md'));validateTasks(tasks,true);
-    const record=JSON.parse(await read(safe(change(input),'.tasks.json')));
+    const tasks=await read(change(input),safe(change(input),'tasks.md'));validateTasks(tasks,true);
+    const record=JSON.parse(await read(change(input),safe(change(input),'.tasks.json')));
     if(record.fingerprint!==digest(tasks.replace(/^- \[[ xX]\]/gm,'- [ ]'))) throw new Error('Task content changed; acceptance must use generated tasks');
     const archive=safe(input.root,'archive',input.changeId);
-    try { await fs.lstat(archive); throw new Error('Archive already exists'); } catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error; }
+    if(await pathExistsVerified(input.root,`archive/${input.changeId}`))throw new Error('Archive already exists');
+    const changeRelative=relativeTo(input.root,change(input));
+    const changeStat=await lstatVerified(input.root,changeRelative);
     const updates=await findSpecUpdates(change(input),safe(input.root,'specs'));
     const prepared=[];
-    for(const update of updates) prepared.push({update,previous:update.exists?await read(update.target):undefined,merged:await buildUpdatedSpec(update,input.changeId)});
-    const written:typeof prepared=[];
+    for(const update of updates) prepared.push({update,previous:update.exists?await read(update.targetRoot,update.target):undefined,merged:await buildUpdatedSpec(update,input.changeId)});
+    const written:{item:(typeof prepared)[number];stat:any}[]=[];
     try {
+      await ensureDirectoryVerified(input.root,'specs',{mode:0o700});
       for(const item of prepared) {
         safe(item.update.targetRoot,path.relative(item.update.targetRoot,item.update.target));
-        await fs.mkdir(path.dirname(item.update.target),{recursive:true});
-        written.push(item);await fs.writeFile(item.update.target,item.previous===undefined?item.merged.rebuilt:matchLineEnding(item.merged.rebuilt,item.previous));
+        const targetRelative=relativeTo(item.update.targetRoot,item.update.target);
+        const stat=await writeFileVerified(item.update.targetRoot,targetRelative,item.previous===undefined?item.merged.rebuilt:matchLineEnding(item.merged.rebuilt,item.previous),{overwrite:item.previous!==undefined});
+        written.push({item,stat});
       }
-      await fs.mkdir(path.dirname(archive),{recursive:true});await fs.rename(change(input),archive);
+      await ensureDirectoryVerified(input.root,'archive',{mode:0o700});
+      await renameDirectoryVerified(input.root,changeRelative,`archive/${input.changeId}`,changeStat);
     } catch(error) {
       const failures:unknown[]=[];
-      for(const item of written.reverse()) {
-        try { if(item.previous===undefined) await fs.rm(item.update.target,{force:true});else await fs.writeFile(item.update.target,item.previous); } catch(e) { failures.push(e); }
+      for(const {item,stat} of written.reverse()) {
+        try {
+          const targetRelative=relativeTo(item.update.targetRoot,item.update.target);
+          if(item.previous===undefined){if(!await removeFileVerified(item.update.targetRoot,targetRelative,{expected:stat}))throw new Error(`Rollback target changed: ${item.update.target}`);}
+          else {
+            const current=await lstatVerified(item.update.targetRoot,targetRelative);
+            if(!sameDirectoryIdentity(current,stat))throw new Error(`Rollback target changed: ${item.update.target}`);
+            await writeFileVerified(item.update.targetRoot,targetRelative,item.previous,{overwrite:true});
+          }
+        } catch(e) { failures.push(e); }
       }
       if(failures.length) throw new AggregateError([error,...failures],'Promotion and rollback failed; inspect baseline before retry');
       throw error;

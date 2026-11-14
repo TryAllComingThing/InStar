@@ -1,15 +1,15 @@
 import path from 'node:path';
-import {readdir,readFile} from 'node:fs/promises';
 import {run} from './index.mjs';
-import {safe} from './files.mjs';
+import {json} from './files.mjs';
+import {readDirectoryVerified} from '../shared/path-safety.mjs';
 
 const usage='Usage: instar status --project <path> [--change <changeId>] [--json]';
 
 async function latestActive(project){
- const dir=await safe(project,'planning/workflows');
- const files=(await readdir(dir)).filter(name=>name.endsWith('.json')).sort();
+ const entries=await readDirectoryVerified(project,'planning/workflows',{label:'planning/workflows'});
+ const files=entries.filter(entry=>entry.isFile()&&entry.name.endsWith('.json')).map(entry=>entry.name).sort();
  let best=null;
- for(const file of files){const state=JSON.parse(await readFile(await safe(project,`planning/workflows/${file}`),'utf8'));if(state.status==='completed')continue;const at=state.history?.at(-1)?.at||'';if(!best||at>best.at)best={changeId:state.changeId,at};}
+ for(const file of files){const state=await json(project,`planning/workflows/${file}`);if(state.status==='completed')continue;const at=state.history?.at(-1)?.at||'';if(!best||at>best.at)best={changeId:state.changeId,at};}
  return best?.changeId||null;
 }
 

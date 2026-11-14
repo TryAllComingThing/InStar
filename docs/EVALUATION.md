@@ -50,7 +50,7 @@ InStar 区分三类记录：
 }
 ```
 
-轨迹按 change 写入 `.workflow/traces/<changeId>.jsonl`，并继续追加到 `.workflow/traces.jsonl` 兼容聚合文件。它是代理自报的，不是模型执行证明；本地维护者可以修改它。
+轨迹按 change 单写到 `.workflow/traces/<changeId>.jsonl`；旧版本的 `.workflow/traces.jsonl` 仅作为兼容读取来源，新写入不再双写。它是代理自报的，不是模型执行证明；本地维护者可以修改它。
 
 ## 3. Reviewer 轨迹
 
@@ -64,7 +64,7 @@ InStar 区分三类记录：
 - findings 严重级别为 `critical|warning|suggestion`，带路径时必须引用真实普通文件；
 - source snapshot 与最终源码一致。
 
-Reviewer 报告只在报告文件未变化且 source snapshot 匹配时有效。Schema 5 默认禁止 main-agent fallback；只有 `start` 时显式设置 `allowMainAgentFallback: true` 才允许，并必须如实标记。
+Reviewer 报告只在报告文件未变化且 source snapshot 匹配时有效。Schema 5+ 默认禁止 main-agent fallback；只有 `start` 时显式设置 `allowMainAgentFallback: true` 才允许，并必须如实标记。Schema 6 还会限制同一评审目标每角色最多 3 个完成轮次，并拒绝相同 findings 的重复评审。
 
 ## 4. 语义质量评测
 
@@ -130,17 +130,19 @@ reports/semantic-quality/<changeId>/<stage>.json
 - 数值必须是非负整数；
 - `cachedInputTokens` 不超过 input，reasoning output 不超过 output；
 - 至少有一项非零；
+- `billableTokens = inputTokens - cachedInputTokens + outputTokens`；未提供时由控制器计算，`totalTokens` 保留为输入与输出的上下文处理量，两个口径不能混用；
 - 可归因 `stage`、`skill` 或 `agent`；
 - 报告写入 `reports/usage/<changeId>.json`，包含 `records`、totals、`byStage`、`bySkill`、`byAgent`。
-- `start` 可配置 `usageBudget: {maxTokens?, maxApiCalls?, enforce?}`；报告增加 `budget.status=within|exceeded`。默认只告警；`enforce: true` 时超限会阻断下一次受控转换，可用 `set-usage-budget` 调整或清除。
+- 同一身份（`sessionId + source + invocationId + stage + skill + agent`）的 usage 记录只能单调增加；重复导入不得降低任何 Token 字段或 API call 数。
+- `start` 可配置 `usageBudget: {maxBillableTokens?, maxApiCalls?, enforce?}`；默认 `{maxBillableTokens:6000000,maxApiCalls:1200,enforce:true}`，报告增加 `budget.status=within|exceeded`。缺失 usage 报告时 fail-closed；放宽、关闭强制或清除预算必须提供 `reason` 与 `authorization`。
 
-SessionEnd Hook 会从 Codex session JSONL 查找 `token_usage_record`，按 response id 去重并归一化到 session usage。找不到会话或没有 usage 记录时返回 SKIPPED，绝不估算历史值。Token/API usage 与设计 Token 完全无关，后者是 UI 设计变量。
+SessionEnd Hook 会从 Codex session JSONL 查找 `token_usage_record`，按 response id 去重并归一化到 session usage；`import-session-usage` 会从主会话沿 `parent_thread_id` / `subagent.thread_spawn` 归集子 Agent session，并在 `byAgent` 中保留角色归因。找不到会话或没有 usage 记录时返回 SKIPPED，绝不估算历史值。Token/API usage 与设计 Token 完全无关，后者是 UI 设计变量。
 
 ## 6. 工作流轨迹与状态的关系
 
 - `workflow.json`：权威状态、版本、审批、待审批和当前阶段。
 - `.workflow/traces/<changeId>.jsonl`：按 change 分片的操作、Skill、Reviewer、评测和 usage 事件。
-- `.workflow/traces.jsonl`：兼容旧读取方的 append-only 聚合轨迹。
+- `.workflow/traces.jsonl`：旧版本兼容读取来源；新工作流不再写入。
 - `reports/`：可复核报告和 artifact。
 - `logs/`：会话审计、doctor 日志、Hook 摘要。
 

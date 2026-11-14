@@ -1,6 +1,6 @@
 {
   "name": "instar-plugin",
-  "version": "2.4.0",
+  "version": "2.6.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -15,6 +15,7 @@
     "sync:templates": "node scripts/sync-templates.mjs",
     "check:templates": "node scripts/sync-templates.mjs --check",
     "test": "npm run build && npm run check && node scripts/run-tests.mjs",
+    "test:fast": "node scripts/run-tests.mjs --fast",
     "release": "npm test && node scripts/release.mjs && npm run test:release && npm run test:host",
     "test:release": "node scripts/smoke-release.mjs",
     "test:host": "node scripts/smoke-host.mjs",

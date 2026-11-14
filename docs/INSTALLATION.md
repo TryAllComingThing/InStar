@@ -7,10 +7,7 @@
 | Node.js `>= 20.19.0` | 构建、运行控制器和发布烟测 |
 | npm | 安装插件构建依赖；插件运行时自带打包依赖 |
 | Codex CLI | 注册 marketplace、安装/卸载插件 |
-| Git | 目标项目快照、提交和 PR |
-| `gh` + 登录态 | 仅真实 PR/CI 联调需要 |
-
-目标项目不需要安装 InStar 的 npm 依赖；但需要有自己的工程依赖和质量工具（例如 lint、测试、Playwright、扫描器）。
+目标项目不需要安装 InStar 的 npm 依赖或 Git；但需要有自己的工程依赖和质量工具（例如 lint、测试、Playwright、扫描器）。InStar 使用工作区源码清单和 `.instarignore`，不执行提交、分支、推送、PR 或 CI 操作。
 
 ## 2. 从源码构建发布包
 
@@ -103,7 +100,7 @@ codex plugin add instar@instar-local --json
 codex plugin remove instar@instar-local --json
 ```
 
-这会卸载插件并移除其本地插件缓存。不会自动删除目标项目中的规则、规划文档、报告、日志或 Git 历史。
+这会卸载插件并移除其本地插件缓存。不会自动删除目标项目中的规则、规划文档、报告、日志或外部 VCS 历史。
 
 ### 5.2 删除 marketplace（可选）
 
@@ -159,7 +156,7 @@ node <plugin>/bin/instar.mjs snapshot --project /absolute/project
 
 `doctor` 和 `snapshot` 都需要项目根目录的 `.instar-quality.json`。初始化不会自动创建该文件；从 `templates/quality/README.md` 的 schema 3 示例开始，映射项目已有命令后再运行。缺少配置时 `doctor` 会返回结构化 BLOCK 和 `nextSteps`，这是预期行为，不是安装失败，也不能当成 PASS。
 
-`doctor` 生成 `reports/doctor.json` 和 `logs/doctor-*.md`。若输出 BLOCK，先修复配置、脚本、上下文或 Agent 注册，再运行验证。Hook 只应在项目被 Codex 信任后依赖；`PreToolUse` 会执行 `.instar-quality.json` 配置的验证命令，这是项目代码执行，不等于 OS 沙箱。如需限制可执行文件和检查名，可在宿主环境设置 `INSTAR_HOOK_ALLOWED_COMMANDS=npm,node` 与 `INSTAR_HOOK_ALLOWED_CHECKS=lint,test`；它们不能限制 npm script 的实际内容。`SessionEnd` 受宿主约 10 秒超时限制，不应依赖它完成耗时任务。
+`doctor` 生成 `reports/doctor.json` 和 `logs/doctor-*.md`。若输出 BLOCK，先修复配置、脚本、上下文或 Agent 注册，再运行验证。验证和 Review 必须由工作流显式调用 `verify` 与 `review`，不会在提交时自动触发。如需限制质量命令的可执行文件和检查名，可在宿主环境设置 `INSTAR_HOOK_ALLOWED_COMMANDS=npm,node` 与 `INSTAR_HOOK_ALLOWED_CHECKS=lint,test`；它们不能限制脚本的实际内容。`SessionEnd` 受宿主约 10 秒超时限制，不应依赖它完成耗时任务。
 
 ## 8. 安装故障速查
 
@@ -168,7 +165,7 @@ node <plugin>/bin/instar.mjs snapshot --project /absolute/project
 | `marketplace` 找不到 | 确认路径指向包含 `.agents/plugins/marketplace.json` 的 `release/`，使用绝对路径 |
 | `plugin add` 找不到 `instar@instar-local` | `codex plugin list --available --json` 检查 marketplace 名称和条目 |
 | 目标项目看不到 Reviewer | 检查 `.codex/config.toml`、角色文件和项目信任状态 |
-| Hook 不执行 | 确认项目已被 Codex 信任、插件启用、当前命令从仓库根目录发起，并检查 `hooks/hooks.json` 与宿主 Hook 支持；`SessionEnd` 超时不等于 `PreToolUse` 门禁失效 |
+| `SessionEnd` 不执行 | 确认项目已被 Codex 信任、插件启用，并检查 `hooks/hooks.json` 与宿主 Hook 支持；InStar 不再提供提交时 `PreToolUse` 门禁 |
 | 初始化冲突 | 不要覆盖项目文件；按 `conflicts` 人工合并后重跑 preview |
 | `doctor` 通过但验证失败 | `doctor` 只做配置/可运行性检查，不代表已运行目标项目的完整验证 |
 

@@ -1,4 +1,5 @@
-import {fs,path,safe,pluginRoot,projectRoot,exists,read,json,hash,atomic,putJson,lock} from './files.mjs';
+import {path,safe,pluginRoot,projectRoot,read,json,hash,atomic,putJson,lock} from './files.mjs';
+import {ensureDirectoryVerified,lstatVerified,pathExistsVerified,readDirectoryVerified,removeDirectoryVerified,removeFileVerified} from '../shared/path-safety.mjs';
 import {mergeAgentRegistrations,parseProjectAgentConfig,removeAgentRegistrations} from '../shared/agent-config.mjs';
 const allReviewRoles=['architect','developer','ui-reviewer','code-reviewer','security-reviewer','spec-reviewer','frontend-reviewer'];
 const frontendOnlyReviewRoles=new Set(['ui-reviewer','frontend-reviewer']);
@@ -9,8 +10,11 @@ async function pruneEmptyParents(root,destinations){
  const dirs=new Set();
  for(const dest of destinations){let dir=path.posix.dirname(dest);while(dir&&dir!=='.'){dirs.add(dir);dir=path.posix.dirname(dir);}}
  for(const dir of [...dirs].sort((a,b)=>b.length-a.length)){
-  try{const entries=await fs.readdir(safe(root,dir));if(!entries.length)await fs.rmdir(safe(root,dir));}
-  catch(error){if(error.code!=='ENOENT'&&error.code!=='ENOTEMPTY')throw error;}
+  try{
+   const stat=await lstatVerified(root,dir);
+   const entries=await readDirectoryVerified(root,dir,{maxEntries:10000,label:`initialize cleanup ${dir}`});
+   if(!entries.length)await removeDirectoryVerified(root,dir,stat);
+  }catch(error){if(error.code!=='ENOENT'&&error.code!=='ENOTEMPTY')throw error;}
  }
 }
 function installationFor(stack){
@@ -39,7 +43,7 @@ export async function initialize(input,{preview=false,stack='fullstack'}={}){
  const assets=installationFor(stack);
  async function apply(){
   const result={project:root,stack,created:[],updated:[],unchanged:[],removed:[],conflicts:[],preview,agents:{status:'pending',registered:[],missing:[],removed:[],conflicts:[],trustNote:'Codex loads project-level .codex configuration only after the project is trusted.'}};
-  const configPath='.instar.json';const old=await exists(safe(root,configPath))?await json(root,configPath):{schemaVersion:1,managed:{}};
+  const configPath='.instar.json';const old=await pathExistsVerified(root,configPath)?await json(root,configPath):{schemaVersion:1,managed:{}};
   if(old.schemaVersion!==1||!old.managed||typeof old.managed!=='object')throw Error('Unsupported project configuration');
   delete old.managed['.codex/config.toml']; // Project config is user-owned; manage only our individual role files.
   const previousRoles=previousRolesFor(old);
@@ -48,7 +52,7 @@ export async function initialize(input,{preview=false,stack='fullstack'}={}){
   const desiredDestinations=new Set(assets.managed.map(([,dest])=>dest));
   for(const [source,dest] of assets.managed){
    const content=await read(pluginRoot,source);
-   if(await exists(safe(root,dest))){
+   if(await pathExistsVerified(root,dest)){
     const actual=await read(root,dest),actualHash=hash(actual);
     if(actual===content)result.unchanged.push(dest);
     else if(old.managed[dest]&&actualHash===old.managed[dest]){writes.push([dest,content]);result.updated.push(dest);}
@@ -61,8 +65,8 @@ export async function initialize(input,{preview=false,stack='fullstack'}={}){
    if(dest.includes('#')||desiredDestinations.has(dest))continue;
    if(!removableManagedAsset.test(dest)){result.conflicts.push({path:dest,reason:'Managed path is outside the plugin asset allowlist; preserved'});continue;}
    const oldHash=old.managed[dest];delete old.managed[dest];
-   if(!await exists(safe(root,dest)))continue;
-   const stat=await fs.lstat(safe(root,dest));
+   if(!await pathExistsVerified(root,dest))continue;
+   const stat=await lstatVerified(root,dest);
    if(!stat.isFile()){result.conflicts.push({path:dest,reason:'Previously managed path is no longer a regular file; preserved'});continue;}
    const actual=await read(root,dest);
    if(oldHash&&hash(actual)===oldHash){removals.push(dest);result.removed.push(dest);}
@@ -73,7 +77,7 @@ export async function initialize(input,{preview=false,stack='fullstack'}={}){
   const allDesired=parseProjectAgentConfig(configTemplate).agents;
   const desired=Object.fromEntries(assets.roles.map(name=>{if(!allDesired[name])throw Error(`Missing reviewer template registration: ${name}`);return [name,allDesired[name]];}));
   try{
-   const configExists=await exists(safe(root,agentConfigPath));
+   const configExists=await pathExistsVerified(root,agentConfigPath);
    const existingConfig=configExists?await read(root,agentConfigPath):'';
    const expectedFiles=Object.fromEntries(allReviewRoles.map(name=>[name,`agents/${name}.toml`]));
    const disabledRoles=previousRoles.filter(name=>!assets.roles.includes(name));
@@ -94,7 +98,7 @@ export async function initialize(input,{preview=false,stack='fullstack'}={}){
   const markerStart='<!-- instar:start -->',markerEnd='<!-- instar:end -->';
   const guidance=await read(pluginRoot,'templates/AGENTS.md');
   const block=`${markerStart}\n${guidance.trim()}\n${markerEnd}`;
-  const existing=await exists(safe(root,'AGENTS.md'))?await read(root,'AGENTS.md'):'';
+  const existing=await pathExistsVerified(root,'AGENTS.md')?await read(root,'AGENTS.md'):'';
   const starts=existing.split(markerStart).length-1,ends=existing.split(markerEnd).length-1;
   if(starts||ends){
    const start=existing.indexOf(markerStart),end=existing.indexOf(markerEnd);
@@ -112,9 +116,9 @@ export async function initialize(input,{preview=false,stack='fullstack'}={}){
   for(const dir of ['planning/specs','planning/changes','planning/archive','planning/workflows','docs/prd','.workflow'])safe(root,dir);
   if(!preview){
    for(const [dest,content] of writes)await atomic(root,dest,content);
-   for(const dest of removals)await fs.rm(safe(root,dest),{force:true});
+   for(const dest of removals)if(!await removeFileVerified(root,dest))throw Error(`Managed asset changed before removal: ${dest}`);
    await pruneEmptyParents(root,removals);
-   for(const dir of ['planning/specs','planning/changes','planning/archive','planning/workflows','docs/prd','.workflow'])await fs.mkdir(safe(root,dir),{recursive:true});
+   for(const dir of ['planning/specs','planning/changes','planning/archive','planning/workflows','docs/prd','.workflow'])await ensureDirectoryVerified(root,dir,{mode:0o700});
    await putJson(root,'.instar.json',{...old,pluginVersion:version,stack,installationScope:stack});
   }
   return result;

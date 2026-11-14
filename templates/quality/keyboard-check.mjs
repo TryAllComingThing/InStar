@@ -8,13 +8,14 @@ const timeout=Number(process.env.KEYBOARD_NAVIGATION_TIMEOUT||30000);
 const readySelector=process.env.KEYBOARD_READY_SELECTOR||process.env.A11Y_READY_SELECTOR||null;
 const output=process.env.KEYBOARD_OUTPUT||'reports/keyboard.json';
 const raw=process.env.KEYBOARD_JOURNEYS||'[]';
+const runBinding=()=>({reportId:process.env.INSTAR_REPORT_ID||null,checkId:process.env.INSTAR_CHECK_ID||null,profile:process.env.INSTAR_PROFILE||null,snapshotFingerprint:process.env.INSTAR_SNAPSHOT_FINGERPRINT||null});
 
 async function save(report){
  await mkdir(dirname(output),{recursive:true});
  await writeFile(output,JSON.stringify(report,null,2)+'\n');
 }
 function baseReport(extra={}){
- return {schemaVersion:1,kind:'keyboard',tool:'playwright',baseUrl,authenticated:!!storageState,journeys:[],status:'BLOCK',generatedAt:new Date().toISOString(),...extra};
+ return {schemaVersion:1,...runBinding(),kind:'keyboard',tool:'playwright',headless:true,baseUrl,authenticated:!!storageState,journeys:[],status:'BLOCK',generatedAt:new Date().toISOString(),...extra};
 }
 let journeys;
 try{journeys=JSON.parse(raw);}catch(error){

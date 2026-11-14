@@ -10,6 +10,10 @@ for(const root of roots){
  }
 }
 if(!files.length)throw Error('No test files found');
-const result=spawnSync(process.execPath,['--test',...files],{stdio:'inherit'});
+const mode=process.argv[2]||'--all';
+const slow=new Set(['workflow.test.mjs','quality.test.mjs','discovery.test.mjs','integration.test.mjs']);
+const selected=mode==='--fast'?files.filter(file=>!slow.has(path.basename(file))):files;
+if(mode!=='--all'&&mode!=='--fast')throw Error('Test runner accepts --all or --fast');
+const result=spawnSync(process.execPath,['--test',...selected],{stdio:'inherit'});
 if(result.error)throw result.error;
 process.exitCode=result.status??1;

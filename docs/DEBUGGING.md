@@ -4,7 +4,7 @@
 
 ```text
 安装/发现 → 项目初始化 → 上下文/配置 → workflow 状态
-→ 质量命令 → 证据/报告 → Hook/CI → 业务实现
+→ 质量命令 → 证据/报告 → Hook/外部门禁 → 业务实现
 ```
 
 不要一开始就重跑全部命令。先确认失败发生在哪一层，并保存原始错误。
@@ -22,7 +22,7 @@ node <plugin>/bin/instar.mjs status --project /absolute/project --json
 - `reports/doctor.json`；
 - `logs/doctor-*.md`；
 - `planning/workflows/<changeId>.json`；
-- `.workflow/traces.jsonl`；
+- `.workflow/traces/<changeId>.jsonl`（旧版本的 `.workflow/traces.jsonl` 仍可用于兼容读取）；
 - 最新 `reports/` 和失败命令输出。
 
 如果 `status` 没有 active workflow，显式传 `--change <changeId>`。
@@ -102,31 +102,26 @@ Discovery 恢复使用 discovery controller，不需要 changeId：
 
 ## 5. 质量命令失败
 
-1. 确认 `.instar-quality.json` 是有效 JSON，`schemaVersion` 与 `baseRef` 正确。
+1. 确认 `.instar-quality.json` 是有效 JSON，`schemaVersion`、profile 和检查定义正确。
 2. `doctor` 检查配置/工具存在性，并会运行已配置的 optional adapters；它不等于已经运行 verification profile 的全部命令。
 3. 在受控终端手工运行失败的原始命令，检查退出码、超时和依赖。控制器超时会终止整个进程组；若后台进程仍存活，按报告中的 PID/进程树人工检查。出现 `EPATHCHANGED` 表示受控文件路径在打开期间被替换；停止并检查父目录、符号链接和并发进程，不要在未确认前重试或清理。
-4. 检查 profile 是否包含必需 kind（implementation：lint/format/test；UI 加 browser；full：security；UI 加 accessibility 与 keyboard）。
+4. 检查 profile 是否包含必需 kind（implementation：lint/format/test；UI 加 browser；full：build/security；UI 加 accessibility 与 keyboard）。
 5. 重新生成报告，不要修改旧 artifact 或伪造 PASS。
 6. 若检查期间源码/worktree 改变，停止并发编辑并重跑。
 
 如果报 `Quality operation already running`，检查 `logs/.quality.lock` 和 PID；不要盲目删除。
 
-## 6. Hook 拒绝提交/PR
+## 6. 提交时没有自动质量门禁
 
-Hook 只接受从配置仓库根目录发起的独立命令：
+InStar 不注册 `PreToolUse`，也不执行 Git commit、分支、push、PR 或 CI 操作。准备提交前必须显式完成：
 
-```sh
-git commit -m "message"
-gh pr create ...
-```
+1. 运行与变更匹配的 `verify` profile（规范预检名为 `preflight`；`commit` 仅为兼容别名）；
+2. 运行 `quality-gate` 并确保报告对应当前工作区快照；
+3. 把提交、CODEOWNERS/Review、分支保护、required checks、远端审计、PR/MR 和 CI 交给外部 VCS/平台；
+4. 源码在验证后变化时重新验证，不能复用旧报告；
+5. 不要把本地报告或 `SessionEnd` Hook 当成远端仓库门禁的替代。
 
-复杂 shell（管道、`;`、`&&`、重定向、命令替换、`cd`、`git -C`、`--repo` 等）会被拒绝，因为无法可靠识别目标仓库。处理：
-
-1. 在项目根目录单独执行命令；
-2. 先完成 commit/full 验证、quality-gate 和 provenance；
-3. 若 Hook 无法运行，确认项目已被 Codex 信任、插件已启用、命令在配置仓库根目录执行，并检查 `hooks/hooks.json` 和宿主 Hook 支持；
-4. 记住 `PreToolUse` 会执行项目配置的验证命令；`SessionEnd` 只有约 10 秒预算，超时不会自动重试；
-5. 不要把 Hook 当成远端 CI 的替代。
+InStar 的本地证据不是远端门禁。项目验证命令本身是项目代码；环境变量过滤、命令 allowlist 和禁止 shell 都不构成 OS 沙箱。对不可信仓库必须使用 container、devcontainer、VM 或隔离 CI runner。PR、CODEOWNERS 和 Review 不能防止恶意验证命令访问宿主机，也不能替代沙箱。
 
 ## 7. 安装/插件发现问题
 

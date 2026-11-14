@@ -3,13 +3,30 @@
 ## 1. 开始前
 
 - Node.js `>= 20.19.0`。
-- 目标项目必须是独立 Git 仓库根目录，不能是插件安装目录。
+- 目标项目必须是显式绝对路径且不能是插件安装目录。InStar 不要求 Git；启动 change 时写入 `.instar/baselines/<changeId>.json`，之后直接扫描工作区并按路径/内容哈希比较。`.instarignore` 控制排除项；baseline 缺失时 fail-closed。
 - 目标项目自己维护依赖、质量工具和 `.instar-quality.json`。
-- 需要 PR/CI 时准备 `gh` 登录态和目标仓库权限。
 
-## 2. 三种典型入口
+## 2. 四类典型入口
 
-### 2.1 修改已有代码
+### 2.1 文档、文案或测试微变更
+
+仅修改文档、非可执行文案或测试时，可使用 `micro-change`：不生成 PRD、Spec、Design、Tasks 或 change brief；启动后直接实现，提交时复检 baseline 与当前工作区变化，最终只做一次人工验收。
+
+```sh
+node <plugin>/bin/instar.mjs micro
+```
+
+控制器只接受文档、`i18n`/`locales`/`copy` 下的非可执行文案和测试路径；实际变化路径不得超过 20 个文件，changedLines 保守估算不得超过 800 行。出现生产代码、配置、UI、认证、授权、数据、API、架构、依赖或基础设施时直接拒绝。
+
+### 2.2 修改已有代码
+
+低风险小功能可使用 `quick-change`：只写一页 change brief，brief 批准后开始实现，提交后人工验收。使用前必须确认不涉及 UI、认证、授权、数据、API、架构、依赖或基础设施，且实际工作区变化不超过 10 个文件、400 行。控制器会重新比较 baseline；不满足条件时拒绝并要求升级到 `requirements-workflow`。
+
+```sh
+node <plugin>/bin/instar.mjs quick
+```
+
+其他已有代码小改：
 
 用户明确授权实施后，按项目现有流程编码，完成后：
 
@@ -18,11 +35,11 @@
 3. 运行 `snapshot` 取得 fingerprint。
 4. 按 stack 使用 `engineering-verify` 或 `frontend-verify`。
 5. 运行 `quality-gate` 并生成 review JSON。
-6. 根据用户授权提交、准备 PR 或检查 CI。
+6. 根据用户授权提交。
 
 小改动不需要强行创建 PRD/Spec；受控流程只用于需要跨阶段审批的变更。
 
-### 2.2 新需求交付
+### 2.3 新需求交付
 
 ```text
 initialize-project
@@ -34,7 +51,7 @@ initialize-project
 
 具体阶段和门禁见 [WORKFLOW.md](WORKFLOW.md)。
 
-### 2.3 从存量代码生成 Spec
+### 2.4 从存量代码生成 Spec
 
 ```sh
 node <plugin>/bin/instar.mjs spec-discover --project /absolute/project --scope src/orders
@@ -50,20 +67,20 @@ node <plugin>/bin/instar.mjs spec-discover --project /absolute/project --scope s
 node <plugin>/bin/instar.mjs doctor --project /absolute/project
 node <plugin>/bin/instar.mjs snapshot --project /absolute/project
 node <plugin>/bin/instar.mjs verify --project /absolute/project --profile full
+node <plugin>/bin/instar.mjs verify --project /absolute/project --layer L1 --files src/login.ts,src/workbench.ts
+node <plugin>/bin/instar.mjs verify --project /absolute/project --layer L2
+node <plugin>/bin/instar.mjs verify --project /absolute/project --layer L3
 node <plugin>/bin/instar.mjs review --project /absolute/project --review-file ./review.json
-node <plugin>/bin/instar.mjs ci prepare --project /absolute/project --title "feat: add search"
-node <plugin>/bin/instar.mjs ci status --project /absolute/project
-node <plugin>/bin/instar.mjs ci publish --project /absolute/project --title "feat: add search" --confirm
 node <plugin>/bin/instar.mjs status --project /absolute/project --change add-search
+node <plugin>/bin/instar.mjs quick
+node <plugin>/bin/instar.mjs micro
 ```
 
 参数规则：
 
 - `--project` 可省略，默认当前目录。
-- `verify` 快捷入口只接受 `--profile commit|full`；`implementation` 使用 JSON action。
+- `verify` 接受 `--profile preflight|implementation|full`，以及 `--layer L1|L2|L3`；`commit` 是 deprecated 兼容别名，会被规范化为 `preflight`。`--files` 用于传入受影响文件；`--no-cache` 强制 L1/L2 重新执行。L3 始终是 full 且永不使用中间缓存。
 - `review` 必须有 `--review-file`，文件可为 review 对象或 `{review: ...}`。
-- `ci prepare/publish` 必须有 title；`publish` 必须有 `--confirm`。
-- `ci` 的 phase 可用子命令 `prepare|publish|status` 或 `--phase`。
 - 非法选项、缺失值或冲突参数直接报错，不静默忽略。
 
 ## 4. JSON CLI
@@ -74,6 +91,8 @@ node <plugin>/bin/instar.mjs status --project /absolute/project --change add-sea
 node <plugin>/runtime/quality-controller/cli.mjs request.json
 node <plugin>/runtime/quality-controller/cli.mjs -
 node <plugin>/runtime/workflow-controller/cli.mjs request.json
+node <plugin>/runtime/quick-controller/cli.mjs request.json
+node <plugin>/runtime/micro-controller/cli.mjs request.json
 node <plugin>/runtime/discovery-controller/cli.mjs request.json
 ```
 
@@ -100,7 +119,7 @@ node <plugin>/runtime/discovery-controller/cli.mjs request.json
 }
 ```
 
-`start` 可传 `usageBudget:{maxTokens,maxApiCalls,enforce}`；超出且 `enforce:true` 时提交、批准和归档会被阻断。运行中用 `set-usage-budget` 调整或清空预算，`reject` 始终允许。
+`start` 可传 `usageBudget:{maxBillableTokens,maxApiCalls,enforce}`；省略时默认 `{maxBillableTokens:6000000,maxApiCalls:1200,enforce:true}`。计费口径为 `inputTokens - cachedInputTokens + outputTokens`，`totalTokens` 只表示上下文处理量。超出且 `enforce:true` 时，Skill/Reviewer trace、质量验证、提交、批准和归档会在执行前被阻断。调整预算、关闭强制或清除预算必须使用 `set-usage-budget` 并提供 `reason` 与 `authorization`；只有显式传 `usageBudget:null` 才清除预算。`reject` 始终允许。
 
 ### 5.3 读取工作流上下文
 
@@ -139,7 +158,7 @@ node <plugin>/runtime/discovery-controller/cli.mjs request.json
 3. 进入 `awaiting-approval` 后不要继续生成下游工件。
 4. 用户明确批准后，用当前 `reviewHash` 调用 `approve`。
 5. 用户要求修改时用 `request-changes`；历史批准可能因此失效。
-6. 任何源码变化后检查 `implementationReview`/`verification` 是否 stale。
+6. `state`/`visualize` 显示 `evidenceFreshness`；源码变化后用 `refresh-evidence`，不要 `reopen design/tasks`。
 
 ## 7. 质量配置与执行
 
@@ -148,10 +167,9 @@ node <plugin>/runtime/discovery-controller/cli.mjs request.json
 ```json
 {
   "schemaVersion": 3,
-  "baseRef": "main",
   "verification": {
     "profiles": {
-      "commit": ["lint-check"],
+      "preflight": ["lint-check"],
       "implementation": ["lint-check", "format-check", "test-check"],
       "full": ["security-check"]
     }
@@ -168,6 +186,23 @@ node <plugin>/runtime/discovery-controller/cli.mjs request.json
 ```
 
 UI 项目还需在 `implementation` 加 `browser`，在 `full` 加 `accessibility` 与 `keyboard`。实现审批前必须已有 `.instar-quality.json` 和当前 quality-gate 报告；不要重复完全相同的 browser 命令。
+
+UI 检查可在 `verification.runtime` 配置一个共享 preview 服务。控制器为每次 profile 分配随机回环端口，只启动一次，并把 `INSTAR_BASE_URL`、`PLAYWRIGHT_BASE_URL`、`A11Y_BASE_URL`、`KEYBOARD_BASE_URL` 注入 browser/accessibility/keyboard 检查：
+
+```json
+{
+  "verification": {
+    "runtime": {
+      "command": "npm",
+      "args": ["run", "preview", "--", "--host", "127.0.0.1", "--port", "{port}"],
+      "readyUrl": "http://127.0.0.1:{port}/",
+      "timeoutMs": 30000
+    }
+  }
+}
+```
+
+不要在这些检查中再次 build，也不要在 Playwright `webServer` 中重复执行 build；使用已生成的 build/preview。固定 `4173` 端口和复用未校验的旧服务会造成错误证据。
 
 ## 8. Reviewer 使用
 
@@ -190,7 +225,7 @@ node <plugin>/bin/instar.mjs status --project . --json
 - 已批准阶段；
 - 最近 trace。
 
-需要详细证据时读 `.workflow/traces/<changeId>.jsonl`、`.workflow/traces.jsonl` 兼容聚合文件、`reports/` 和 `logs/`。不要修改 `workflow.json` 来“修复”状态；使用 reopen、recover 或重新执行正常动作。
+需要详细证据时读 `.workflow/traces/<changeId>.jsonl`、`reports/` 和 `logs/`。旧版本的 `.workflow/traces.jsonl` 仍可读取，但新写入只进入按 change 分片的 trace。不要修改 `workflow.json` 来“修复”状态；使用 reopen、recover 或重新执行正常动作。
 
 ## 10. 常见操作边界
 
@@ -198,5 +233,5 @@ node <plugin>/bin/instar.mjs status --project . --json
 - 不直接写 PRD/Spec/设计/任务绕过控制器。
 - 不把 `quality-gate` 报告当人工批准。
 - 不把 smoke 当 axe，不把 axe 当键盘/焦点测试。
-- 不把本地 Hook 当远端 CI。
+- 不把本地报告或 `SessionEnd` Hook 当远端 CI；InStar 不执行 Git 提交、PR 或 CI。
 - 不把 JSON 确认字段当身份认证。

@@ -32,22 +32,7 @@ try {
       if(result.status==='SKIPPED'&&result.reason)console.error(`InStar token telemetry skipped: ${result.reason}`);
     })().catch(error=>{if(error.code!=='ENOENT')console.error(`InStar token telemetry warning: ${error.message}`);});
     await Promise.allSettled([close,usage]);
-  } else if(event.hook_event_name==='PreToolUse') {
-    if(!qualityProject)process.exit(0);
-    const command=event.tool_input?.command ?? event.tool_input?.cmd ?? '';
-    const commit=/\bgit\b[\s\S]*\bcommit\b/.test(command);
-    const pr=/\bgh\b[\s\S]*\bpr\s+create\b/.test(command);
-    if(commit || pr) {
-      // Only a simple invocation in the known cwd is inspectable. No cd, git -C,
-      // pipes, substitutions, shell wrappers or combined mutating commands.
-      if(!/^(git\s+commit\b|gh\s+pr\s+create\b)/.test(command.trim()) || /[;&|\n`<>]|\$\(|--repo\b|\s-R\b/.test(command)) throw Error('Run a standalone git commit or gh pr create in the configured project root after quality verification');
-      if(path.resolve(originalCwd)!==qualityProject) throw Error('Run commit/PR from the configured repository root');
-      await run({project:qualityProject,action:commit?'pre-commit-check':'pre-pr-check'});
-    }
   }
 } catch(error) {
-  if(event?.hook_event_name==='SessionEnd') console.error(`InStar session-close warning: ${error.message}`);
-  else {
-    console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:`InStar: ${error.message}. Run $engineering-verify for backend/cross-stack work or $frontend-verify for legacy frontend work (commit/full profile), and $quality-gate, then retry. Hooks do not launch networked AI review.`}}));
-  }
+  console.error(`InStar session-close warning: ${error.message}`);
 }

@@ -2,20 +2,27 @@ import { promises as fs } from 'node:fs';
 import {constants as fsConstants} from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
-import {spawnSync} from 'node:child_process';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {fileURLToPath} from 'node:url';
 import {safe,identifier} from '../openspec-min/src/store/index.js';
 import {acquireFileLock,releaseFileLock} from '../shared/file-lock.mjs';
-import {openVerified,readBufferVerified,readTextVerified,renameVerified,unlinkVerified} from '../shared/path-safety.mjs';
+import {openVerified,readBufferVerified,readTextVerified,readDirectoryVerified,renameVerified,unlinkVerified,ensureDirectoryVerified,copyTreeVerified,removeTreeVerified,removeFileVerified,lstatVerified,pathExistsVerified} from '../shared/path-safety.mjs';
+import {readBoundedVerified,MAX_JSON_INPUT_BYTES} from '../shared/bounded-input.mjs';
+import {scanSourceInventory} from '../shared/source-inventory.mjs';
 export {fs,path,safe,identifier};
 export const pluginRoot=path.resolve(fileURLToPath(new URL('../../',import.meta.url)));
 export const now=()=>new Date().toISOString();
 export function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(`${label} must be a nonempty string`);return v;}
 export function hash(v){const order=x=>Array.isArray(x)?x.map(order):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,order(x[k])])):x;return createHash('sha256').update(JSON.stringify(order(v))).digest('hex');}
 export async function exists(p){try{await fs.lstat(p);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}}
+const requestScope=new AsyncLocalStorage();
+export function withSnapshotSession(action){
+ return requestScope.run({snapshots:new Map(),observations:new Map()},action);
+}
+function currentScope(){return requestScope.getStore()||null;}
 export async function read(root,...parts){return readTextVerified(root,parts.join('/'));}
-export async function json(root,...parts){return JSON.parse(await read(root,...parts));}
-async function ensureSafeParent(root,relative){const parts=relative.split('/').slice(0,-1);let current=root;for(const part of parts){current=safe(current,part);try{const stat=await fs.lstat(current);if(stat.isSymbolicLink()||!stat.isDirectory())throw Error(`Unsafe output path: ${relative}`);}catch(error){if(error.code!=='ENOENT')throw error;await fs.mkdir(current);}}}
+export async function json(root,...parts){return JSON.parse(await readBoundedVerified(root,parts.join('/'),MAX_JSON_INPUT_BYTES));}
+async function ensureSafeParent(root,relative){const parent=path.posix.dirname(relative);if(parent!=='.')await ensureDirectoryVerified(root,parent,{mode:0o700});}
 export async function atomic(root,relative,text){
  await ensureSafeParent(root,relative);const tempRelative=`${relative}.${randomUUID()}.tmp`;let stat;
  try{const handle=await openVerified(root,tempRelative,fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL,0o600);try{await handle.writeFile(text,'utf8');stat=await handle.stat();}finally{await handle.close();}await renameVerified(root,tempRelative,relative,stat);stat=null;}
@@ -24,97 +31,102 @@ export async function atomic(root,relative,text){
 export async function appendJsonl(root,relative,value){
  await ensureSafeParent(root,relative);
  let handle;
- try{handle=await openVerified(root,relative,fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_APPEND,0o600);await handle.writeFile(JSON.stringify(value)+'\n','utf8');}
- finally{if(handle)await handle.close();}
+ try{
+  handle=await openVerified(root,relative,fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_APPEND,0o600);
+  const record=Buffer.from(JSON.stringify(value)+'\n','utf8');
+  const current=await handle.stat();
+  const maxBytes=64*1024*1024;
+  if(current.size+record.length>maxBytes)throw Error(`${relative} exceeds ${maxBytes} byte limit`);
+  const {bytesWritten}=await handle.write(record);
+  if(bytesWritten!==record.length)throw Error(`Short JSONL append for ${relative}`);
+ } finally{if(handle)await handle.close();}
 }
 export async function putJson(root,relative,data){await atomic(root,relative,JSON.stringify(data,null,2)+'\n');}
 export async function projectRoot(input,{initialized=true}={}){
  if(!path.isAbsolute(requireText(input,'project')))throw Error('project must be an explicit absolute path');
- const root=await fs.realpath(input);if(!(await fs.stat(root)).isDirectory())throw Error('project is not a directory');
+ const root=await fs.realpath(input);const rootStat=await fs.lstat(root);if(rootStat.isSymbolicLink()||!rootStat.isDirectory())throw Error('project is not a directory');
  const plugin=await fs.realpath(pluginRoot);
  if(root===plugin||root.startsWith(plugin+path.sep))throw Error('Project must not be inside the plugin installation');
  if(initialized){const config=await json(root,'.instar.json');if(config.schemaVersion!==1)throw Error('Unsupported project configuration version');}
  return root;
 }
-async function assertTree(root,relative){const dir=safe(root,relative);if(!await exists(dir))return;const stat=await fs.lstat(dir);if(!stat.isDirectory())throw Error(`Expected directory: ${relative}`);for(const item of await fs.readdir(dir,{withFileTypes:true})){const name=path.join(relative,item.name);safe(root,name);if(item.isSymbolicLink())throw Error(`Symlink not supported: ${name}`);if(item.isDirectory())await assertTree(root,name);else if(!item.isFile())throw Error(`Unsupported entry: ${name}`);}}
-const snapshotExcluded=new Set(['.git','node_modules','dist','build','coverage','reports','logs','.workflow','planning','.next','.nuxt','vendor']);
-const snapshotMetadata=new Set(['.DS_Store','Thumbs.db','desktop.ini']);
-const snapshotGovernance=['.instar.json','.instar-quality.json','AGENTS.md','.context/AGENTS.md','DESIGN.md','ARCHITECTURE.md'];
-const snapshotSensitive=name=>/(^|\/)(\.ssh|\.aws)(\/|$)|(^|\/)\.env(?:\.|$)/.test(name);
-function snapshotExcludedPath(relative){
- const parts=relative.split('/');
- if(parts.some(part=>snapshotExcluded.has(part)))return true;
- if(relative==='docs/prd'||relative.startsWith('docs/prd/')||relative==='.instar/session'||relative.startsWith('.instar/session/'))return true;
- return snapshotMetadata.has(parts.at(-1));
+function sameDirectoryIdentity(left,right){return Boolean(left&&right&&left.dev===right.dev&&left.ino===right.ino);}
+async function assertTree(root,relative){let entries;try{entries=await readDirectoryVerified(root,relative,{maxEntries:10000,label:`transaction tree ${relative}`});}catch(error){if(error.code==='ENOENT')return;throw error;}for(const item of entries){const name=relative==='.'?item.name:`${relative}/${item.name}`;if(item.isSymbolicLink())throw Error(`Symlink not supported: ${name}`);if(item.isDirectory())await assertTree(root,name);else if(!item.isFile())throw Error(`Unsupported entry: ${name}`);}}
+async function configuredVerificationInputs(root){
+ try{
+  const config=JSON.parse(await read(root,'.instar-quality.json'));
+  const inputs=config?.verification?.inputs;
+  if(inputs===undefined)return [];
+  if(!Array.isArray(inputs)||inputs.some(value=>typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..')))throw Error('Invalid verification.inputs in .instar-quality.json');
+  return inputs;
+ }catch(error){if(error.code==='ENOENT')return [];throw error;}
 }
-async function gitSnapshotPaths(root){
- const git=spawnSync('git',['-c','core.fsmonitor=false','ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8',timeout:5000,maxBuffer:64*1024*1024});
- if(git.status!==0||git.error)return null;
- return git.stdout.split('\0').filter(Boolean);
+async function currentInventory(root){return scanSourceInventory(root,{include:await configuredVerificationInputs(root),label:'source snapshot'});}
+const baselinePath=id=>`.instar/baselines/${identifier(id)}.json`;
+const baselinePayload=baseline=>{const {baselineHash,...payload}=baseline;return payload;};
+function validBaseline(value,id){
+ if(!value||![1,2,3].includes(value.schemaVersion)||value.changeId!==id||typeof value.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.fingerprint)||!Array.isArray(value.entries))return false;
+ return value.entries.every(entry=>{if(!entry)return false;const modeOk=value.schemaVersion<3||(Number.isInteger(entry.mode)&&entry.mode>=0&&entry.mode<=0o777);return typeof entry.path==='string'&&/^[a-f0-9]{64}$/.test(entry.hash)&&Number.isInteger(entry.lines)&&modeOk;});
 }
-async function snapshotPath(root,relative){
- try{return safe(root,relative);}
- catch(error){if(/Symlinks are unsupported/.test(error.message))throw Error(`Symlink not supported in source snapshot: ${relative}`);throw error;}
+export function baselineReference(baseline,changeId=baseline.changeId){
+ return {path:baselinePath(identifier(changeId)),schemaVersion:baseline.schemaVersion,fingerprint:baseline.fingerprint,baselineHash:baseline.baselineHash,createdAt:baseline.createdAt,ignorePolicyHash:baseline.ignorePolicy?.hash??null,ignorePolicyRisk:baseline.ignorePolicy?.risk??null};
 }
-export async function sourceSnapshot(root){
- const entries=[],seen=new Set();let bytes=0;
- const configured=await (async()=>{
-  try{const config=JSON.parse(await read(root,'.instar-quality.json'));const inputs=config?.verification?.inputs;if(inputs===undefined)return [];if(!Array.isArray(inputs)||inputs.some(value=>typeof value!=='string'||!value.trim()||path.isAbsolute(value)||value.split(/[\\/]/).includes('..')))throw Error('Invalid verification.inputs in .instar-quality.json');return inputs;}catch(error){if(error.code==='ENOENT')return [];throw error;}
- })();
- async function add(relative,{force=false,depth=0}={}){
-  if(relative===''||seen.has(relative))return;
-  if(snapshotSensitive(relative))throw Error(`Sensitive path is not allowed in source snapshot: ${relative}`);
-  if(!force&&snapshotExcludedPath(relative))return;
-  if(depth>64)throw Error('Configured verification inputs exceed maximum directory depth of 64');
-  if(entries.length>=50000)throw Error('Source snapshot limit exceeded (50,000 files)');
-  const file=await snapshotPath(root,relative);
-  let stat;try{stat=await fs.lstat(file);}catch(error){if(error.code==='ENOENT')return;throw error;}
-  if(stat.isSymbolicLink())throw Error(`Symlink not supported in source snapshot: ${relative}`);
-  if(stat.isDirectory()){
-   if(!force&&snapshotExcludedPath(relative))return;
-   const items=(await fs.readdir(file,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name));
-   if(items.length>10000)throw Error('Configured verification input directory is too large');
-   for(const item of items){
-    if(['.git','node_modules','reports','logs','dist','build','coverage'].includes(item.name))continue;
-    await add(relative?`${relative}/${item.name}`:item.name,{force,depth:depth+1});
-   }
-   return;
-  }
-  if(!stat.isFile())throw Error(`Unsupported source entry: ${relative}`);
-  if(!force&&snapshotExcludedPath(relative))return;
-  seen.add(relative);
-  bytes+=stat.size;if(bytes>536870912)throw Error('Source snapshot limit exceeded (512 MiB)');
-  const content=await readBufferVerified(root,relative);entries.push([relative,stat.mode&0o777,createHash('sha256').update(content).digest('hex')]);
+export async function captureChangeBaseline(root,changeId){
+ const id=identifier(changeId),inventory=await currentInventory(root);
+ const payload={schemaVersion:3,changeId:id,createdAt:now(),fingerprint:inventory.fingerprint,entries:inventory.entries.map(({path,hash,bytes,mode,lines,binary})=>({path,hash,bytes,mode,lines,binary})),ignorePolicy:inventory.ignorePolicy,trust:{mode:'local-evidence',cryptographic:false,scope:'current-workspace'}};
+ const baseline={...payload,baselineHash:hash(payload)};
+ await putJson(root,baselinePath(id),baseline);
+ return baseline;
+}
+export async function readChangeBaseline(root,changeId,{expected=null}={}){
+ const id=identifier(changeId),baseline=await json(root,baselinePath(id));
+ if(!validBaseline(baseline,id))throw Error(`Invalid change baseline: ${baselinePath(id)}`);
+ const actualHash=baseline.schemaVersion>=2?hash(baselinePayload(baseline)):hash(baseline);
+ if(baseline.schemaVersion>=2&&baseline.baselineHash!==actualHash)throw Error(`Change baseline content hash mismatch: ${baselinePath(id)}`);
+ if(expected){
+  if(expected.fingerprint!==baseline.fingerprint||expected.baselineHash!==actualHash)throw Error('Change baseline does not match the owning change state; the baseline may be stale or replaced');
+  if(expected.path&&expected.path!==baselinePath(id))throw Error('Change baseline path does not match the owning change state');
  }
- const candidates=await gitSnapshotPaths(root);
- if(candidates){
-  for(const relative of [...new Set([...candidates,...snapshotGovernance])].sort())await add(relative);
- }else{
-  async function walk(dir=''){
-   const full=dir?await snapshotPath(root,dir):root;
-   for(const item of (await fs.readdir(full,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){
-    const relative=dir?`${dir}/${item.name}`:item.name;
-    if(item.isDirectory()){if(!snapshotExcludedPath(relative))await walk(relative);}
-    else await add(relative);
-   }
-  }
-  await walk();
+ return baseline;
+}
+export async function sourceSnapshot(root,{fresh=false}={}){
+ const scope=currentScope();
+ if(!fresh&&scope?.snapshots.has(root))return scope.snapshots.get(root);
+ const inventory=await currentInventory(root);
+ const result={treeHash:inventory.fingerprint,fingerprint:inventory.fingerprint,files:inventory.files,bytes:inventory.bytes,ignorePolicy:inventory.ignorePolicy,mode:'workspace-scan',trust:inventory.trust};
+ if(scope&&!fresh)scope.snapshots.set(root,result);
+ return result;
+}
+export async function observeChangedSourcePaths(root,{changeId,baseline:expectedBaseline=null,fresh=false}={}){
+ if(!changeId)return {mode:'unavailable',paths:[],changedLines:null,reason:'A change baseline is required to observe source changes'};
+ const scope=currentScope(),key=`${root}\0${identifier(changeId)}`;
+ if(!fresh&&scope?.observations.has(key))return scope.observations.get(key);
+ let baseline;
+ try{baseline=await readChangeBaseline(root,changeId,{expected:expectedBaseline});}
+ catch(error){if(error.code==='ENOENT')return {mode:'unavailable',paths:[],changedLines:null,reason:'Change baseline is missing'};throw error;}
+ const current=await currentInventory(root),before=new Map(baseline.entries.map(entry=>[entry.path,entry])),after=new Map(current.entries.map(entry=>[entry.path,entry]));
+ const paths=[],changes=[];let changedLines=0;
+ for(const name of [...new Set([...before.keys(),...after.keys()])].sort()){
+  const old=before.get(name),next=after.get(name);
+  if(old?.hash===next?.hash&&(old?.mode===undefined||old.mode===next?.mode))continue;
+  paths.push(name);
+  const delta=(old?.lines??0)+(next?.lines??0);
+  changedLines+=delta;
+  changes.push({path:name,status:!old?'added':!next?'deleted':'modified',baselineLines:old?.lines??0,currentLines:next?.lines??0,...(old?.mode!==undefined?{baselineMode:old.mode,currentMode:next?.mode??null}:{})});
  }
- // verification.inputs may name ignored files that Git never reports. They are
- // still quality inputs, so a change there must invalidate workflow evidence.
- for(const input of configured)await add(input,{force:true});
- let head=null;
- const git=spawnSync('git',['-c','core.fsmonitor=false','rev-parse','HEAD'],{cwd:root,encoding:'utf8',timeout:5000,maxBuffer:1024*1024});
- if(git.status===0&&!git.error)head=git.stdout.trim();
- const treeHash=createHash('sha256').update(JSON.stringify(entries)).digest('hex');
- return {treeHash,head,files:entries.length,bytes};
+ const result={mode:'baseline',baselineFingerprint:baseline.fingerprint,currentFingerprint:current.fingerprint,ignorePolicy:current.ignorePolicy,paths,changes,changedFiles:paths.length,changedLines};
+ if(scope&&!fresh)scope.observations.set(key,result);
+ return result;
+}
+export async function changedSourcePaths(root,options={}){
+ const observed=await observeChangedSourcePaths(root,options);
+ if(observed.mode==='unavailable')throw Error(observed.reason||'Unable to derive changed paths for risk classification');
+ return observed.paths;
 }
 export async function lock(root,action,actionName='workflow'){
- const dir=safe(root,'.workflow');
- try{await fs.mkdir(dir);}catch(error){if(error.code!=='EEXIST')throw error;}
- const stat=await fs.lstat(dir);if(stat.isSymbolicLink()||!stat.isDirectory())throw Error('Unsafe .workflow directory');
+ await ensureDirectoryVerified(root,'.workflow',{mode:0o700});
  const file=safe(root,'.workflow/controller.lock');
- const handle=await acquireFileLock(file,{relative:'.workflow/controller.lock',action:actionName,label:'Workflow'});
+ const handle=await acquireFileLock(file,{root,relative:'.workflow/controller.lock',action:actionName,label:'Workflow'});
  try{return await action();}
  finally{await releaseFileLock(handle);}
 }
@@ -123,51 +135,60 @@ const tracePath=id=>`.workflow/traces/${identifier(id)}.jsonl`;
 function parseTrace(text){return text.split('\n').filter(Boolean).map(line=>JSON.parse(line));}
 export async function changeTraces(root,id){
  const shard=tracePath(id);
- if(await exists(safe(root,shard)))return parseTrace(await read(root,shard)).filter(item=>item.changeId===id);
+ if(await pathExistsVerified(root,shard))return parseTrace(await read(root,shard)).filter(item=>item.changeId===id);
  try{return parseTrace(await read(root,legacyTrace)).filter(item=>item.changeId===id);}
  catch(error){if(error.code==='ENOENT')return [];throw error;}
 }
 export async function appendTrace(root,id,record){
  const shard=tracePath(id);
- if(!await exists(safe(root,shard))){
+ if(!await pathExistsVerified(root,shard)){
   try{
    for(const item of parseTrace(await read(root,legacyTrace)).filter(item=>item.changeId===id))await appendJsonl(root,shard,item);
   }catch(error){if(error.code!=='ENOENT')throw error;}
  }
  await appendJsonl(root,shard,record);
- await appendJsonl(root,legacyTrace,record);
 }
 export async function gcTransactions(root,{retain=50}={}){
  if(!Number.isInteger(retain)||retain<1||retain>1000)throw Error('retain must be an integer between 1 and 1000');
+ let rootStat;
+ try{rootStat=await readDirectoryVerified(root,'.workflow/transactions',{maxEntries:10000,label:'transaction backups'});}catch(error){if(error.code==='ENOENT')return {removed:[],retained:0};throw error;}
+ if(await pathExistsVerified(root,'.workflow/pending.json'))throw Error('Cannot collect transaction backups while a recovery journal is pending');
  const dir=safe(root,'.workflow/transactions');
- if(!await exists(dir))return {removed:[],retained:0};
- if(await exists(safe(root,'.workflow/pending.json')))throw Error('Cannot collect transaction backups while a recovery journal is pending');
+ await lstatVerified(root,'.workflow/transactions');
+ const items=rootStat;
  const entries=[];
- for(const item of await fs.readdir(dir,{withFileTypes:true})){
-  if(!item.isDirectory())continue;
-  const full=path.join(dir,item.name);let status='unknown',at='';
-  try{const record=JSON.parse(await fs.readFile(path.join(full,'result.json'),'utf8'));status=record.status;at=record.at||'';}
+ for(const item of items){
+  if(!item.isDirectory()||!/^[a-f0-9-]{36}$/.test(item.name))continue;
+  const full=path.join(dir,item.name),relative=`.workflow/transactions/${item.name}`;
+  const initial=await lstatVerified(root,relative);
+  if(!initial.isDirectory())throw Error(`Unsafe transaction backup: ${relative}`);
+  let status='unknown',at='';
+  try{const record=JSON.parse(await readBoundedVerified(root,`${relative}/result.json`,MAX_JSON_INPUT_BYTES));status=record.status;at=record.at||'';}
   catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;}
-  entries.push({name:item.name,full,status,at});
+  entries.push({name:item.name,full,relative,status,at,dev:initial.dev,ino:initial.ino});
  }
  const removable=entries.filter(item=>['committed','rolled-back'].includes(item.status)).sort((a,b)=>String(b.at).localeCompare(String(a.at))||b.name.localeCompare(a.name));
  const remove=removable.slice(retain);
- for(const item of remove)await fs.rm(item.full,{recursive:true,force:true});
+ for(const item of remove){
+  const current=await lstatVerified(root,item.relative);
+  if(!current.isDirectory()||!sameDirectoryIdentity(current,item))throw Error(`Unsafe transaction backup: ${item.relative}`);
+  await removeTreeVerified(root,item.relative,{expected:current,label:'transaction backup cleanup'});
+ }
  return {removed:remove.map(item=>item.name),retained:entries.length-remove.length};
 }
 const trees=['planning','docs/prd'];
 export async function transaction(root,action){
- const journal='.workflow/pending.json';if(await exists(safe(root,journal)))throw Error('Interrupted transaction exists; inspect it and use recover before continuing');
+ const journal='.workflow/pending.json';if(await pathExistsVerified(root,journal))throw Error('Interrupted transaction exists; inspect it and use recover before continuing');
  const id=randomUUID();const backup=`.workflow/transactions/${id}`;const present={};
- for(const tree of trees){await assertTree(root,tree);present[tree]=await exists(safe(root,tree));if(present[tree])await fs.cp(safe(root,tree),safe(root,backup,'before',tree),{recursive:true});}
+ for(const tree of trees){await assertTree(root,tree);present[tree]=await pathExistsVerified(root,tree);if(present[tree])await copyTreeVerified(root,tree,`${backup}/before/${tree}`,{label:`transaction backup ${tree}`});}
  const record={id,at:now(),present,backup};await putJson(root,journal,record);
  let result;
  try{result=await action();await putJson(root,`${backup}/result.json`,{...record,status:'committed',at:now()});}
- catch(error){try{await restore(root,record);await putJson(root,`${backup}/result.json`,{...record,status:'rolled-back',error:error.message});await fs.unlink(safe(root,journal));}catch(rollback){throw new AggregateError([error,rollback],'Rollback failed; pending journal preserved for recovery');}throw error;}
+ catch(error){try{await restore(root,record);await putJson(root,`${backup}/result.json`,{...record,status:'rolled-back',error:error.message});await removeFileVerified(root,journal);}catch(rollback){throw new AggregateError([error,rollback],'Rollback failed; pending journal preserved for recovery');}throw error;}
  // A committed result is authoritative. Journal cleanup must never enter the
  // rollback branch: a crash or EACCES after the commit marker previously made
  // recovery undo work the caller had been told succeeded.
- try{await fs.unlink(safe(root,journal));}catch(error){process.stderr.write(`InStar transaction committed but journal cleanup failed: ${error.message}; run recover\n`);}
+ try{await removeFileVerified(root,journal);}catch(error){process.stderr.write(`InStar transaction committed but journal cleanup failed: ${error.message}; run recover\n`);}
  try{await gcTransactions(root);}catch(error){process.stderr.write(`InStar transaction GC warning: ${error.message}\n`);}
  return result;
 }
@@ -177,19 +198,19 @@ function assertRecoveryRecord(record){
 }
 export async function restore(root,record){
  assertRecoveryRecord(record);
- for(const tree of trees){await assertTree(root,tree);if(record.present[tree]){await assertTree(root,`${record.backup}/before/${tree}`);if(!await exists(safe(root,record.backup,'before',tree)))throw Error('Recovery snapshot missing');}}
- for(const tree of trees){await fs.rm(safe(root,tree),{recursive:true,force:true});if(record.present[tree])await fs.cp(safe(root,record.backup,'before',tree),safe(root,tree),{recursive:true});}
+ for(const tree of trees){await assertTree(root,tree);if(record.present[tree]){await assertTree(root,`${record.backup}/before/${tree}`);if(!await pathExistsVerified(root,`${record.backup}/before/${tree}`))throw Error('Recovery snapshot missing');}}
+ for(const tree of trees){await removeTreeVerified(root,tree,{label:`transaction restore ${tree}`});if(record.present[tree])await copyTreeVerified(root,`${record.backup}/before/${tree}`,tree,{label:`transaction restore ${tree}`});}
 }
 export async function recoverPending(root,record,reason){
  assertRecoveryRecord(record);
  let status=null;
- try{const result=JSON.parse(await read(root,record.backup,'result.json'));status=result?.status??null;}catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;}
+ try{const result=await json(root,record.backup,'result.json');status=result?.status??null;}catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;}
  if(status==='committed'||status==='rolled-back'){
-  await fs.unlink(safe(root,'.workflow/pending.json'));
+  await removeFileVerified(root,'.workflow/pending.json');
   return {recovered:record.id,[status==='committed'?'committed':'alreadyRolledBack']:true};
  }
  await restore(root,record);
  await putJson(root,`${record.backup}/result.json`,{...record,status:'recovered',reason});
- await fs.unlink(safe(root,'.workflow/pending.json'));
+ await removeFileVerified(root,'.workflow/pending.json');
  return {recovered:record.id};
 }

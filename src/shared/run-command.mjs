@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const DEFAULT_MAX_OUTPUT=4*1024*1024;
 const KILL_GRACE_MS=150;
-const WINDOWS_SHELL_METACHARACTERS=/["%!\r\n\0]/;
+const WINDOWS_SHELL_METACHARACTERS=/["%!\r\n\0&|<>^()]/;
 
 export function windowsCommandPlan(command,args){
  const extension=path.win32.extname(command).toLowerCase();
@@ -16,7 +16,7 @@ export function windowsCommandPlan(command,args){
  return {command:parts.map(value=>`"${value}"`).join(' '),args:[],shell:true};
 }
 
-function killTree(child){
+export function killProcessTree(child){
  if(!child.pid)return;
  if(process.platform==='win32'){
   spawnSync('taskkill',['/pid',String(child.pid),'/T','/F'],{stdio:'ignore',windowsHide:true,timeout:5000});
@@ -24,6 +24,20 @@ function killTree(child){
  }
  try{process.kill(-child.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}
  setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}},KILL_GRACE_MS).unref();
+}
+
+export async function terminateProcessTree(child,{graceMs=KILL_GRACE_MS}={}){
+ if(!child?.pid||child.exitCode!==null||child.signalCode!==null)return true;
+ const exited=new Promise(resolve=>child.once('exit',()=>resolve(true)));
+ const signal=name=>{
+  if(process.platform==='win32')spawnSync('taskkill',['/pid',String(child.pid),'/T','/F'],{stdio:'ignore',windowsHide:true,timeout:5000});
+  else try{process.kill(-child.pid,name);}catch(error){if(error.code!=='ESRCH')throw error;}
+ };
+ signal('SIGTERM');
+ const graceful=await Promise.race([exited,new Promise(resolve=>setTimeout(()=>resolve(false),graceMs))]);
+ if(graceful)return true;
+ signal('SIGKILL');
+ return Promise.race([exited,new Promise(resolve=>setTimeout(()=>resolve(false),1000))]);
 }
 
 /** Run a project command without a shell and terminate its whole process group on timeout. */
@@ -52,7 +66,7 @@ export function runCommand(command,args,{cwd,env,timeoutMs,maxOutputBytes=DEFAUL
   child.on('close',(status,signal)=>finish(status,signal));
   timer=setTimeout(()=>{
    timedOut=true;
-   try{killTree(child);}catch(error){finish(null,null,error);return;}
+   try{killProcessTree(child);}catch(error){finish(null,null,error);return;}
    forceTimer=setTimeout(()=>finish(null,null,{code:'ETIMEDOUT'}),KILL_GRACE_MS+750);
   },timeoutMs);
  });

@@ -1,6 +1,6 @@
 # 受控工作流
 
-本文件描述 schema 5 的完整 change 生命周期。核心原则是：**每个可审批工件都有内容哈希；每个下游动作都验证上游批准仍然有效；AI 生成的报告不能代替人工决定。**
+本文件描述 schema 6 的完整 change 生命周期（schema 5 继续兼容）。核心原则是：**文档审批绑定正文与冻结的治理上下文；源码变化只失效依赖源码的实现/验证证据；AI 生成的报告不能代替人工决定。**
 
 ## 1. 参与者与状态
 
@@ -46,7 +46,10 @@ start → save-prd → submit-prd → 人工审核
 要求：
 
 - `start` 必须显式提供 `ui` 布尔值和 `stack`（`frontend`、`backend`、`fullstack`）。
-- `start` 可接受 `usageBudget: {maxTokens?, maxApiCalls?, enforce?}`；`enforce: true` 时，超限会阻止下一次受控转换，需用 `set-usage-budget` 调整、关闭强制或清空预算。
+- `start` 接受 `risk:{tier,impact,reason}`，并拒绝未知字段，避免拼写错误或旧字段被静默忽略。`tier` 为 `lean|standard|governed`；未声明时默认为 `standard`。`lean` 只允许非 UI 的 `documentation|copy|tests|local` 变更，使用 L1→L3；`standard` 使用 L1→L2→L3；`authentication`、`authorization`、`security`、`data`、`data-migration`、`api-contract`、`architecture`、`dependencies`、`infrastructure` 等 impact 会自动升级为 `governed` 并额外要求 security 证据。UI 不能使用 `lean`。在进入 implementation 前可用 `set-risk` 修正并记录原因。
+- 风险分类以声明的 `risk` 与实际工作区变化的交集为准。`submit-implementation` 和 `submit-verification` 会比较 change 启动时的 `.instar/baselines/<changeId>.json` 与当前工作区，重新推导影响；实际变更涉及高风险路径或任何非文档/复制/测试代码时，`lean` 会被自动升级到 `standard` 或 `governed`。人工声明不能把已观测到的高风险变更降级。只要观测到 UI 文件，`effectiveUi` 就为真；即使声明 `ui:false`，UI design-check、browser、accessibility、keyboard 和 UI reviewer 门禁仍会生效，提交会被明确拒绝并要求重新分类。
+- InStar 不调用 Git，也不要求项目存在 Git 仓库。启动 change 时记录工作区源码清单 baseline，并把其 `fingerprint + baselineHash` 绑定到 change state；后续按路径、内容哈希和 ignore 策略比较当前工作区。baseline 缺失、内容哈希不符或 state 绑定不匹配时风险刷新 fail-closed，不会复用旧判断。`.instarignore` 用于排除生成物、依赖和敏感路径；隐藏整个工作区的规则会被拒绝，收敛生效的 ignore 策略也会改变源码 fingerprint。
+- `start` 可接受 `usageBudget: {maxBillableTokens?, maxApiCalls?, enforce?}`；未提供时默认 `{maxBillableTokens:6000000,maxApiCalls:1200,enforce:true}`。计费 Token 为 `inputTokens - cachedInputTokens + outputTokens`。超限会在 Skill/Reviewer/验证等下一次受控动作前阻断；放宽、关闭强制或清除预算必须提供 `reason` 与 `authorization`。
 - `requirements-workflow` 选择 `write-a-prd` 编写或每轮修订 PRD。
 - `submit-prd` 生成 `pendingReview.hash` 并进入 `awaiting-approval`。
 - 人类返回 `accept-record`、`accept-no-record` 或 `reject`。
@@ -120,7 +123,7 @@ context → write-tasks → 人工审批 → implementation
 
 ```text
 frontend-implement / engineering-implement
-  → complete-task（逐项）
+  → complete-tasks（一次事务批量登记，保留逐任务证据校验）
   → implementation profile 验证
   → quality-gate
   → architect/code-reviewer
@@ -128,12 +131,14 @@ frontend-implement / engineering-implement
   → 人工确认实现
 ```
 
-`complete-task` 要求：
+`complete-tasks` 要求：
 
-- 每个任务只能完成一次；
+- 每个任务只能完成一次；批量中任一项失败则整批不写入；
 - 证据是 `{summary, files:[{path,line?,note?}], verification?}`；
 - `files` 至少一项且必须是真实普通文件；
 - 全部任务完成后才能提交实现。
+
+Schema 6 在仍有多个未完成任务时必须使用 `complete-tasks`；`complete-task` 只保留最后一个任务或旧 schema 的兼容路径。这样一次实现只需 1–3 次任务登记，而不是每个任务一次状态写入和 trace。
 
 `submit-implementation` 要求：
 
@@ -157,7 +162,9 @@ frontend-verify / engineering-verify
 
 要求：
 
-- `full` profile 必须包含 `security`；UI 变更必须包含 `accessibility` 和 `keyboard`。
+- 当 `.instar-quality.json` 配置 `verification.layers` 时，implementation 审批要求同一源码快照下的 L1（changed-unit）与 L2（task-unit）报告联合覆盖 `lint`、`format`、`test`（UI 还含 `browser`）；L3（frozen-full）在验证阶段只运行一次并禁止复用中间缓存。
+- 风险为 `governed` 时，L1/L2 联合证据还必须包含 `security`，且 implementation 阶段增加 `security-reviewer`。
+- `full` profile 必须包含 `build` 和 `security`；UI 变更还必须包含 `accessibility` 和 `keyboard`。build 必须先于全部 UI 证据检查，且即使没有配置 `verification.layers` 也不能省略。
 - frontend/fullstack UI 变更必须完成 `frontend-reviewer`；UI 变更还必须完成 `ui-reviewer`。
 - 不要求重复 implementation 已覆盖的相同 browser 检查；同一 source snapshot 和检查定义已覆盖的旅程应复用证据，只有新增语义才另设检查。
 - full 报告必须在 implementation 审批后生成。
@@ -178,7 +185,18 @@ frontend-verify / engineering-verify
 
 ### 轻量路径
 
-已有代码的小改动不强制创建 PRD、Spec、Design 和 Tasks。用户明确授权后，直接执行对应实现 Skill、`quality-gate`、`implementation` 检查和 `architect`/`code-reviewer` 评审；需要提交或 PR 时再执行 `commit`/`full` profile。涉及需求变化、外部契约、架构边界、UI 设计或高风险安全面时，仍应走完整受控流程。轻量路径是适用性判断，不是降低现有门禁的开关。
+已有代码的小改动不强制创建 PRD、Spec、Design 和 Tasks。用户明确授权后，直接执行对应实现 Skill、`quality-gate`、`implementation` 检查和 `architect`/`code-reviewer` 评审；需要本地预检时再执行 `preflight`/`full` profile。涉及需求变化、外部契约、架构边界、UI 设计或高风险安全面时，仍应走完整受控流程。轻量路径是适用性判断，不是降低现有门禁的开关。
+
+按风险和变更面选择路径，详细矩阵与成本控制点见 [COST-AND-LIGHTWEIGHT.md](COST-AND-LIGHTWEIGHT.md)：
+
+| 路径 | 适用 | 可跳过 | 不可跳过 |
+| --- | --- | --- | --- |
+| 临时小改（不建 change） | 文档、文案、测试、局部非共享代码；用户明确授权 | PRD/Spec/Design/Tasks、独立 change 归档 | 对应实现 Skill、`quality-gate`、`implementation` 检查、architect/code-reviewer；本地预检 `preflight`/`full` |
+| `quick` tracked change | 低风险小功能；无 UI/安全/数据/API/架构影响；≤10 文件、≤400 行；工作区 baseline 可观测 | PRD/Spec/Design/Tasks、spec-reviewer、架构评审、L2 | change brief、定向测试、一次 code review、工作区变化复检、人工验收；本地预检 `quality-gate` 与 `preflight`/`full` profile |
+| `micro` 非 tracked change | 仅文档/文案/测试；无生产代码与治理影响；≤20 文件、≤800 行；工作区 baseline 可观测 | PRD/Spec/Design/Tasks、change brief、spec-reviewer、架构评审、L2、独立 quality-gate 审批 | 定向测试、一次 code review、start/submit 两次工作区变化复检、最终一次人工验收；本地预检 `preflight`/`full` profile |
+| `lean` tracked change | 文档、文案、测试、`local` impact，且实际 Diff 没有生产代码 | L2 中间层、security 额外证据、spec-explore（空项目） | PRD/Spec/Design/Tasks 审批、L1→L3、实现检查和 full 门禁 |
+| `standard` tracked change | 普通功能、非 UI 或低风险 UI 之外的常规代码 | 无必需阶段可跳过 | 完整审批、L1→L2→L3、quality-gate、reviewer |
+| `governed` tracked change | 认证、授权、安全、数据、API 契约、架构、依赖、基础设施、UI | 不可跳过任何必需阶段 | security-reviewer 与 security 证据必须贯穿 L1/L2/full |
 
 ## 3. 人工审批语义
 
@@ -195,19 +213,22 @@ frontend-verify / engineering-verify
 ## 4. 修订与重开
 
 - `request-changes`：在待审批阶段反馈修改，不推导新审批。
+- `refresh-evidence`（schema 6）：仅源码/证据变化时使用，保留 PRD、Spec、Design、Tasks 审批和任务证据，只失效 implementation、verification、acceptance 并回到 implementation。当源码已变化而 design/tasks 正文未变时，控制器会拒绝 `reopen design|tasks` 并提示改用 `refresh-evidence`。
 - `reopen`：回到最早受影响的阶段。PRD 重开会清理下游规划；Spec 重开会清理设计/任务；实现/验证重开会使验证和验收证据失效。
 - `reopen` 不能向前跳阶段，也不能重开已归档 change。
-- `migrate`：将旧 active workflow 升级到 schema 5，必须显式提供 `ui` 和 `stack`；迁移会清空旧审批并要求重新评审，归档流程不可迁移。
+- `migrate`：将 schema 5 升级到 schema 6，必须显式提供 `ui` 和 `stack`。正文与冻结治理指纹仍匹配的审批标记为 `legacy-v5-frozen` 并保留；不匹配时拒绝迁移，要求先重开审批。归档流程不可迁移。
+
+schema 6 的 design/tasks 审批不重新扫描源码树来构造引用哈希。新增源码文件不会再让已批准文档变 stale；需要重新实现时使用 `refresh-evidence`。
 
 ## 5. 源码快照与时序
 
-工作流在实现审批和验证时生成有界源码快照（最多 50,000 文件/512 MiB），排除 `.git`、依赖、构建输出、报告、日志、规划和 PRD 目录。它会比较：
+工作流在实现审批和验证时生成有界工作区源码快照（最多 50,000 文件/512 MiB），使用 `scanSourceInventory` 直接扫描文件系统；默认排除 `.git`、依赖、构建输出、报告、日志、规划和 PRD，并应用 `.instarignore`。分层 L1/L2 报告中还绑定受影响文件列表、检查定义、lockfile、工具版本、build 输出、routes 和 browser matrix。它会比较：
 
 - implementationReview 的 `sourceHash`；
 - verification 的 `sourceHash`；
 - archive 时的当前 treeHash。
 
-因此，源码在实现审批后改变、验证后改变，或 full 报告早于实现审批，都会被拒绝。
+因此，源码在实现审批后改变、验证后改变，或 full 报告早于实现审批，都会被拒绝。`state`/`visualize` 会显示 implementation、verification 和 quality-gate 的 `current|stale|missing|unknown`，并显示风险级别与 L1→L2→L3 计划，但不会因展示状态而修改工作流。
 
 ## 6. 空项目行为
 

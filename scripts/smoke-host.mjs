@@ -60,8 +60,8 @@ try{
  assert.equal(plugin.summary.localVersion,version);
  assert.equal(plugin.summary.installed,true);
  assert.equal(plugin.summary.enabled,true);
- assert.equal(plugin.skills.length,21,'plugin Skill count');
- assert.equal(plugin.hooks.length,2,'plugin Hook count');
+ assert.equal(plugin.skills.length,22,'plugin Skill count');
+ assert.equal(plugin.hooks.length,1,'plugin Hook count');
  assert.deepEqual(plugin.mcpServers,[]);
  const skills=await rpc.send('skills/list',{cwds:[root],forceReload:true});
  const entries=skills.data.flatMap(item=>item.skills??[]).filter(item=>item.pluginId==='instar@instar-local');
@@ -73,7 +73,7 @@ try{
  assert.doesNotMatch(doctorSource,/\.\.\//,'migrated command must not use depth-sensitive relative paths');
  assert.match(doctorSource,/插件包根目录的 `docs\/QUALITY\.md`/);
  rpc.stop();
- console.log(`PASS: ${hostVersion} installed InStar ${version} with 21 skills, 2 hooks and ${commands.length} migrated command Skills.`);
+ console.log(`PASS: ${hostVersion} installed InStar ${version} with 22 skills, 1 hook and ${commands.length} migrated command Skills.`);
 }finally{
  if(server&&!server.killed)server.kill();
  await rm(home,{recursive:true,force:true});

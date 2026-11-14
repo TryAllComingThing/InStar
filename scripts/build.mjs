@@ -30,7 +30,7 @@ await mkdir(staging, {recursive:true});
 try {
   await copyTree(path.join(root, 'src/openspec-min/dist'), path.join(staging, 'openspec-min'), {filter:relative=>!skipRuntimeFile(relative), label:'runtime/openspec-min'});
   await copyTree(path.join(root, 'src/openspec-min/artifact-templates'), path.join(staging, 'openspec-min/artifact-templates'), {filter:relative=>!skipRuntimeFile(relative), label:'runtime/openspec-min/artifact-templates'});
-  for (const name of ['workflow-controller', 'shared', 'discovery-controller', 'quality-controller']) {
+  for (const name of ['workflow-controller', 'micro-controller', 'quick-controller', 'shared', 'discovery-controller', 'quality-controller']) {
     await copyTree(path.join(root, 'src', name), path.join(staging, name), {filter:relative=>!skipRuntimeFile(relative), label:`runtime/${name}`});
   }
   await copyTree(path.join(root, 'src/openspec-min/LICENSE'), path.join(staging, 'openspec-min/LICENSE'), {label:'runtime/openspec-min/LICENSE'});

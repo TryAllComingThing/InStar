@@ -1,6 +1,6 @@
 # InStar
 
-InStar 是一个 Codex 软件交付插件，支持前后端协同的需求、Spec、设计、任务与验证流程。质量检查以通用项为基础，Vue 3 + TypeScript 是可显式启用的前端专项能力；后端可复用 API、数据库、安全和多语言规范，并通过 `engineering-verify` 配置项目自己的检查命令。插件只负责编排，不实现 ESLint、测试、安全扫描或 CI 引擎。
+InStar 是一个 Codex 软件交付插件，支持前后端协同的需求、Spec、设计、任务与验证流程。质量检查以通用项为基础，Vue 3 + TypeScript 是可显式启用的前端专项能力；后端可复用 API、数据库、安全和多语言规范，并通过 `engineering-verify` 配置项目自己的检查命令。插件只负责编排，不实现 ESLint、测试、安全扫描或 CI 引擎；它不要求、也不执行 Git。
 
 Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约定发现的架构/设计文档与可选 `standards/`，并将规则纳入生成上下文。插件内 `standards/` 按通用、语言、API、数据库分层；Skill 根据代码和任务按需加载，不把建议强加给项目。架构规范由项目维护；InStar 不强制采用特定架构模式。
 
@@ -8,15 +8,15 @@ Spec 和技术方案阶段会读取项目适用的 `AGENTS.md`、按配置或约
 
 ### 需求与 Spec
 
-需求与实现 Skill：`initialize-project`、`requirements-workflow`、`write-a-prd`、`spec-explore`、`spec-discover`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks`、`engineering-implement`、`engineering-verify`、`frontend-implement`、`frontend-verify`。设计、质量与辅助 Skill：`design-check`、`extract-design-md`、`quality-gate`、`quality-evaluation`、`ci`、`context-optimizer`、`engineering-research`、`systematic-debugging`。共 21 个原生 Skill；另有 4 个兼容命令入口，由宿主迁移为 `source-command-*` Skill。
+需求与实现 Skill：`initialize-project`、`requirements-workflow`、`micro-change`、`quick-change`、`write-a-prd`、`spec-explore`、`spec-discover`、`spec-propose`、`spec-verify`、`spec-design`、`spec-tasks`、`engineering-implement`、`engineering-verify`、`frontend-implement`、`frontend-verify`。设计、质量与辅助 Skill：`design-check`、`extract-design-md`、`quality-gate`、`quality-evaluation`、`context-optimizer`、`engineering-research`、`systematic-debugging`。共 22 个原生 Skill；另有 4 个兼容命令入口，由宿主迁移为 `source-command-*` Skill。
 
 `extract-design-md` 从现有前端代码整理完整的视觉设计说明，涵盖色彩、字体、间距、组件、布局和响应式行为，并按请求写入项目根目录 `DESIGN.md`。它保留源码中的原始值和项目命名，区分观察事实与设计解释，不修改应用样式。
 
 需求流程必须经过 PRD 人工确认，再进入 Spec；Spec 提交前必须完成 `spec-reviewer` 评审，Spec 变更会重新验证并等待确认；技术设计和任务列表分别审批，任务审批通过后才授权实现，最终验收也需单独确认。确认支持 `accept-record`、`accept-no-record` 和 `reject` 三种结果。
 
-工作流控制器会将成功的状态变更写入目标项目 `.workflow/traces/<changeId>.jsonl`，并同步追加到 `.workflow/traces.jsonl` 兼容聚合文件；requirements-workflow 按指引登记 specialist Skill 的开始/结束。`quality-evaluation` 为 PRD、Spec、技术设计和任务输出带原文证据及指纹的语义评测报告。评测和 Skill 轨迹是本地可编辑的辅助证据，不替代人工审批或证明模型实际执行。
+工作流控制器会将成功的状态变更单写到目标项目 `.workflow/traces/<changeId>.jsonl`；旧 `.workflow/traces.jsonl` 仅用于兼容读取。requirements-workflow 按指引登记 specialist Skill 的开始/结束。`quality-evaluation` 为 PRD、Spec、技术设计和任务输出带原文证据及指纹的语义评测报告。评测和 Skill 轨迹是本地可编辑的辅助证据，不替代人工审批或证明模型实际执行。
 
-自动审计写入、受控目录写入和只读上下文读取不逐次询问确认；业务源码/配置修改、删除、提交、推送、PR 和生产部署仍需授权。完整规则见[工作流策略](docs/WORKFLOW-POLICY.md)。
+自动审计写入、受控目录写入和只读上下文读取不逐次询问确认；业务源码/配置修改、删除、提交、推送和生产部署仍需授权。完整规则见[工作流策略](docs/WORKFLOW-POLICY.md)。
 
 ### 工作流初始化
 
@@ -61,14 +61,15 @@ node <plugin>/bin/instar.mjs spec-discover --input /tmp/discovery-request.json
 - `frontend-verify`：兼容旧版 npm/Vite 前端工作流（例如 Vue 项目）。`implementation` profile 用于实现审批前，`full` profile 用于审批后的安全、E2E、可访问性与视觉检查（项目已配置时）。
 - `quality-gate`：执行通用 AI Review 和已配置适用的质量检查；schema 1/2 可使用 `tools.architecture`，schema 3 使用 `tools.checks`/`verification.profiles`，架构判断仍由 AI Review 承担。新评审要求代码文件/行号引用，并覆盖可访问性。后端专项结果依赖项目配置的验证命令和 Review 证据。
 - 开发辅助 Skills：`engineering-research` 在新增依赖或不熟悉集成前做证据检索；`systematic-debugging` 用于根因诊断；`context-optimizer` 在上下文膨胀、冲突或过时时审计并改进可发现性。
-- `ci`：准备或执行功能分支推送、PR 创建/复用、Review 报告发布、CI 检查读取和失败定位。
-- `doctor`：诊断可选项目上下文、依赖、CI 和外部质量脚本。
+- `doctor`：诊断可选项目上下文、依赖和外部质量脚本。
 
-报告写入目标项目 `reports/`，执行摘要写入 `logs/`。报告绑定 Git HEAD、base、暂存区和工作区指纹，代码变化后旧报告不能继续用于 PR。UI 验证以无头 Playwright 功能回归和 axe 可访问性为强制项；有头 Chrome 仅作可选人工视觉证据，页面加载 smoke 不替代二者。
+报告写入目标项目 `reports/`，执行摘要写入 `logs/`。报告绑定工作区源码清单指纹、配置、检查定义和 artifact 哈希，代码变化后旧报告不能继续用于质量门禁。UI 验证以无头 Playwright 功能回归和 axe 可访问性为强制项；有头 Chrome 仅作可选人工视觉证据，页面加载 smoke 不替代二者。
+
+受控验证支持 `lean|standard|governed` 风险分级和 L1 changed-unit → L2 task-unit → L3 frozen-full 分层。L1/L2 只按影响范围执行并可复用精确证据键缓存；L3 在生产 build 后只执行一次且永不使用缓存。高风险认证/授权、数据、API 契约、架构和依赖变更自动升级为 governed 并要求 security 证据。
 
 ### Hook
 
-`hooks/hooks.json` 使用 `PreToolUse` 和 `SessionEnd`：提交/PR 前校验本地证据并执行项目配置的验证命令，会话结束时写入 `logs/` 审计摘要并导入可用的 Codex Token/API usage。项目必须先被 Codex 信任，项目级 Hook 才会加载；`PreToolUse` 的项目命令执行不是 OS 沙箱，`SessionEnd` 受约 10 秒宿主超时限制。仅在显式提供真实摘要/经验时才更新项目上下文，且不自动推断空白内容。Hook 是 Codex 工具调用的辅助门禁，最终约束由 CI 和分支保护执行。
+`hooks/hooks.json` 只注册 `SessionEnd`：会话结束时写入 `logs/` 审计摘要并导入可用的 Codex Token/API usage。项目必须先被 Codex 信任，项目级 Hook 才会加载；`SessionEnd` 受约 10 秒宿主超时限制。仅在显式提供真实摘要/经验时才更新项目上下文，且不自动推断空白内容。InStar 不再通过提交 Hook 执行质量命令；验证和 Review 由工作流显式调用。
 
 ## 安装
 
@@ -107,13 +108,9 @@ node <plugin>/bin/instar.mjs snapshot --project .
 node <plugin>/bin/instar.mjs status --project . --change oa-login-workbench
 node <plugin>/bin/instar.mjs verify --profile full
 node <plugin>/bin/instar.mjs review --project . --review-file ./review.json
-node <plugin>/bin/instar.mjs ci prepare --project . --title "feat: add order filtering"
-node <plugin>/bin/instar.mjs ci status --project .
-# Publishing pushes the reviewed feature branch and creates or updates a PR.
-node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order filtering" --confirm
 ```
 
-先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和本次所选清单的检查证据，格式见[质量协议](docs/QUALITY.md)。`status` 输出阶段图、审批状态和最近 trace，不修改项目。`ci publish` 的 `--confirm` 是明确授权提示；实际认证仍由 `gh` 登录态和仓库权限承担。`ci prepare` 只生成 PR 正文。未传 `--project` 时使用当前目录。插件内的 `design-guidance/DESIGN.md` 和规则文件由 Skills 按需引用，不复制到项目。
+先用 `snapshot` 获取当前变更指纹，再由 Review 产出完整 `review.json`；文件需包含 `reviewer`、该 `fingerprint` 和本次所选清单的检查证据，格式见[质量协议](docs/QUALITY.md)。`status` 输出阶段图、审批状态和最近 trace，不修改项目。未传 `--project` 时使用当前目录。插件内的 `design-guidance/DESIGN.md` 和规则文件由 Skills 按需引用，不复制到项目。
 
 ## JSON CLI
 
@@ -123,11 +120,11 @@ node <plugin>/bin/instar.mjs ci publish --project . --title "feat: add order fil
 node <plugin>/runtime/quality-controller/cli.mjs <request.json|->
 ```
 
-质量控制器不提供项目初始化 action。目标项目需自行准备 `.instar-quality.json`、npm scripts 和 Git 仓库；完整 action、配置、报告和 GitHub 边界见 [质量协议](docs/QUALITY.md)。
+质量控制器不提供项目初始化 action。目标项目需自行准备 `.instar-quality.json`、项目检查和 `.instarignore`；不需要 Git 仓库。`.instarignore` 的内容与风险规则会进入快照 fingerprint，隐藏整个工作区的规则会 fail-closed。完整 action、配置和报告格式见 [质量协议](docs/QUALITY.md)。
 
 ## 安全边界
 
-插件禁止写入 `~/.ssh`、`~/.aws`、`.env.production`、SSO 配置和生产凭据；不推送主分支、不 force push、不自动合并、不部署生产。质量验证会运行项目 `.instar-quality.json` 指定的 npm scripts；这些脚本是项目代码，环境变量过滤和 npm 离线参数不构成 OS 级沙箱。对不可信仓库运行时应使用宿主沙箱或容器。提交或 PR 操作需要当前会话中的明确用户授权；JSON 确认字段仅供流程审计，不能证明用户身份。GitHub 身份认证由 `gh` 登录态、分支保护和 CI 负责。Hook 是最佳努力的本地反馈，不可替代远端 required checks；Hook 本身不主动联网调用模型。
+插件禁止写入 `~/.ssh`、`~/.aws`、`.env.production`、SSO 配置和生产凭据；不提交、不创建分支、不推送、不 force push、不自动合并、不部署生产。质量验证会运行项目 `.instar-quality.json` 指定的项目命令；这些命令是项目代码，环境变量过滤、命令 allowlist 和禁止 shell 都不构成 OS 级沙箱。对不可信仓库运行时应使用 container、devcontainer、VM 或隔离 CI runner；PR、CODEOWNERS 和 Review 不是沙箱边界。单机开发不要求 Git，组织级可信交付仍应由外部 VCS/平台提供 CODEOWNERS、branch protection、required checks、受控身份、服务器端审计、PR/MR 和 CI；JSON 确认字段和本地 SHA-256 仅供流程审计与变化检测，不能证明用户身份，也不是可信签名。Node 没有跨平台 `openat`，路径校验仍有 TOCTOU 窗口；事务崩溃一致性和本地审批不可抵赖性也受宿主边界限制。
 
 ## 测试
 
@@ -136,4 +133,4 @@ npm test
 npm run release
 ```
 
-详细步骤见 [使用与本地测试手册](docs/LOCAL_TESTING.md)。真实 GitHub、真实外部扫描器、真实模型和浏览器验收需要目标项目单独联调，插件自动测试不伪造这些结果。
+详细步骤见 [使用与本地测试手册](docs/LOCAL_TESTING.md)。真实外部扫描器、真实模型和浏览器验收需要目标项目单独联调，插件自动测试不伪造这些结果。
